@@ -43,6 +43,15 @@ export type SavedNode = {
   fidelity?: 'transistor' | 'logic' | 'behaviour'
   /** A circuit block carries its real internals (S19-v3-67). */
   block?: BlockData
+  /**
+   * Why this part must not be believed, in the words the user was shown when it arrived.
+   *
+   * Set by the FPGA chip-file reader for a part it could read but could not stand behind. It is SAVED because a
+   * warning that lives only in a dismissible card is a warning the file loses: the part would come back looking
+   * exactly like a trustworthy one and go on producing a plausible wrong value with nothing anywhere saying so.
+   * Absent for every ordinary part.
+   */
+  caveat?: string
 }
 
 export type SavedWire = {
@@ -122,6 +131,7 @@ type CanvasNodeLike = {
     footprintId?: string
     fidelity?: 'transistor' | 'logic' | 'behaviour'
     block?: BlockData
+    caveat?: string
   }
 }
 type CanvasEdgeLike = {
@@ -259,6 +269,7 @@ export function serializeCircuit(
         ...(n.data.footprintId ? { footprintId: n.data.footprintId } : {}),
         ...(n.data.fidelity ? { fidelity: n.data.fidelity } : {}),
         ...(n.data.block ? { block: n.data.block } : {}),
+        ...(n.data.caveat ? { caveat: n.data.caveat } : {}),
       }
     }),
     wires: edges.map((e) => {

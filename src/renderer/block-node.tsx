@@ -334,6 +334,9 @@ function SeparatorFace({
 
 export function BlockNode({ id, data }: NodeProps) {
   const block = (data as { block?: BlockData }).block
+  // Why this block must not be believed, if it was read out of an FPGA chip file and the reader could not stand
+  // behind it. It rides on the node, is saved with the circuit, and comes back when the file is reopened.
+  const caveat = (data as { caveat?: string }).caveat
   const healthMap = useContext(HealthContext)
   const health = healthMap.get(id)
   if (!block) return null
@@ -434,10 +437,34 @@ export function BlockNode({ id, data }: NodeProps) {
   return (
     <div
       className={health?.failed ? 'cb-shake' : undefined}
-      title={`${block.name} — a circuit block (${block.nodes.length} parts inside, ${block.ports.length} pins). Double-click to see the real circuit it is made of.`}
+      data-caveat={caveat ?? undefined}
+      title={
+        caveat
+          ? `${caveat}
+
+${block.name} — a circuit block (${block.nodes.length} parts inside, ${block.ports.length} pins). Double-click to see the real circuit it is made of.`
+          : `${block.name} — a circuit block (${block.nodes.length} parts inside, ${block.ports.length} pins). Double-click to see the real circuit it is made of.`
+      }
       style={{ position: 'relative', width, height, fontFamily: 'system-ui, sans-serif' }}
     >
       {health?.failed ? <div className="cb-danger" /> : null}
+      {caveat ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: -9,
+            right: -7,
+            zIndex: 2,
+            fontSize: 12,
+            lineHeight: 1,
+            color: THEME.statusWarn,
+            textShadow: `0 0 3px ${THEME.surfaceDeep}`,
+            pointerEvents: 'none',
+          }}
+        >
+          ⚠
+        </div>
+      ) : null}
       <div
         style={{
           position: 'absolute',

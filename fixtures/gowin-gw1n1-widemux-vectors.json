@@ -1,0 +1,23 @@
+{
+ "note": "What fixtures/gowin-gw1n1-widemux.v computes, taken from Icarus Verilog simulating that source directly - NOT from the recovered netlist.",
+ "tool": "Icarus Verilog version 14.0 (devel) (s20260301-328-geda9fdcd1-dirty), from oss-cad-suite",
+ "testbench": "generated beside the source; each output is a full truth table",
+ "reading": "inputs names the source ports from least-significant bit upward: input vector v drives bit k of the design with (v >> k) & 1. Each output string is hexadecimal, one character per FOUR consecutive input vectors: character c covers vectors 4c..4c+3, and vector 4c+j is bit (1 << j) of that character.",
+ "inputs": [
+  "d[0]",
+  "d[1]",
+  "d[2]",
+  "d[3]",
+  "d[4]",
+  "d[5]",
+  "d[6]",
+  "d[7]",
+  "s[0]",
+  "s[1]",
+  "s[2]",
+  "g"
+ ],
+ "inputBits": 12,
+ "y": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff0000000000000000ffffffffffffffff0000000000000000ffffffffffffffff00000000000000000000000000000000ffffffffffffffffffffffffffffffff55555555555555555555555555555555555555555555555555555555555555553333333333333333333333333333333333333333333333333333333333333333f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffffffffffff0000000000000000ffffffffffffffff0000000000000000ffffffffffffffffffffffffffffffff00000000000000000000000000000000",
+ "z": "55555555555555555555555555555555555555555555555555555555555555553333333333333333333333333333333333333333333333333333333333333333f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffffffffffff0000000000000000ffffffffffffffff0000000000000000ffffffffffffffffffffffffffffffff00000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff99999999999999999999999999999999999999999999999999999999999999995a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa55555555aaaaaaaa5555555555555555aaaaaaaaaaaaaaaa5555555555555555aaaaaaaaaaaaaaaa55555555555555555555555555555555aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

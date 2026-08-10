@@ -1,0 +1,87 @@
+{
+ "note": "nextpnr-himbaechel placement of gowin-gw1n1-mux8.fs. Keys are x,y,position. `muxBels` are the WIDE MULTIPLEXERS: bel X<x>Y<y>/MUX<k> drives the tile wire OF<k>; MUX7 is a MUX2_LUT8, whose second choice comes from the NEXT TILE EAST. `init` is the yosys INIT parameter exactly as written, most-significant bit first.",
+ "lutBels": {
+  "5,8,0": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "5,8,1": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "5,8,2": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "5,8,3": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "5,8,4": {
+   "kind": "LUT4",
+   "init": "0000000000100000"
+  },
+  "5,8,5": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "5,8,6": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "5,8,7": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "6,8,0": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "6,8,1": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "6,8,2": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "6,8,3": {
+   "kind": "LUT4",
+   "init": "0000010000000000"
+  },
+  "6,8,4": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "6,8,5": {
+   "kind": "LUT4",
+   "init": "0001000000000000"
+  },
+  "6,8,6": {
+   "kind": "LUT1",
+   "init": "00"
+  },
+  "6,8,7": {
+   "kind": "LUT1",
+   "init": "00"
+  }
+ },
+ "muxBels": {
+  "5,8,0": "MUX2_LUT5",
+  "5,8,1": "MUX2_LUT6",
+  "5,8,2": "MUX2_LUT5",
+  "5,8,3": "MUX2_LUT7",
+  "5,8,4": "MUX2_LUT5",
+  "5,8,5": "MUX2_LUT6",
+  "5,8,6": "MUX2_LUT5",
+  "5,8,7": "MUX2_LUT8",
+  "6,8,0": "MUX2_LUT5",
+  "6,8,1": "MUX2_LUT6",
+  "6,8,2": "MUX2_LUT5",
+  "6,8,3": "MUX2_LUT7",
+  "6,8,4": "MUX2_LUT5",
+  "6,8,5": "MUX2_LUT6",
+  "6,8,6": "MUX2_LUT5"
+ },
+ "dffBels": []
+}

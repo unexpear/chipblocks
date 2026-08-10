@@ -3,11 +3,10 @@
 // removeAllListeners-before-on keeps exactly one handler per channel, so a React
 // re-subscribe (or StrictMode double-mount) can't stack duplicate listeners.
 import { contextBridge, ipcRenderer } from 'electron'
+import { subscribeOnly } from './ipc-subscribe.ts'
 
-function subscribe<T>(channel: string, callback: (value: T) => void): void {
-  ipcRenderer.removeAllListeners(channel)
-  ipcRenderer.on(channel, (_event, value: T) => callback(value))
-}
+const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) =>
+  subscribeOnly<T>(ipcRenderer, channel, callback)
 
 contextBridge.exposeInMainWorld('chipblocks', {
   onTheme: (callback: (theme: string) => void) => subscribe('settings:theme', callback),
@@ -27,20 +26,47 @@ contextBridge.exposeInMainWorld('chipblocks', {
   saveCircuitData: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-data', text),
   onCircuitOpened: (callback: (text: string) => void) => subscribe('file:opened', callback),
+  // The opened file's design was still being drawn when the user pressed Stop, so the canvas went
+  // back to what it was. Tell the window to forget the file too — otherwise the next plain Save
+  // writes the old canvas over the newly opened file with no dialog.
+  forgetCircuitPath: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('circuit:forget-path'),
   // Open a .chipblocks project into a NEW TAB (tabbed shell): a request/response round-trip that
   // returns the file's text + path, so the launcher can spin up a tab instead of replacing a canvas.
   openCircuitDialog: (): Promise<{ ok: boolean; path?: string; text?: string }> =>
     ipcRenderer.invoke('circuit:open-dialog'),
-  // Reopen a recent project by its known path (the My Projects list); ok:false + reason if it moved.
+  // Reopen a recent project by its known path (the My Projects list); ok:false + reason if it moved or
+  // is too big to draw. `kind` tells those apart — a file that moved is pruned from the list, a file
+  // that was refused is still the user's project and stays on it.
   readCircuitFile: (
     path: string,
-  ): Promise<{ ok: boolean; path?: string; text?: string; reason?: string }> =>
-    ipcRenderer.invoke('circuit:read', path),
+  ): Promise<{
+    ok: boolean
+    path?: string
+    text?: string
+    kind?: 'unreadable' | 'too-big'
+    reason?: string
+  }> => ipcRenderer.invoke('circuit:read', path),
   // Auto-discover saved .chipblocks projects in the usual folders (so My Projects finds them itself).
   scanProjects: (): Promise<{ path: string; name: string; savedAt: number }[]> =>
     ipcRenderer.invoke('circuit:scan'),
   // Import Netlist (rung 1b): a netlist file's raw text arrives; the renderer parses it.
   onNetlistOpened: (callback: (text: string) => void) => subscribe('file:netlist-opened', callback),
+  // Read an FPGA Chip File: a programmed chip's BYTES arrive (binary — utf8 would corrupt it) and the
+  // renderer decodes them back into a circuit. Decoding also needs the open-source description of the chip
+  // itself, which is megabytes and is not shipped, so the renderer asks for it by chip; main remembers where
+  // it is. `ask: false` answers only from what was remembered and never pops a dialog.
+  onBitstreamOpened: (callback: (file: { name: string; bytes: Uint8Array }) => void) =>
+    subscribe('file:bitstream-opened', callback),
+  // Whether a project's circuit canvas is on screen at all. The three File items that REPLACE that canvas
+  // (Open Circuit, Import Netlist, Read an FPGA Chip File) do nothing without one, so the menu greys them out
+  // rather than reading a file and dropping it.
+  setCircuitCanvasOpen: (open: boolean) => ipcRenderer.send('window:circuit-canvas-open', open),
+  requestChipDescription: (
+    family: string,
+    device: string,
+    ask: boolean,
+  ): Promise<{ ok: boolean; files?: { name: string; text: string }[] }> =>
+    ipcRenderer.invoke('fpga:chip-description', { family, device, ask }),
   // Export Netlist (rung 2): the File menu asks; the renderer answers with the SPICE text.
   onExportNetlistRequest: (callback: () => void) =>
     subscribe('file:export-netlist-request', callback),

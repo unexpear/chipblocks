@@ -49,6 +49,13 @@ const carryLc = (truth: boolean[]): LcConfig => ({
   asyncSetReset: false,
 })
 const NOT_IN1 = Array.from({ length: 16 }, (_, i) => ((i >> 1) & 1) === 0)
+/** The local track each stage's operand (`in_1`) is routed in on — four distinct real wires, one per bit. */
+const OPERAND_SOURCE = [
+  `${TX}_${TY}_local_g0_1`,
+  `${TX}_${TY}_local_g0_0`,
+  `${TX}_${TY}_local_g0_3`,
+  `${TX}_${TY}_local_g0_2`,
+]
 const XOR_IN1_IN3 = Array.from({ length: 16 }, (_, i) => Boolean(((i >> 1) & 1) ^ ((i >> 3) & 1)))
 
 /** build a fresh all-zero 384 CRAM of the real fixture's dimensions */
@@ -81,6 +88,18 @@ function buildIncrementerCram(setCarryInSet: boolean): BinBanks {
     expect(pip).toBeDefined()
     chainPips.push(pip as (typeof DEVICE.pips)[number])
   }
+  // and a REAL pip bringing each stage's operand in on its own local track. Without these the four `in_1` pins
+  // carry no routing at all, and an unrouted iCE40 input is not an operand — it reads LOW on silicon, so the
+  // recovery reports it as a tied-low constant and there is nothing to drive. A real bitstream routes them; so
+  // does this one now.
+  for (const [cell, src] of OPERAND_SOURCE.entries()) {
+    const in1 = idx.get(`${TX}_${TY}_lutff_${cell}/in_1`)
+    const pip = DEVICE.pips.find(
+      (p) => p.x === TX && p.y === TY && p.src === idx.get(src) && p.dst === in1,
+    )
+    expect(pip).toBeDefined()
+    chainPips.push(pip as (typeof DEVICE.pips)[number])
+  }
   const { bits, conflicts } = cramBitsForRoute(chainPips)
   expect(conflicts).toEqual([])
   for (const b of bits) if (b.value === 1) set(b.col, b.row)
@@ -93,10 +112,16 @@ function buildIncrementerCram(setCarryInSet: boolean): BinBanks {
   return cram
 }
 
-/** run the netlist over a=0..15 driving each stage's in_1, read cells 0..3 as the sum bits */
+/** run the netlist over a=0..15 driving each stage's operand, read cells 0..3 as the sum bits */
 function runIncrementer(netlist: ReturnType<typeof reconstructNetlist>): number[] {
-  const idx = buildWireIndex(DEVICE)
-  const inNet = (cell: number): number => idx.get(`${TX}_${TY}_lutff_${cell}/in_1`) as number
+  // The net to drive is read back out of the RECOVERED netlist, not assumed: each stage's carry operand must
+  // have traced over its route to the local track it comes in on. If a stage came back tied low (unrouted) or
+  // named its own pin wire (the phantom-primary shape), this fails rather than quietly driving nothing.
+  const inNet = (cell: number): number => {
+    const operand = netlist.cells.find((c) => c.ref.cell === cell)?.carryOperands?.[0]
+    expect(operand?.kind).toBe('primary')
+    return (operand as { net: number }).net
+  }
   const got: number[] = []
   for (let a = 0; a < 16; a++) {
     const primary = new Map<number, boolean>()

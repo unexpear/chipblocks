@@ -17,9 +17,10 @@
  */
 
 import type { IceboxDevice } from './fpga-icebox.ts'
+import { ascProgrammedBits, type ParsedAsc, parseIceboxAsc } from './fpga-icebox-asc.ts'
 import { type BinBanks, parseBinFile } from './fpga-icebox-bin.ts'
 import type { LogicTileBits } from './fpga-icebox-logic.ts'
-import { recoverNetlist } from './fpga-icebox-recover.ts'
+import { recoverNetlist, recoverNetlistFromBits } from './fpga-icebox-recover.ts'
 import type { RecoveredNetlist } from './fpga-icebox-run.ts'
 
 /** The reference data for one iCE40 device: its parsed chip database and logic-tile bit layout. */
@@ -81,4 +82,58 @@ export function loadIce40Bitstream(
 
   const netlist = recoverNetlist(device, chipdb.device, chipdb.layout, parsed.cram)
   return { ok: true, family: 'ice40', device, netlist, cram: parsed.cram, crcOk: parsed.crcOk }
+}
+
+/** The result of loading a TEXT chip file. No `cram` and no `crcOk`: a `.asc` has neither. */
+export type AscLoadResult =
+  | {
+      ok: true
+      family: 'ice40'
+      device: string
+      netlist: RecoveredNetlist
+      /** the file as read, so a caller can report what is in it besides the logic (memory contents, names). */
+      parsed: ParsedAsc
+    }
+  | { ok: false; reason: string }
+
+/**
+ * Load a user-supplied `.asc` — the TEXT chip file nextpnr-ice40 and `icepack -u` write.
+ *
+ * Same contract as the `.bin` door above, and deliberately the same recovery underneath
+ * (`recoverNetlistFromBits`): the two file formats describe the same chip settings, so a design opened from
+ * either must come out identical. The differences are only what the text file does and does not carry — it
+ * NAMES the chip outright instead of the chip having to be inferred from the size of the settings, and it
+ * carries no checksum at all, so nothing here can vouch for the file being undamaged.
+ */
+export function loadIce40AscDesign(
+  text: string,
+  chipdbs: Record<string, Ice40ChipDb>,
+): AscLoadResult {
+  let parsed: ParsedAsc
+  let bits: ReturnType<typeof ascProgrammedBits>
+  try {
+    parsed = parseIceboxAsc(text)
+    bits = ascProgrammedBits(parsed)
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+  const device = parsed.device
+  if (device === null)
+    return { ok: false, reason: 'This chip file does not say which chip it is for.' }
+
+  const chipdb = chipdbs[device]
+  if (chipdb === undefined) {
+    const have = Object.keys(chipdbs).sort().join(', ') || 'none'
+    return {
+      ok: false,
+      reason: `Recognised a ${device} chip file, but no chip database for ${device} is loaded (have: ${have}).`,
+    }
+  }
+  return {
+    ok: true,
+    family: 'ice40',
+    device,
+    netlist: recoverNetlistFromBits(device, chipdb.device, chipdb.layout, bits),
+    parsed,
+  }
 }

@@ -1,0 +1,28 @@
+module top(input en, input [6:0] a, output y);
+  wire [23:0] w;
+  LUT4 #(.INIT(16'hC2A8)) l0 (.F(w[0]), .I0(en), .I1(a[6]), .I2(a[3]), .I3(a[5]));
+  LUT4 #(.INIT(16'h101D)) l1 (.F(w[1]), .I0(en), .I1(a[0]), .I2(a[3]), .I3(a[2]));
+  LUT4 #(.INIT(16'hFA91)) l2 (.F(w[2]), .I0(en), .I1(a[3]), .I2(a[1]), .I3(a[4]));
+  LUT4 #(.INIT(16'hABD7)) l3 (.F(w[3]), .I0(en), .I1(a[3]), .I2(a[1]), .I3(a[1]));
+  LUT4 #(.INIT(16'h7D25)) l4 (.F(w[4]), .I0(en), .I1(a[1]), .I2(a[2]), .I3(a[5]));
+  LUT4 #(.INIT(16'h5DD2)) l5 (.F(w[5]), .I0(en), .I1(a[1]), .I2(a[5]), .I3(a[5]));
+  LUT4 #(.INIT(16'h2EDD)) l6 (.F(w[6]), .I0(en), .I1(a[1]), .I2(a[6]), .I3(a[3]));
+  LUT4 #(.INIT(16'h7CCC)) l7 (.F(w[7]), .I0(en), .I1(a[0]), .I2(a[5]), .I3(a[5]));
+  LUT4 #(.INIT(16'hB5D3)) l8 (.F(w[8]), .I0(en), .I1(a[1]), .I2(a[3]), .I3(a[5]));
+  LUT4 #(.INIT(16'h05F7)) l9 (.F(w[9]), .I0(en), .I1(a[3]), .I2(a[5]), .I3(a[1]));
+  LUT4 #(.INIT(16'h77F0)) l10 (.F(w[10]), .I0(en), .I1(a[6]), .I2(a[6]), .I3(a[4]));
+  LUT4 #(.INIT(16'hF213)) l11 (.F(w[11]), .I0(en), .I1(a[5]), .I2(a[6]), .I3(a[6]));
+  LUT4 #(.INIT(16'hE603)) l12 (.F(w[12]), .I0(en), .I1(a[1]), .I2(a[4]), .I3(a[1]));
+  LUT4 #(.INIT(16'h408F)) l13 (.F(w[13]), .I0(en), .I1(a[5]), .I2(a[5]), .I3(a[0]));
+  LUT4 #(.INIT(16'h0045)) l14 (.F(w[14]), .I0(en), .I1(a[1]), .I2(a[2]), .I3(a[0]));
+  LUT4 #(.INIT(16'hA2D4)) l15 (.F(w[15]), .I0(en), .I1(a[2]), .I2(a[6]), .I3(a[0]));
+  LUT4 #(.INIT(16'h84C3)) l16 (.F(w[16]), .I0(en), .I1(a[6]), .I2(a[2]), .I3(a[2]));
+  LUT4 #(.INIT(16'h1E7D)) l17 (.F(w[17]), .I0(en), .I1(a[6]), .I2(a[6]), .I3(a[4]));
+  LUT4 #(.INIT(16'h51C8)) l18 (.F(w[18]), .I0(en), .I1(a[1]), .I2(a[2]), .I3(a[3]));
+  LUT4 #(.INIT(16'h5B74)) l19 (.F(w[19]), .I0(en), .I1(a[5]), .I2(a[1]), .I3(a[1]));
+  LUT4 #(.INIT(16'h1EA5)) l20 (.F(w[20]), .I0(en), .I1(a[4]), .I2(a[3]), .I3(a[6]));
+  LUT4 #(.INIT(16'h5DCA)) l21 (.F(w[21]), .I0(en), .I1(a[2]), .I2(a[3]), .I3(a[3]));
+  LUT4 #(.INIT(16'h78A0)) l22 (.F(w[22]), .I0(en), .I1(a[3]), .I2(a[4]), .I3(a[2]));
+  LUT4 #(.INIT(16'h2496)) l23 (.F(w[23]), .I0(en), .I1(a[2]), .I2(a[0]), .I3(a[0]));
+  assign y = ^w;
+endmodule

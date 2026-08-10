@@ -1,3 +1,4 @@
+import { tooBigCanvasToDrawReason } from './canvas-capacity.ts'
 import type { Parameters } from './part-defaults.ts'
 
 /**
@@ -461,10 +462,21 @@ export function ungroupBlock(
         }),
     )
 
-  return {
+  const ungrouped = {
     nodes: [...nodes.filter((n) => n.id !== blockNodeId), ...restored],
     edges: [...rewired, ...restoredEdges],
   }
+  // Ungroup is a bulk canvas load wearing a different hat: ONE node becomes every part inside it, and a
+  // block that arrived as a synthesized CPU or a recovered chip design holds thousands of them. Checked
+  // on the canvas this would produce, and refused the same way "that is not a block" is refused — the
+  // block stays exactly as it was, so the user loses nothing by being told no.
+  const tooBig = tooBigCanvasToDrawReason(
+    ungrouped.nodes,
+    ungrouped.edges.length,
+    'The block was left as it is.',
+  )
+  if (tooBig !== undefined) return { reason: tooBig }
+  return ungrouped
 }
 
 /**

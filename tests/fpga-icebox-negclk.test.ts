@@ -48,17 +48,17 @@ const negmid = load('p3_NEGMID.bin')
 const allpos = load('p3_ALLPOS.bin')
 
 /**
- * Net 4134 is the design's `d` pin. Both builds place the head register differently, but both read this same net
- * — it is the one primary input the first flip-flop takes in each. It is named as a constant rather than
- * searched for because the obvious search does not work: the decoded truth table reports a dependence on all
- * FOUR pins of a register that passes one signal through, and the recovered netlist lists 14 primary inputs for
- * a design with two. Both are real, separate defects (unrouted pins becoming drivable inputs), recorded in the
- * audit ledger; neither is what this file is about, and neither should be papered over with a cleverer search.
+ * The design's `d` pin, FOUND rather than written down. Both builds place the head register differently, but each
+ * takes exactly one external data input, so the design's single primary net is `d`.
+ *
+ * This used to be the literal constant 4134, with a comment saying the obvious search could not work: the
+ * recovered netlist listed 14 primary inputs for a design with two, because a LUT pin the vendor never routed was
+ * being reported as a drivable external input (the decoded truth table legitimately depends on such a pin — an
+ * unrouted iCE40 input reads LOW on silicon — so the don't-care mask does not remove it). With unrouted pins
+ * classified as the constants they are, the search returns exactly one net, and it is 4134 in both builds: the
+ * number that had to be hard-coded is now the one a search finds.
  */
-const DATA_NET = 4134
-
-/** The cycle at which the design's output register first reads 1, or -1. */
-function risesAt(loaded: ReturnType<typeof load>, cycles: number): number {
+function dataNet(loaded: ReturnType<typeof load>): number {
   const nets = [
     ...new Set(
       loaded.netlist.cells
@@ -67,10 +67,17 @@ function risesAt(loaded: ReturnType<typeof load>, cycles: number): number {
         .map((i) => i.net),
     ),
   ]
+  expect(nets).toHaveLength(1) // one data input, so one primary net — no phantoms to choose between
+  return nets[0] as number
+}
+
+/** The cycle at which the design's output register first reads 1, or -1. */
+function risesAt(loaded: ReturnType<typeof load>, cycles: number): number {
+  const data = dataNet(loaded)
   // One-cycle pulse on the data pin, exactly as the reference testbench drives it.
   const { trace } = simulateClocked(
     loaded.netlist,
-    (cy: number) => new Map(nets.map((net) => [net, net === DATA_NET && cy === 1])),
+    (cy: number) => new Map([[data, cy === 1]]),
     cycles,
   )
   // The output is the registered cell nothing else reads — the end of the three-stage chain.
@@ -99,6 +106,8 @@ describe('the tile’s falling-edge bit is decoded, not thrown away', () => {
     expect(negmid.netlist.cells).toHaveLength(allpos.netlist.cells.length)
     expect(negmid.netlist.cells.some((c) => c.negClk === true)).toBe(true)
     expect(allpos.netlist.cells.some((c) => c.negClk === true)).toBe(false)
+    // and both builds present the same single data input — the net `dataNet` finds below
+    expect([dataNet(negmid), dataNet(allpos)]).toEqual([4134, 4134])
   })
 
   test('exactly ONE flip-flop is on the falling edge, as the source says', () => {
@@ -136,17 +145,10 @@ describe('the tile’s falling-edge bit is decoded, not thrown away', () => {
     // The mechanism, not just the end result: the negedge cell samples half a period after the posedge cell
     // that feeds it latched, so both read 1 on the same cycle. Under a single-edge model the negedge cell would
     // lag its driver by one cycle - which is precisely where the missing period came from.
-    const nets = [
-      ...new Set(
-        negmid.netlist.cells
-          .flatMap((c) => c.inputs)
-          .filter((i) => i.kind === 'primary')
-          .map((i) => i.net),
-      ),
-    ]
+    const data = dataNet(negmid)
     const { trace } = simulateClocked(
       negmid.netlist,
-      (cy: number) => new Map(nets.map((net) => [net, net === DATA_NET && cy === 1])),
+      (cy: number) => new Map([[data, cy === 1]]),
       10,
     )
     const falling = negmid.netlist.cells.find((c) => c.negClk === true)

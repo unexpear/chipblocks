@@ -34,9 +34,15 @@ const LAYOUT = parseLogicTileBits(
 )
 
 // A small hand-written device (the real chipdb grammar) that FULLY wires two cells on tile (1,1): cell 0's
-// inputs + output, cell 1's input + output, and a routed switch from cell 0's output to cell 1's input 0. This
-// lets a simulation exercise both cells' real logic — the vendored real slices only carry the A→B wire, not
-// A's own inputs (validated separately below).
+// inputs + output, cell 1's input + output, a routed switch from cell 0's output to cell 1's input 0, and a
+// routed switch bringing each of cell 0's two inputs in from an external net. This lets a simulation exercise
+// both cells' real logic — the vendored real slices only carry the A→B wire, not A's own inputs (validated
+// separately below).
+//
+// Those two input routes are not decoration. A LUT pin the bitstream never routes is not an external input: it
+// reads LOW on silicon, and the recovery reports it as a tied-low constant. Our own place-and-route leaves
+// primary inputs at the fabric edge (`synthesizeBitstream`: "not routed to IO pads"), so the routes are added to
+// the assembled bitstream here — which is also what a real vendor bitstream looks like.
 const WIRED_DEVICE = parseIceboxChipdb(
   [
     '.device T 8 8 5',
@@ -50,10 +56,20 @@ const WIRED_DEVICE = parseIceboxChipdb(
     '1 1 lutff_1/in_0',
     '.net 4',
     '1 1 lutff_1/out',
+    '.net 100',
+    '0 1 glb_netwk_0', // i0 arriving from outside the logic we recover
+    '.net 101',
+    '0 1 glb_netwk_1', // i1, likewise
     '.buffer 1 1 3 B0[14]', // route lutff_0/out (net 2) → lutff_1/in_0 (net 3)
     '1 2',
+    '.buffer 1 1 0 B0[15]', // route net 100 → lutff_0/in_0 (net 0)
+    '1 100',
+    '.buffer 1 1 1 B0[16]', // route net 101 → lutff_0/in_1 (net 1)
+    '1 101',
   ].join('\n'),
 )
+/** The two input routes above, as CRAM bits to merge into a synthesized design (the synth flow omits IO). */
+const WIRED_INPUT_PIPS = WIRED_DEVICE.pips.filter((p) => p.dst === 0 || p.dst === 1)
 
 // A = i0 & i1 into net nA; B = a buffer of its pin 0, reading nA. So B's output should equal i0 & i1.
 const A: KLut = {
@@ -71,32 +87,37 @@ const wiredPlacement: Placement = new Map([
 
 describe('reconstructNetlist + simulateCombinational — load a bitstream and watch it compute', () => {
   const design = synthesizeBitstream(WIRED_DEVICE, LAYOUT, [A, B], wiredPlacement)
-  const parsed = parseBitstream(design.bitstream.bits, WIRED_DEVICE, LAYOUT)
+  // The synthesized cells + cell-to-cell routing, plus the two IO routes the synth flow does not emit.
+  const inputBits = assembleBitstream(LAYOUT, { routingPips: WIRED_INPUT_PIPS })
+  const parsed = parseBitstream([...design.bitstream.bits, ...inputBits.bits], WIRED_DEVICE, LAYOUT)
   const netlist = reconstructNetlist(parsed, WIRED_DEVICE)
 
   test('the netlist is rebuilt from the bitstream: cell 1 reads cell 0, cell 0 reads primaries', () => {
     expect(design.routed).toBe(true)
+    expect(design.bitstream.conflicts).toEqual([])
+    expect(inputBits.conflicts).toEqual([]) // the IO routes use their own bits, clear of the LC bits
     const a = netlist.cells.find((c) => c.ref.cell === 0)
     const b = netlist.cells.find((c) => c.ref.cell === 1)
     // cell 1's input pin 0 is driven by cell 0 (traced back through the routed pip); `net` is cell 0's OUTPUT
     // net (2 = lutff_0/out, the source), not cell 1's input-pin net.
     expect(b?.inputs[0]).toEqual({ kind: 'cell', driver: { x: 1, y: 1, cell: 0 }, net: 2 })
     expect(b?.inputs[1]).toEqual({ kind: 'unused' })
-    // cell 0's two inputs are primary (external), pins 2/3 unused
-    expect(a?.inputs[0]).toEqual({ kind: 'primary', net: 0 })
-    expect(a?.inputs[1]).toEqual({ kind: 'primary', net: 1 })
+    // cell 0's two inputs trace back over their routes to the external nets 100/101 — the SOURCE net, not the
+    // input pin's own net, which is the signature of a real trace
+    expect(a?.inputs[0]).toEqual({ kind: 'primary', net: 100 })
+    expect(a?.inputs[1]).toEqual({ kind: 'primary', net: 101 })
     expect(a?.inputs[2]).toEqual({ kind: 'unused' })
   })
 
   test('simulating the rebuilt netlist reproduces the design function: out = i0 & i1, straight from the bits', () => {
     for (const i0 of [false, true]) {
       for (const i1 of [false, true]) {
-        // primaries are named by net: cell 0's in_0 = net 0, in_1 = net 1
+        // primaries are named by their SOURCE net: i0 arrives on net 100, i1 on net 101
         const sim = simulateCombinational(
           netlist,
           new Map([
-            [0, i0],
-            [1, i1],
+            [100, i0],
+            [101, i1],
           ]),
         )
         expect(sim.registered).toEqual([]) // purely combinational
@@ -168,26 +189,32 @@ const oneIn = (cell: number, config: LcConfig, in0: InputSource): RecoveredCell 
 
 describe('reconstructNetlist — real cells declare all 4 pins; unused LUT inputs are not phantom primaries', () => {
   test('a 2-input LUT on a device that declares in_2/in_3 marks those pins UNUSED, not primary', () => {
+    // Three outcomes in one cell: a used + ROUTED pin is an external input; a used pin nothing routed is tied
+    // low (an unrouted iCE40 input reads LOW on silicon); a declared pin the truth table ignores is unused.
     const dev = parseIceboxChipdb(
       [
         '.device T 8 8 4',
         '.net 0',
         '1 1 lutff_0/in_0',
         '.net 1',
-        '1 1 lutff_0/in_1',
+        '1 1 lutff_0/in_1', // used, and left UNROUTED
         '.net 5',
         '1 1 lutff_0/in_2', // declared, but the AND2 does not depend on it
         '.net 6',
         '1 1 lutff_0/in_3', // declared, but ignored
+        '.net 100',
+        '0 1 glb_netwk_0', // an external signal
+        '.buffer 1 1 0 B0[15]', // net 100 → in_0
+        '1 100',
       ].join('\n'),
     )
     const parsed: ParsedDesign = {
       cells: [{ x: 1, y: 1, cell: 0, config: comb(AND2_16) }],
-      onPips: [],
+      onPips: dev.pips,
     }
     const c0 = reconstructNetlist(parsed, dev).cells[0]
-    expect(c0?.inputs[0]).toEqual({ kind: 'primary', net: 0 }) // in_0 used ⇒ external primary
-    expect(c0?.inputs[1]).toEqual({ kind: 'primary', net: 1 }) // in_1 used ⇒ external primary
+    expect(c0?.inputs[0]).toEqual({ kind: 'primary', net: 100 }) // in_0 used AND routed ⇒ external primary
+    expect(c0?.inputs[1]).toEqual({ kind: 'const', value: false }) // in_1 used but unrouted ⇒ tied low
     expect(c0?.inputs[2]).toEqual({ kind: 'unused' }) // in_2 declared but a don't-care ⇒ unused
     expect(c0?.inputs[3]).toEqual({ kind: 'unused' }) // in_3 declared but a don't-care ⇒ unused
   })
@@ -247,10 +274,14 @@ describe('reconstructNetlist — real cells declare all 4 pins; unused LUT input
         '1 1 lutff_1/in_0',
         '.net 4',
         '1 1 lutff_1/out',
+        '.net 100',
+        '0 1 glb_netwk_0', // A's real external input
         '.buffer 1 1 3 B0[14]', // A.out (net 2) → B.in_0 (net 3)
         '1 2',
         '.buffer 1 1 1 B0[15]', // B.out (net 4) → A.in_1 (net 1) — into A's don't-care pin
         '1 4',
+        '.buffer 1 1 0 B0[16]', // net 100 → A.in_0 (net 0)
+        '1 100',
       ].join('\n'),
     )
     const parsed: ParsedDesign = {
@@ -262,10 +293,10 @@ describe('reconstructNetlist — real cells declare all 4 pins; unused LUT input
     }
     const nl = reconstructNetlist(parsed, dev)
     const a = nl.cells.find((c) => c.ref.cell === 0)
-    expect(a?.inputs[0]).toEqual({ kind: 'primary', net: 0 }) // the pin A actually uses
+    expect(a?.inputs[0]).toEqual({ kind: 'primary', net: 100 }) // the pin A actually uses, traced to its source
     expect(a?.inputs[1]).toEqual({ kind: 'unused' }) // driven by B, but a don't-care ⇒ NOT a phantom cell edge
     for (const v of [false, true]) {
-      const sim = simulateCombinational(nl, new Map([[0, v]]))
+      const sim = simulateCombinational(nl, new Map([[100, v]]))
       expect(sim.outputs.get('1_1_0')).toBe(v) // A = the primary
       expect(sim.outputs.get('1_1_1')).toBe(v) // B follows A — no false-cycle corruption
     }

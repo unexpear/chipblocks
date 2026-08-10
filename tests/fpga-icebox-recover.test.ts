@@ -122,43 +122,54 @@ describe('recoverLogicCells — a real NON-384 vendor .bin (1k) with set/reset +
 })
 
 describe('recoverNetlist — load a real routed vendor .bin and simulate it (384, full chipdb)', () => {
-  // The capstone: fixtures/icebox-ice40-384-routed.bin is a GENUINE icepack-packed 384 bitstream of a real
-  // routed design (A = i0 & i1 in cell 0, feeding B = buffer(A) in cell 5, wired through the chip's REAL routing),
-  // and fixtures/icebox-ice40-384-chipdb.txt is the full Project IceStorm chip database. This loads the .bin like
-  // a user's own file — device detected from it — then rebuilds the whole netlist (cells + routing) and runs it.
+  // The capstone: fixtures/icebox-ice40-384-vendor-xor5.bin is a GENUINE icepack-packed 384 bitstream, built by
+  // the vendor toolchain (yosys -> nextpnr-ice40 --lp384 --package qn32 -> icepack) from
+  // `module top(input [4:0] i, output y); assign y = ^i; endmodule` — so its five inputs are really routed in
+  // from IO blocks and its LUTs are really wired to each other. fixtures/icebox-ice40-384-chipdb.txt is the full
+  // Project IceStorm chip database. This loads the .bin like a user's own file — device detected from it — then
+  // rebuilds the whole netlist (cells + routing) and runs it.
+  //
+  // It used to run on icebox-ice40-384-routed.bin, a bitstream from our OWN place-and-route, and drove that
+  // design's two LUT input pins to assert `B = A = i0 & i1`. Our flow leaves primary inputs at the fabric edge
+  // (see `synthesizeBitstream`), so those pins carry no routing at all — on silicon they read LOW, and the
+  // assertion was about a design the bitstream does not describe. That fixture's honest reading is checked in
+  // fpga-icebox-unrouted-pins.test.ts; the end-to-end proof belongs on a file whose inputs exist.
   const DEVICE = parseIceboxChipdb(
     readFileSync(new URL('../fixtures/icebox-ice40-384-chipdb.txt', import.meta.url), 'utf8'),
   )
   const BIN = new Uint8Array(
-    readFileSync(new URL('../fixtures/icebox-ice40-384-routed.bin', import.meta.url)),
+    readFileSync(new URL('../fixtures/icebox-ice40-384-vendor-xor5.bin', import.meta.url)),
   )
 
-  test('rebuilds A→B connectivity from the recovered routing and computes B = A = i0 & i1', () => {
+  test('rebuilds cell-to-cell connectivity from the recovered routing and computes the design (parity of 5)', () => {
     const parsed = parseBinFile(BIN)
     expect(parsed.device).toBe('384') // device auto-detected from the loaded file, not assumed
     const netlist = recoverNetlist('384', DEVICE, LAYOUT, parsed.cram)
 
-    const a = netlist.cells.find((c) => c.ref.cell === 0)
-    const b = netlist.cells.find((c) => c.ref.cell === 5)
-    // B's input traces back to A (cell 0) through the routing recovered from the real bitstream
-    expect(b?.inputs.some((i) => i.kind === 'cell' && i.driver.cell === 0)).toBe(true)
-    // A reads two external primary inputs (i0, i1)
-    const primNets = (a?.inputs ?? [])
-      .filter((i) => i.kind === 'primary')
-      .map((i) => (i as { net: number }).net)
-    expect(primNets).toHaveLength(2)
+    // one cell's input traces back to another cell through the routing recovered from the real bitstream
+    expect(netlist.cells.some((c) => c.inputs.some((i) => i.kind === 'cell'))).toBe(true)
+    // and the design's five external inputs come back — five, exactly what the vendor's own module header says
+    const primNets = [
+      ...new Set(
+        netlist.cells.flatMap((c) =>
+          c.inputs.filter((i) => i.kind === 'primary').map((i) => i.net),
+        ),
+      ),
+    ]
+    expect(primNets).toHaveLength(5)
 
-    // simulate the whole thing straight from the loaded bitstream: B (cell 5) = A (cell 0) = i0 & i1
-    for (const i0 of [false, true])
-      for (const i1 of [false, true]) {
-        const sim = simulateCombinational(
-          netlist,
-          new Map([
-            [primNets[0] as number, i0],
-            [primNets[1] as number, i1],
-          ]),
-        )
-        expect(sim.outputs.get('1_1_5')).toBe(i0 && i1)
-      }
+    // simulate the whole thing straight from the loaded bitstream: exactly one cell is `y = ^i`
+    const parityCells = netlist.cells
+      .map((c) => `${c.ref.x}_${c.ref.y}_${c.ref.cell}`)
+      .filter((key) => {
+        for (let pattern = 0; pattern < 32; pattern++) {
+          const stimulus = new Map(primNets.map((net, k) => [net, ((pattern >> k) & 1) === 1]))
+          let parity = false
+          for (let k = 0; k < 5; k++) parity = parity !== (((pattern >> k) & 1) === 1)
+          if (simulateCombinational(netlist, stimulus).outputs.get(key) !== parity) return false
+        }
+        return true
+      })
+    expect(parityCells).toHaveLength(1)
   })
 })

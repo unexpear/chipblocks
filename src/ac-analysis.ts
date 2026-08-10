@@ -27,24 +27,42 @@ import { propagationDelayS } from './transmission-line-model.ts'
  * margin from a real frequency response, which is what this computes.
  *
  * This stage covers the LINEAR elements (R, C, L) plus independent sources, solved
- * exactly in the frequency domain (R -> 1/R, C -> jwC, L -> 1/jwL) via the same
+ * exactly in the frequency domain (R -> 1/R, C -> 1/(ESR - j/wC), L -> 1/(R_winding + jwL)) via the same
  * mathjs lusolve the DC solver uses — here over a complex MNA matrix. Wires, intact
  * fuses, closed SPST switches, the SPDT's selected throw, and the relay's live contact
  * stamp as 0 V shorts (matching the DC/transient engines); the relay coil stamps as its
  * resistance. BJT, MOSFET/JFET/CRD, and diode small-signal (forward, zener breakdown,
  * tunnel negative-resistance, latched Shockley/SCR), linearized at the DC operating
- * point (the same companion Jacobian the DC solver uses), are included, as are 2-winding
- * transformers (coupled inductances, V = jωL·I + jωM·I). Transmission lines are stamped as
- * a lossless 2-port (Y = ∓j·Y0·cot/csc of the electrical length θ = ω·τ = 2π·length/λ) —
- * the frequency-domain view where the WAVELENGTH appears explicitly, so a quarter-wave line
- * flips its load (Z_in = Z0²/Z_L) and half-wave resonances stand out. Verified against the
- * textbook RC/CR first-order responses and the quarter-wave impedance transformer.
+ * point (the same companion Jacobian the DC solver uses), are included, as are magnetically
+ * coupled parts (V_w = R_w·I_w + jω·Σ L[w][j]·I_j over their windings — two for a transformer,
+ * three for a center-tapped one). Transmission lines are stamped from the telegrapher's equations
+ * (Y = coth/−csch(γℓ)/Zc, reducing EXACTLY to the lossless ∓j·Y0·cot/csc of the electrical length
+ * θ = ω·τ = 2π·length/λ when the line declares no loss) — the frequency-domain view where the
+ * WAVELENGTH appears explicitly, so a quarter-wave line flips its load (Z_in = Z0²/Z_L) and
+ * half-wave resonances stand out. Verified against the textbook RC/CR first-order responses and
+ * the quarter-wave impedance transformer.
  *
  * This engine drives the canvas's Bode panel (bode-panel.tsx — pick an input source + output node,
  * see gain/phase vs frequency). It models every element a circuit can contain: R/C/L, sources, all
  * shorts, BJT / MOSFET / JFET / CRD / diode small-signal (all regimes), the 2-winding transformer,
- * and the (lossless) transmission line — all at temperature. KNOWN LIMITATION: the one structure
- * still not handled is the CENTER-TAPPED transformer's tapped winding.
+ * the CENTER-TAPPED transformer (three coupled windings — the two primary halves and the secondary,
+ * the same structure the transient solver builds), and the transmission line — all at temperature.
+ *
+ * PASSIVE LOSS: a capacitor stamps ESR − j/(ωC), a coil R_winding + jωL, and a transformer each winding's
+ * copper resistance plus the core-loss resistance across the primary. Loss is only ever taken from a value the
+ * part declares; a part that declares none is solved as the ideal element it says it is, and
+ * `partsSolvedAsPerfectReactance` names it — PER LOSS, so a transformer that declares its core loss and no
+ * copper is still named for the copper — so the resulting too-good numbers (an infinite return loss, a
+ * bottomless VSWR dip) are not read as physical.
+ *
+ * WHICH ENGINES READ WHICH LOSS (they do not all read the same set — do not assume they do):
+ *   winding_resistance (coil)        DC ✓   transient ✓   AC ✓
+ *   transformer winding + core R     DC ✓   transient ✓   AC ✓
+ *   transmission-line R / G          DC ✗   transient ✗   AC ✓
+ *   capacitor esr / dissipation_factor   DC ✗   transient ✗   AC ✓  ← AC ONLY
+ * So a capacitor declaring an ESR is lossy on the Bode / reflection / S-parameter plots and still LOSSLESS in
+ * the time domain: its transient ripple and its scope trace show no ESR bump. That is a real gap, not a
+ * rounding difference, and it is why the shipped electrolytic's cited tan δ moves the AC curves alone.
  */
 
 export type Complex = { re: number; im: number }
@@ -52,23 +70,54 @@ export type Complex = { re: number; im: number }
 const cAbs = (re: number, im: number): number => Math.hypot(re, im)
 const cArgDeg = (re: number, im: number): number => (Math.atan2(im, re) * 180) / Math.PI
 
-/** A tiny node-to-ground conductance (S) added to every node so a floating subsection (e.g. an
- *  ungrounded transformer secondary) gives a finite result instead of a singular matrix. ~1 GΩ —
- *  negligible beside any real circuit impedance. */
+/**
+ * A tiny node-to-ground conductance (S) added to every node so a floating subsection (e.g. an
+ * ungrounded transformer secondary) gives a finite result instead of a singular matrix. ~1 GΩ —
+ * negligible beside any real circuit impedance.
+ *
+ * WHERE THIS MODEL STOPS BEING TRUSTWORTHY. gmin sits in PARALLEL with the element, so a series
+ * impedance R + jX reads back as Re(Zin) ≈ R + AC_GMIN·X² (exact when |X| ≫ R). The declared
+ * resistance is therefore only recovered while
+ *
+ *     AC_GMIN·X² ≪ R      i.e.   |X| ≪ √(R / AC_GMIN)
+ *
+ * On the SHIPPED 10 mH / 32 Ω choke that ceiling is |X| ≪ 179 kΩ, so f ≪ 2.8 MHz: the engine reports
+ * Re = 32.0000 Ω at 1 kHz and 32.04 Ω at 100 kHz (right), but 426.8 Ω at 10 MHz and 39,509 Ω at
+ * 100 MHz (measured) — and those two are the gmin floor being read back, NOT copper. Above the
+ * ceiling the REACTANCE is still correct; only the loss (and everything derived from it: Q, return
+ * loss, |S21|) is inflated. `acGminFloorOhms` computes the error term so a test can pin it.
+ */
 const AC_GMIN = 1e-9
+
+/**
+ * The apparent series resistance the AC_GMIN floor ADDS to a series impedance whose reactance is `reactanceOhms`
+ * — the AC_GMIN·X² term above. Exported so the honesty limit is a computable number, not a claim in a comment.
+ */
+export const acGminFloorOhms = (reactanceOhms: number): number => AC_GMIN * reactanceOhms ** 2
 
 type BjtAcModel = BjtSmallSignal & { bIdx: number; cIdx: number; eIdx: number }
 type MosfetAcModel = MosfetSmallSignal & { gIdx: number; dIdx: number; sIdx: number }
 type DiodeAcModel = DiodeSmallSignal & { aIdx: number; cIdx: number }
-/** A 2-winding transformer's coupled inductances + its four winding-terminal node indices. */
-type TransformerAcModel = {
-  pPlusIdx: number
-  pMinusIdx: number
-  sPlusIdx: number
-  sMinusIdx: number
-  l1: number
-  l2: number
-  m: number
+
+/** One winding of a magnetically coupled part: the node pair it spans and its own copper resistance (Ω;
+ *  0 = not declared, an ideal winding). */
+type AcWinding = { plusIdx: number; minusIdx: number; resistance: number }
+/**
+ * A magnetically coupled part solved through one branch current per winding: the plain 2-winding transformer
+ * (primary, secondary) and the center-tapped one (primary half A, primary half B, secondary). `inductance` is
+ * the full symmetric matrix — [w][w] is winding w's own L, [w][j] the mutual to winding j — so the branch
+ * equation for winding w is V_w = R_w·I_w + jω·Σ_j L[w][j]·I_j, whatever the winding count.
+ */
+type CoupledAcModel = {
+  windings: AcWinding[]
+  inductance: number[][]
+  /** Core loss as the classic resistance ACROSS the full primary (0 = not declared) — the same node pair the
+   *  transient engine puts it across, so it stamps as a plain conductance, not into a branch equation. */
+  coreResistance: number
+  corePlusIdx: number
+  coreMinusIdx: number
+  /** Row/column of this part's FIRST winding-current unknown in the MNA system. */
+  branchBase: number
 }
 
 type Topology = {
@@ -77,8 +126,8 @@ type Topology = {
   vsources: Instance[]
   /** 2-terminal 0 V shorts (wires, intact fuses, closed SPST switches): a branch unknown each. */
   shorts: { aNet: string; bNet: string }[]
-  /** 2-winding transformers: TWO branch unknowns each (the primary + secondary winding currents). */
-  transformers: TransformerAcModel[]
+  /** Magnetically coupled parts (transformers, center-tapped transformers): one branch unknown per winding. */
+  coupled: CoupledAcModel[]
   dim: number
   bjts: BjtAcModel[]
   mosfets: MosfetAcModel[]
@@ -142,6 +191,129 @@ function acShortPair(inst: Instance): { aNet: string; bNet: string } | null {
   }
 }
 
+/** A coupled part described in NETS (not node indices), so the same builder serves the MNA topology and the
+ *  "what did the AC solve drop, and why" report. */
+type CoupledSpec = {
+  windings: { plusNet: string; minusNet: string; resistance: number }[]
+  inductance: number[][]
+  coreResistance: number
+  corePlusNet: string
+  coreMinusNet: string
+}
+/** Definitions this engine solves as magnetically coupled windings. */
+const COUPLED_DEFINITIONS = new Set(['transformer', 'transformer_center_tapped'])
+
+/**
+ * Turn a transformer / center-tapped transformer instance into its coupled-winding description, or say why it
+ * cannot be solved. Returns null for any other part.
+ *
+ * The center-tapped build matches the transient solver's exactly (transient-solver.ts): each primary HALF has a
+ * quarter of the end-to-end inductance (half the turns, L ∝ N²) and half the end-to-end DCR, the halves couple
+ * to each other through the core (k·L_half) and to the secondary (k·√(L_half·L2)).
+ *
+ * k = 1 IS ACCEPTED. It is what a user types for "an ideal transformer", and dropping the part for it used to
+ * take its cited winding and core resistances out of the circuit silently. Nothing here inverts the inductance
+ * matrix — the windings are solved through branch currents — so a perfectly-coupled part stamps like any other.
+ * k > 1 is refused: M > √(L1·L2) means the coupled energy exceeds the stored energy, which no core can do.
+ * One k = 1 topology stays genuinely unsolvable — a perfectly-coupled part with NO winding resistance and a
+ * SHORTED secondary is a dead short at its primary, so an ideal source across it has no solution and the solve
+ * returns NaN. That is the same refusal any singular circuit gets, not a number to be trusted.
+ */
+function coupledSpec(inst: Instance): { spec: CoupledSpec } | { dropped: string } | null {
+  if (!COUPLED_DEFINITIONS.has(inst.definition)) return null
+  const centerTapped = inst.definition === 'transformer_center_tapped'
+  const l1 = readScalarParam(inst, 'primary_inductance')
+  const l2 = readScalarParam(inst, 'secondary_inductance')
+  const k = readScalarParam(inst, 'coupling_coefficient')
+  if (l1 === undefined || l2 === undefined || k === undefined) {
+    return { dropped: 'it declares no primary/secondary inductance or coupling coefficient' }
+  }
+  if (!(l1 > 0) || !(l2 > 0)) return { dropped: 'its winding inductances must both be above zero' }
+  if (!(k > 0)) return { dropped: `its coupling coefficient ${k} must be above zero` }
+  if (k > 1) {
+    return {
+      dropped: `its coupling coefficient ${k} exceeds 1 (no core can couple more than it stores)`,
+    }
+  }
+  const netOf = (terminal: string) => inst.connects?.find((conn) => conn.terminal === terminal)?.net
+  const primaryA = netOf('primary_a')
+  const primaryB = netOf('primary_b')
+  const secondaryA = netOf('secondary_a')
+  const secondaryB = netOf('secondary_b')
+  // A plain transformer has no center tap, so it stands in as wired — only the center-tapped part is
+  // refused for an unwired one, and its two primary halves cannot be told apart without it.
+  const centerTap = centerTapped ? netOf('primary_ct') : 'not-needed'
+  if (
+    primaryA === undefined ||
+    primaryB === undefined ||
+    secondaryA === undefined ||
+    secondaryB === undefined ||
+    centerTap === undefined
+  ) {
+    return { dropped: 'one of its winding terminals is not wired' }
+  }
+  const primaryResistance = readScalarParam(inst, 'primary_resistance') ?? 0
+  const secondaryResistance = readScalarParam(inst, 'secondary_resistance') ?? 0
+  const core = {
+    coreResistance: readScalarParam(inst, 'core_loss_resistance') ?? 0,
+    corePlusNet: primaryA,
+    coreMinusNet: primaryB,
+  }
+  if (!centerTapped) {
+    const mutual = k * Math.sqrt(l1 * l2)
+    return {
+      spec: {
+        windings: [
+          { plusNet: primaryA, minusNet: primaryB, resistance: primaryResistance },
+          { plusNet: secondaryA, minusNet: secondaryB, resistance: secondaryResistance },
+        ],
+        inductance: [
+          [l1, mutual],
+          [mutual, l2],
+        ],
+        ...core,
+      },
+    }
+  }
+  const halfInductance = l1 / 4
+  const halfResistance = primaryResistance / 2
+  const halfToHalf = k * halfInductance
+  const halfToSecondary = k * Math.sqrt(halfInductance * l2)
+  return {
+    spec: {
+      windings: [
+        { plusNet: primaryA, minusNet: centerTap, resistance: halfResistance },
+        { plusNet: centerTap, minusNet: primaryB, resistance: halfResistance },
+        { plusNet: secondaryA, minusNet: secondaryB, resistance: secondaryResistance },
+      ],
+      inductance: [
+        [halfInductance, halfToHalf, halfToSecondary],
+        [halfToHalf, halfInductance, halfToSecondary],
+        [halfToSecondary, halfToSecondary, l2],
+      ],
+      ...core,
+    },
+  }
+}
+
+export type DroppedAcPart = { id: string; definition: string; reason: string }
+
+/**
+ * Every part the AC solve leaves OUT of the circuit, with the reason. A dropped part is not an approximation —
+ * it is simply absent, so its impedance and every loss it declares vanish from the answer. The panels say so
+ * rather than letting a plausible-looking number stand for a circuit missing one of its parts.
+ */
+export function partsDroppedFromAcSolve(world: World): DroppedAcPart[] {
+  const dropped: DroppedAcPart[] = []
+  for (const inst of world.instances.values()) {
+    const built = coupledSpec(inst)
+    if (built !== null && 'dropped' in built) {
+      dropped.push({ id: inst.id, definition: inst.definition, reason: built.dropped })
+    }
+  }
+  return dropped
+}
+
 function buildTopology(
   world: World,
   temperaturesC?: Map<string, number>,
@@ -177,33 +349,30 @@ function buildTopology(
     (i) => i.definition === 'cccs' && i.connects?.length === 4,
   )
 
-  // 2-winding transformers: coupled inductances, stamped via two branch currents (no matrix
-  // inversion, so any 0 < k < 1 is fine). M = k·√(L1·L2). The center-tapped variant's tapped
-  // winding is a more complex structure, not handled here.
-  const transformers: TransformerAcModel[] = []
+  // Magnetically coupled parts (2-winding + center-tapped transformers): one branch current per winding, so
+  // nothing inverts the inductance matrix and any 0 < k ≤ 1 is fine. Their branch rows start after the
+  // voltage-source and short rows, one row per winding, in the order the parts are visited.
+  const coupled: CoupledAcModel[] = []
+  let windingBranch = nodeIndex.size + vsources.length + shorts.length
   for (const inst of world.instances.values()) {
-    if (inst.definition !== 'transformer') continue
-    const l1 = readScalarParam(inst, 'primary_inductance')
-    const l2 = readScalarParam(inst, 'secondary_inductance')
-    const k = readScalarParam(inst, 'coupling_coefficient')
-    if (l1 === undefined || l2 === undefined || k === undefined) continue
-    if (l1 <= 0 || l2 <= 0 || k <= 0 || k >= 1) continue
-    const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
-    const pA = netOf('primary_a')
-    const pB = netOf('primary_b')
-    const sA = netOf('secondary_a')
-    const sB = netOf('secondary_b')
-    if (pA === undefined || pB === undefined || sA === undefined || sB === undefined) continue
-    transformers.push({
-      pPlusIdx: idx(pA),
-      pMinusIdx: idx(pB),
-      sPlusIdx: idx(sA),
-      sMinusIdx: idx(sB),
-      l1,
-      l2,
-      m: k * Math.sqrt(l1 * l2),
+    const built = coupledSpec(inst)
+    if (built === null || 'dropped' in built) continue
+    const { spec } = built
+    coupled.push({
+      windings: spec.windings.map((w) => ({
+        plusIdx: idx(w.plusNet),
+        minusIdx: idx(w.minusNet),
+        resistance: w.resistance,
+      })),
+      inductance: spec.inductance,
+      coreResistance: spec.coreResistance,
+      corePlusIdx: idx(spec.corePlusNet),
+      coreMinusIdx: idx(spec.coreMinusNet),
+      branchBase: windingBranch,
     })
+    windingBranch += spec.windings.length
   }
+  const windingCount = coupled.reduce((total, c) => total + c.windings.length, 0)
 
   // Transistors (BJT + MOSFET/JFET/CRD) are linearized at the DC operating point: solve it once
   // (only when the circuit has any), then build each small-signal model around it.
@@ -257,13 +426,146 @@ function buildTopology(
     nodeIndex,
     vsources,
     shorts,
-    transformers,
-    dim: nodeIndex.size + vsources.length + shorts.length + 2 * transformers.length + cccs.length,
+    coupled,
+    dim: nodeIndex.size + vsources.length + shorts.length + windingCount + cccs.length,
     bjts,
     mosfets,
     diodes,
     cccs,
   }
+}
+
+/**
+ * A capacitor's series loss resistance (Ω) at ω, from what the part DECLARES and nothing else — either `esr`
+ * (how an electrolytic is specified) or a `dissipation_factor` tanδ (how a ceramic / film part is specified),
+ * which is the same loss as a ratio: tanδ = ESR·ωC, so ESR = tanδ/(ωC) and the loss RESISTANCE falls with
+ * frequency while the loss ANGLE stays put. `esr` wins if both are declared. A part declaring NEITHER returns
+ * 0 — it is solved as the ideal capacitor it was declared to be; no plausible-looking ESR is substituted.
+ *
+ * A NEGATIVE declared loss returns 0 too, and does not fall through to the other spelling. As a resistance it
+ * would SOURCE power, making a passive capacitor reflect more than it received. The stamp refuses a negative
+ * as well, so this is the outer of two guards; exported so that outer guard can be tested on its own.
+ */
+export function capacitorEsrOhms(inst: Instance, omega: number, capacitanceFarads: number): number {
+  const esr = readScalarParam(inst, 'esr')
+  if (esr !== undefined && esr > 0) return esr
+  const dissipationFactor = readScalarParam(inst, 'dissipation_factor')
+  if (dissipationFactor !== undefined && dissipationFactor > 0) {
+    return dissipationFactor / (omega * capacitanceFarads)
+  }
+  return 0
+}
+
+/** Stamp a series impedance Z = r + jx as its admittance 1/Z. Only for r > 0 — the lossless r = 0 case keeps
+ *  its own closed-form stamp so a part with no declared loss solves bit-for-bit as it did before loss existed. */
+function stampSeriesImpedance(
+  stampY: (a: number, c: number, re: number, im: number) => void,
+  a: number,
+  c: number,
+  r: number,
+  x: number,
+): void {
+  const y = cDiv({ re: 1, im: 0 }, { re: r, im: x })
+  stampY(a, c, y.re, y.im)
+}
+
+/**
+ * The SEPARATE losses each family can declare, and for each the parameter(s) any ONE of which carries it, in
+ * the order this engine reads them. A family's losses are independent: a transformer's primary copper, its
+ * secondary copper and its iron are three different losses in three different places, so declaring one says
+ * nothing about the other two. Only ALTERNATIVE spellings of the SAME loss share a slot — a capacitor's `esr`
+ * and its `dissipation_factor` are one loss written two ways (tanδ = ESR·ωC), which is why they sit together.
+ *
+ * A transmission line's `skin_effect_onset_hz` is deliberately NOT a slot: it only shapes how the declared
+ * series_resistance rises with frequency, so on its own it carries no loss at all.
+ */
+const AC_LOSS_SLOTS: Record<string, string[][]> = {
+  capacitor: [['esr', 'dissipation_factor']],
+  inductor: [['winding_resistance']],
+  electromagnet: [['winding_resistance']],
+  transformer: [['primary_resistance'], ['secondary_resistance'], ['core_loss_resistance']],
+  transformer_center_tapped: [
+    ['primary_resistance'],
+    ['secondary_resistance'],
+    ['core_loss_resistance'],
+  ],
+  transmission_line: [['series_resistance'], ['shunt_conductance', 'loss_tangent']],
+}
+
+/** Every parameter a definition can carry AC loss through, in reading order — one list, so the properties
+ *  panel offers exactly the parameters this engine reads and cannot drift from them. */
+export function acLossParameters(definition: string): string[] {
+  return (
+    (Object.hasOwn(AC_LOSS_SLOTS, definition) ? AC_LOSS_SLOTS[definition] : undefined)?.flat() ?? []
+  )
+}
+
+export type AcLossSlot = {
+  /** Any ONE of these declared above zero carries this loss; the engine reads them in this order. */
+  parameters: string[]
+  /** Those of them the part DOES carry — all declaring zero (empty when it declares none of them). */
+  declaredZero: string[]
+}
+export type PerfectReactancePart = {
+  id: string
+  definition: string
+  /** Only the losses this part carries NOTHING for; a loss it does declare is not listed. */
+  slots: AcLossSlot[]
+}
+export type UndeclaredAcLossPart = {
+  id: string
+  definition: string
+  /** The parameter(s) that would carry a loss this part declares NONE of. */
+  lossParameters: string[]
+}
+
+/**
+ * Every part with at least one loss the engine will solve as PERFECT — reported per LOSS, not per part. A
+ * transformer declaring only its core loss is still listed here for its two windings, which are still being
+ * solved as zero-resistance copper; the old per-part test let one declared parameter silence a part's other
+ * losses entirely.
+ *
+ * Two ways a loss comes out perfect, kept apart because they mean different things:
+ *   • the parameter is ABSENT — nothing was ever said about this loss (`declaredZero` empty);
+ *   • the parameter is present and ZERO — something was said, and it said "ideal". Whether that zero is the
+ *     user's choice or just the value the part shipped with is NOT knowable here (an instance carries no record
+ *     of who set it), so this engine only reports the fact and the caller, which knows the shipped defaults,
+ *     decides how to word it.
+ */
+export function partsSolvedAsPerfectReactance(world: World): PerfectReactancePart[] {
+  const parts: PerfectReactancePart[] = []
+  for (const inst of world.instances.values()) {
+    const slots = AC_LOSS_SLOTS[inst.definition]
+    if (slots === undefined) continue
+    const perfect: AcLossSlot[] = []
+    for (const parameters of slots) {
+      const declared = parameters
+        .map((name) => ({ name, amount: readScalarParam(inst, name) }))
+        .filter((p) => p.amount !== undefined)
+      if (declared.some((p) => (p.amount ?? 0) > 0)) continue
+      perfect.push({ parameters, declaredZero: declared.map((p) => p.name) })
+    }
+    if (perfect.length > 0) parts.push({ id: inst.id, definition: inst.definition, slots: perfect })
+  }
+  return parts
+}
+
+/**
+ * The subset of the above whose loss parameters are ABSENT altogether — a part that says nothing at all about
+ * one of its losses, so the engine has nothing to read and solves it as the ideal element it was declared to
+ * be. A loss declared as an explicit 0 is excluded here; it is reported by partsSolvedAsPerfectReactance,
+ * where the caller can weigh the zero against what the part shipped with.
+ */
+export function partsWithNoDeclaredAcLoss(world: World): UndeclaredAcLossPart[] {
+  const parts: UndeclaredAcLossPart[] = []
+  for (const part of partsSolvedAsPerfectReactance(world)) {
+    const lossParameters = part.slots
+      .filter((slot) => slot.declaredZero.length === 0)
+      .flatMap((slot) => slot.parameters)
+    if (lossParameters.length === 0) continue
+    parts.push({ id: part.id, definition: part.definition, lossParameters })
+  }
+  return parts
 }
 
 /** Solve the linear circuit at angular frequency omega; return the complex node
@@ -323,11 +625,29 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
       const r = readScalarParam(inst, 'resistance')
       if (r && r > 0) stampY(a, c, 1 / r, 0)
     } else if (inst.definition === 'capacitor') {
+      // A real capacitor is its reactance IN SERIES with its loss: Z = ESR − j/(ωC). The loss comes only
+      // from what the part declares (esr, or a dissipation_factor); a part declaring neither stays exactly
+      // lossless — no ESR is invented for it (partsWithNoDeclaredAcLoss names those parts to the user).
       const cap = readScalarParam(inst, 'capacitance')
-      if (cap && cap > 0) stampY(a, c, 0, omega * cap)
+      if (cap && cap > 0) {
+        const esr = omega > 0 ? capacitorEsrOhms(inst, omega, cap) : 0
+        if (esr > 0) stampSeriesImpedance(stampY, a, c, esr, -1 / (omega * cap))
+        else stampY(a, c, 0, omega * cap)
+      }
     } else if (inst.definition === 'inductor' || inst.definition === 'electromagnet') {
+      // A real coil is a length of wire: Z = R_winding + jωL. The DC and transient engines have always read
+      // winding_resistance; so does this one now. Absent / zero winding_resistance = an ideal lossless coil.
       const l = coilInductanceFromInstance(inst)
-      if (l && l > 0) stampY(a, c, 0, -1 / (omega * l))
+      const windingResistance = readScalarParam(inst, 'winding_resistance') ?? 0
+      if (l && l > 0) {
+        if (windingResistance > 0) stampSeriesImpedance(stampY, a, c, windingResistance, omega * l)
+        else stampY(a, c, 0, -1 / (omega * l))
+      } else if (windingResistance > 0) {
+        // No inductance (0, or a geometry that derives none) but real copper declared. The DC solver already
+        // reads that resistance; leaving it unstamped here made the part an OPEN at AC, so a declared loss
+        // disappeared along with the whole part. A coil with no inductance IS its winding resistance.
+        stampY(a, c, 1 / windingResistance, 0)
+      }
     } else if (inst.definition === 'relay') {
       // The coil is a resistor across coil_a/coil_b (its contact is shorted separately, above).
       const coilR = readScalarParam(inst, 'coil_resistance')
@@ -345,7 +665,10 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
       // With R = G = 0 this reduces EXACTLY to the lossless −j·Y0·cot θ / +j·Y0·csc θ (γℓ → jθ, Zc → Z0);
       // adding R (conductor) / G (dielectric) makes the line ATTENUATE — a shorted line's input picks up a
       // real (loss) part and stops reflecting everything. A near-lossless half-wave (sinh γℓ → 0, an
-      // infinite-Q resonance) is clamped off zero to avoid a NaN.
+      // infinite-Q resonance) is clamped off zero to avoid a NaN — and that clamp is a NUMERICAL rescue, not
+      // a physical loss: the resonance height it produces is set by the 1e-12 floor, not by the cable. The
+      // shipped line declares R = G = tanδ = 0, so it is exactly that lossless case, and
+      // partsSolvedAsPerfectReactance names it for the panels.
       const z0 = readScalarParam(inst, 'characteristic_impedance')
       const length = readScalarParam(inst, 'length')
       const vf = readScalarParam(inst, 'velocity_factor')
@@ -437,40 +760,39 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
     // rhs[branch] stays 0 — a short carries any current at zero volts across.
   })
 
-  // 2-winding transformers: two coupled inductors with two branch currents (I1, I2). The branch
-  // equations are the impedance relations V1 = jωL1·I1 + jωM·I2, V2 = jωM·I1 + jωL2·I2.
-  topo.transformers.forEach((tf, t) => {
-    const branchP = nodeIndex.size + vsources.length + shorts.length + 2 * t
-    const branchS = branchP + 1
-    const { pPlusIdx: pp, pMinusIdx: pm, sPlusIdx: sp, sMinusIdx: sm, l1, l2, m } = tf
-    if (pp >= 0) {
-      accumulate(pp, branchP, 1, 0)
-      accumulate(branchP, pp, 1, 0)
+  // Magnetically coupled parts: one branch current per winding, each row the impedance relation
+  //   V_w = R_w·I_w + jω·Σ_j L[w][j]·I_j
+  // — the winding copper resistances the DC and transient engines read, in the same place. A 2-winding
+  // transformer is the familiar pair (V1 = (R1+jωL1)I1 + jωM·I2, V2 = jωM·I1 + (R2+jωL2)I2); a center-tapped
+  // one is the same relation over three windings. Core loss is the classic resistance ACROSS the full primary
+  // (the node pair the transient engine puts it across), so it stamps as a plain conductance, not a branch row.
+  for (const part of topo.coupled) {
+    part.windings.forEach((winding, w) => {
+      const branch = part.branchBase + w
+      if (winding.plusIdx >= 0) {
+        accumulate(winding.plusIdx, branch, 1, 0)
+        accumulate(branch, winding.plusIdx, 1, 0)
+      }
+      if (winding.minusIdx >= 0) {
+        accumulate(winding.minusIdx, branch, -1, 0)
+        accumulate(branch, winding.minusIdx, -1, 0)
+      }
+      accumulate(branch, branch, -winding.resistance, 0)
+      part.windings.forEach((_, j) => {
+        accumulate(branch, part.branchBase + j, 0, -omega * (part.inductance[w]?.[j] ?? 0))
+      })
+    })
+    if (part.coreResistance > 0) {
+      stampY(part.corePlusIdx, part.coreMinusIdx, 1 / part.coreResistance, 0)
     }
-    if (pm >= 0) {
-      accumulate(pm, branchP, -1, 0)
-      accumulate(branchP, pm, -1, 0)
-    }
-    if (sp >= 0) {
-      accumulate(sp, branchS, 1, 0)
-      accumulate(branchS, sp, 1, 0)
-    }
-    if (sm >= 0) {
-      accumulate(sm, branchS, -1, 0)
-      accumulate(branchS, sm, -1, 0)
-    }
-    accumulate(branchP, branchP, 0, -omega * l1)
-    accumulate(branchP, branchS, 0, -omega * m)
-    accumulate(branchS, branchP, 0, -omega * m)
-    accumulate(branchS, branchS, 0, -omega * l2)
-  })
+  }
 
   // Standalone CCCS: a 0 V control-current sense (a branch unknown, like a short) measures
   // I_control, and the output sources f·I_control. f is real (frequency-independent), so this
   // is the same structure as the DC stamp, in the complex matrix.
+  const windingRows = topo.coupled.reduce((total, part) => total + part.windings.length, 0)
   topo.cccs.forEach((inst, k) => {
-    const branch =
-      nodeIndex.size + vsources.length + shorts.length + 2 * topo.transformers.length + k
+    const branch = nodeIndex.size + vsources.length + shorts.length + windingRows + k
     const net = (term: string) => inst.connects?.find((conn) => conn.terminal === term)?.net
     const cP = net('control_positive')
     const cN = net('control_negative')

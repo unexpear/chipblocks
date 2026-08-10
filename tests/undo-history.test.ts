@@ -9,6 +9,7 @@ import {
   canRedo,
   canUndo,
   checkpoint,
+  dropLastCheckpoint,
   emptyHistory,
   MAX_UNDO_STEPS,
   redo,
@@ -91,5 +92,37 @@ describe('coalescing — typing is one step, structure is many', () => {
     }
     expect(h.past.length).toBe(MAX_UNDO_STEPS)
     expect(h.past[0]?.state).toBe(20) // the oldest fell off
+  })
+})
+
+describe('an action that checkpointed and was then abandoned', () => {
+  test('taking the checkpoint back leaves the history exactly as it was', () => {
+    // A staged draw checkpoints, starts, and is Stopped — the canvas is put back, so the checkpoint
+    // now describes the state already on screen. Left behind, the user's first Ctrl+Z appears to do
+    // nothing, which is the complaint the Stop path was measured making.
+    let h = emptyHistory<string>()
+    h = checkpoint(h, 'their circuit', 'drop', 1000)
+    const before = h
+    h = checkpoint(h, 'their circuit', 'calculator', 2000)
+    expect(h.past.length).toBe(2)
+    h = dropLastCheckpoint(h, 'calculator')
+    expect(h).toEqual(before)
+    expect(undo(h, 'their circuit')?.restored).toBe('their circuit')
+  })
+
+  test('it will not trim a checkpoint that is not the one it pushed', () => {
+    // Another edit landed in between, so the history is no longer ours to shorten — trimming here
+    // would silently throw away the user's own undo step.
+    let h = emptyHistory<string>()
+    h = checkpoint(h, 'a', 'calculator', 1000)
+    h = checkpoint(h, 'b', 'drop', 2000)
+    expect(dropLastCheckpoint(h, 'calculator')).toEqual(h)
+    expect(dropLastCheckpoint(emptyHistory<string>(), 'calculator').past).toEqual([])
+  })
+
+  test('the redo branch it was going to fork is left where the drop found it', () => {
+    let h: ReturnType<typeof emptyHistory<string>> = { past: [], future: ['later'] }
+    h = { past: [{ state: 'now', tag: 'calculator', at: 1000 }], future: h.future }
+    expect(dropLastCheckpoint(h, 'calculator')).toEqual({ past: [], future: ['later'] })
   })
 })

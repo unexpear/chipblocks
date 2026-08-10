@@ -17,6 +17,7 @@ import { readScalarParam } from '../../instance-params.ts'
 import { type LightSource, worldWithCastLight } from '../../light.ts'
 import { type RelayState, solveWithRelays } from '../../relay.ts'
 import type { ShockleyDiodeState } from '../../shockley-diode.ts'
+import { CANVAS_SOLVE_BUDGET_MS, solveDeadline } from '../../solver-budget.ts'
 import { STANDARD_AMBIENT_C } from '../../thermal-model.ts'
 import { solveTransient, type TransientResult } from '../../transient-solver.ts'
 import {
@@ -153,6 +154,7 @@ function solveCanvas(
   edgeList: Edge[],
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
+  deadline?: number,
 ): {
   edges: Edge[]
   health: Map<string, NodeHealth>
@@ -183,10 +185,13 @@ function solveCanvas(
   // undefined (and would be a singular matrix) — it sits idle instead of
   // killing the whole canvas. The meter still gets the FULL world.
   const solvable = groundedComponent(world)
-  const thermal = solveWithRelays(
-    solvable,
-    projectAmbientC === undefined ? undefined : { projectAmbientC },
-  )
+  const thermal = solveWithRelays(solvable, {
+    ...(projectAmbientC === undefined ? {} : { projectAmbientC }),
+    // The budget comes from solveCanvasDispatch — ONE deadline for the whole dispatch, including the
+    // mixed path's up-to-five alternations between the two engines. Re-defaulting it here would give
+    // each of those its own budget back, so this only ever passes on what it was handed.
+    ...(deadline === undefined ? {} : { deadline }),
+  })
   const solution = thermal.solution
   // Name what the strip set aside — the engine must explain itself ON SCREEN (the footer shows
   // solution warnings), not only to the test suite. Wires are connections and a ground symbol is a
@@ -313,6 +318,7 @@ function solveCanvasLogic(
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
   state?: Map<string, boolean>,
+  deadline?: number,
 ): ReturnType<typeof solveCanvas> {
   const { world, leadAliases } = canvasWorld(nodeList, edgeList, routedGeoms)
   const seed = digitalSeed(
@@ -321,7 +327,8 @@ function solveCanvasLogic(
     world,
     state,
   )
-  if (seed === undefined) return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
+  if (seed === undefined)
+    return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms, deadline)
   const solution: Solution = {
     status: 'solved',
     nodes: seed,
@@ -401,6 +408,7 @@ function solveCanvasMixed(
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
   state?: Map<string, boolean>,
+  deadline?: number,
 ): ReturnType<typeof solveCanvas> {
   const nodeById = new Map(nodeList.map((n) => [n.id, n]))
   const logicIds = new Set(nodeList.filter(isLogicFidelity).map((n) => n.id))
@@ -455,7 +463,7 @@ function solveCanvasMixed(
     edgeList as unknown as BlockEdgeLike[],
     state,
   )
-  let solved = solveCanvas([], [], projectAmbientC, routedGeoms)
+  let solved = solveCanvas([], [], projectAmbientC, routedGeoms, deadline)
   for (let iter = 0; ; iter++) {
     // LOGIC VIEW: a virtual 0/Vdd source at each analog→logic boundary (so the logic input reads the
     // analog level), with the original boundary wire removed.
@@ -540,6 +548,7 @@ function solveCanvasMixed(
       analogEdges,
       projectAmbientC,
       routedGeoms,
+      deadline,
     )
     // READ the analog level at each analog→logic boundary → next round's virtual-source bits.
     const next = new Map<string, boolean>()
@@ -834,13 +843,17 @@ export function solveCanvasDispatch(
   // logic engine (digitalSeed reads data.block), and the mixed co-sim all see a custom module exactly
   // as they see the block it was saved from — including routing a digital module to the fast engine.
   const nodeList = attachInternalCircuits(rawNodeList)
+  // ONE budget for the whole dispatch, set HERE because this is where the canvas — the thread that
+  // draws the window — hands work to the analog engines. The mixed path alternates the two solvers up
+  // to five times; sharing the deadline is what makes the canvas's promise a whole-solve promise.
+  const deadline = solveDeadline(undefined, CANVAS_SOLVE_BUDGET_MS)
   switch (classifyCanvas(nodeList)) {
     case 'analog':
-      return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
+      return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms, deadline)
     case 'logic':
-      return solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms, state)
+      return solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms, state, deadline)
     case 'mixed':
-      return solveCanvasMixed(nodeList, edgeList, projectAmbientC, routedGeoms, state)
+      return solveCanvasMixed(nodeList, edgeList, projectAmbientC, routedGeoms, state, deadline)
   }
 }
 

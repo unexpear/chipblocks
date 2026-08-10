@@ -1,0 +1,12601 @@
+[
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 0,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,4,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 1,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,1,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 2,
+  "init": 1632,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,1,7D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 3,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,1,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 4,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 5,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 6,
+  "init": 4369,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,1,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 1,
+  "cell": 7,
+  "init": 30720,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,1,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 1,
+  "cell": 1,
+  "init": 14074,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,1,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 1,
+  "cell": 2,
+  "init": 4940,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,2,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 1,
+  "cell": 3,
+  "init": 8224,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,1,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 1,
+  "cell": 4,
+  "init": 150,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 1,
+  "cell": 6,
+  "init": 257,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,3,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 1,
+  "cell": 7,
+  "init": 2056,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 1,
+  "cell": 0,
+  "init": 30583,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": false,
+  "readBy": {
+   "F": [],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 1,
+  "cell": 1,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,1,6C",
+    "4,1,1C",
+    "6,1,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 1,
+  "cell": 2,
+  "init": 9,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,2,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 1,
+  "cell": 3,
+  "init": 34695,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 1,
+  "cell": 4,
+  "init": 27084,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 1,
+  "cell": 6,
+  "init": 7918,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,1,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 1,
+  "cell": 7,
+  "init": 49280,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 1,
+  "cell": 0,
+  "init": 54741,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": false,
+  "readBy": {
+   "F": [],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 1,
+  "cell": 1,
+  "init": 30,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 1,
+  "cell": 3,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,1,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 1,
+  "cell": 4,
+  "init": 26880,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 1,
+  "cell": 5,
+  "init": 28679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 1,
+  "cell": 6,
+  "init": 24672,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,1,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 1,
+  "cell": 7,
+  "init": 5180,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,1,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 1,
+  "cell": 0,
+  "init": 25491,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": false,
+  "readBy": {
+   "F": [],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 1,
+  "cell": 1,
+  "init": 57568,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 1,
+  "cell": 2,
+  "init": 4112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 1,
+  "cell": 3,
+  "init": 5160,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 1,
+  "cell": 4,
+  "init": 28672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 1,
+  "cell": 6,
+  "init": 4112,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,1,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 1,
+  "cell": 7,
+  "init": 38505,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 0,
+  "init": 28784,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,1,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 1,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,1,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 2,
+  "init": 514,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 3,
+  "init": 2056,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,1,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 4,
+  "init": 1284,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,1,7D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 5,
+  "init": 30,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 6,
+  "init": 22268,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,1,2A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 1,
+  "cell": 7,
+  "init": 38400,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,2,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 1,
+  "cell": 0,
+  "init": 30855,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,5D",
+    "2,2,7C",
+    "7,2,2A",
+    "8,2,7D",
+    "1,3,7C",
+    "4,3,2C",
+    "4,3,3D",
+    "7,3,1C",
+    "5,4,3D",
+    "7,4,7D",
+    "1,6,7C",
+    "3,6,5C",
+    "6,6,4D",
+    "4,7,4D",
+    "5,7,6D",
+    "9,7,5D",
+    "5,8,7D",
+    "6,8,7B",
+    "7,8,1D",
+    "7,8,4D",
+    "6,9,2D",
+    "12,9,7D"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 1,
+  "cell": 1,
+  "init": 1284,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 1,
+  "cell": 3,
+  "init": 22185,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 1,
+  "cell": 5,
+  "init": 4883,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 1,
+  "cell": 7,
+  "init": 37008,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 1,
+  "cell": 0,
+  "init": 36863,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "5,1,4B",
+    "8,1,5C",
+    "11,1,6D",
+    "3,2,1C",
+    "4,2,1D",
+    "11,2,3D",
+    "12,2,3C",
+    "9,4,6C",
+    "2,6,2B",
+    "4,6,6D",
+    "5,6,7D",
+    "6,6,6D",
+    "7,6,3C",
+    "10,6,3B",
+    "8,7,2B",
+    "3,8,2B",
+    "4,8,7C",
+    "10,8,4B"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 1,
+  "cell": 1,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "6,1,4C",
+    "9,1,2B",
+    "2,2,5C",
+    "7,2,1C",
+    "11,2,3C",
+    "12,3,3C",
+    "4,4,5B",
+    "10,4,3C",
+    "1,6,3A",
+    "8,6,3B",
+    "8,7,5C",
+    "10,7,2C",
+    "12,7,4A",
+    "6,8,4B",
+    "2,9,5C",
+    "13,9,4A"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 1,
+  "cell": 3,
+  "init": 28784,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 1,
+  "cell": 4,
+  "init": 28679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 1,
+  "cell": 5,
+  "init": 21756,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 1,
+  "cell": 6,
+  "init": 35498,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,1,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 1,
+  "cell": 7,
+  "init": 36864,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 1,
+  "cell": 0,
+  "init": 32125,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,1,6A",
+    "6,1,4D",
+    "13,1,3D",
+    "8,2,2C",
+    "4,3,3C",
+    "4,3,7B",
+    "10,3,5C",
+    "4,4,7D",
+    "6,4,2C",
+    "6,4,4C",
+    "6,6,1C",
+    "6,6,4C",
+    "7,6,0A",
+    "12,6,4C",
+    "12,6,6C"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 1,
+  "cell": 1,
+  "init": 1028,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 1,
+  "cell": 2,
+  "init": 49280,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,1,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 1,
+  "cell": 3,
+  "init": 26217,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,1,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 1,
+  "cell": 6,
+  "init": 3808,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,1,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 1,
+  "cell": 7,
+  "init": 33345,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,2,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 1,
+  "cell": 0,
+  "init": 42602,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "6,1,4A",
+    "7,1,5B",
+    "10,1,7A",
+    "2,2,0A",
+    "7,2,7B",
+    "11,2,6B",
+    "2,3,5A",
+    "10,3,2B",
+    "11,3,7A",
+    "3,4,7A",
+    "7,4,1B",
+    "8,4,2B",
+    "5,6,1A",
+    "7,6,4A",
+    "10,6,2A",
+    "2,8,6A",
+    "11,8,4B",
+    "3,9,1A",
+    "7,9,1B"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 1,
+  "cell": 2,
+  "init": 38250,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,1,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 1,
+  "cell": 3,
+  "init": 24582,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,1,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 1,
+  "cell": 4,
+  "init": 10260,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,1,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 1,
+  "cell": 5,
+  "init": 514,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,2,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 1,
+  "cell": 6,
+  "init": 513,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,1,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 1,
+  "cell": 7,
+  "init": 51250,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,1,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 1,
+  "cell": 0,
+  "init": 20817,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,2,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 1,
+  "cell": 1,
+  "init": 21756,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,1,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 1,
+  "cell": 2,
+  "init": 26985,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,1,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 1,
+  "cell": 3,
+  "init": 51510,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,1,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 1,
+  "cell": 4,
+  "init": 32,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,1,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 1,
+  "cell": 5,
+  "init": 37727,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,1,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 1,
+  "cell": 6,
+  "init": 27795,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,1,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 1,
+  "cell": 0,
+  "init": 21,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 1,
+  "cell": 1,
+  "init": 7680,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,1,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 1,
+  "cell": 2,
+  "init": 57088,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 1,
+  "cell": 3,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,1,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 1,
+  "cell": 4,
+  "init": 10794,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,1,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 1,
+  "cell": 5,
+  "init": 1904,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,1,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 1,
+  "cell": 7,
+  "init": 38250,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,1,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 1,
+  "cell": 2,
+  "init": 33345,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,1,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 1,
+  "cell": 3,
+  "init": 50050,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,1,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 1,
+  "cell": 6,
+  "init": 4112,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,2,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 1,
+  "cell": 7,
+  "init": 14,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 2,
+  "cell": 1,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 2,
+  "cell": 2,
+  "init": 23112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,2,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 2,
+  "cell": 3,
+  "init": 224,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,3,3A",
+    "1,3,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 2,
+  "cell": 4,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,3,3C",
+    "1,3,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 2,
+  "cell": 6,
+  "init": 4369,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,2,3C",
+    "2,3,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 2,
+  "cell": 7,
+  "init": 64681,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,2,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 2,
+  "cell": 0,
+  "init": 19456,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,3,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 2,
+  "cell": 2,
+  "init": 5439,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,3,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 2,
+  "cell": 3,
+  "init": 38550,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 2,
+  "cell": 4,
+  "init": 28679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,2,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 2,
+  "cell": 5,
+  "init": 84,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,2,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 2,
+  "cell": 6,
+  "init": 1911,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,2,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 2,
+  "cell": 7,
+  "init": 50070,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 0,
+  "init": 48062,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "9,1,3B",
+    "10,1,4B",
+    "11,1,4B",
+    "6,2,1C",
+    "7,2,7D",
+    "3,3,7B",
+    "6,3,1A",
+    "4,6,4A",
+    "7,6,7B",
+    "1,7,2A",
+    "3,7,7B",
+    "5,7,2A",
+    "5,7,3A",
+    "11,7,7A",
+    "2,8,0A",
+    "3,8,5A",
+    "6,8,6A",
+    "8,8,6A",
+    "10,8,7A",
+    "4,9,6A",
+    "5,9,7B"
+   ]
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 1,
+  "init": 4368,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 2,
+  "init": 272,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 3,
+  "init": 2310,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 4,
+  "init": 43350,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 5,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 6,
+  "init": 28672,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 2,
+  "cell": 7,
+  "init": 34679,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,2,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 0,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,1,3A",
+    "10,1,3A",
+    "11,1,4A",
+    "2,3,6A",
+    "6,3,2A",
+    "9,3,3A",
+    "10,3,6C",
+    "4,6,3A",
+    "3,7,6B",
+    "5,7,6A",
+    "6,7,5A",
+    "8,7,6A",
+    "2,8,2B",
+    "4,8,6A",
+    "3,9,7B",
+    "4,9,3A",
+    "6,9,3A",
+    "8,9,2B",
+    "9,9,3A"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 1,
+  "init": 5418,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 2,
+  "init": 18504,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 3,
+  "init": 64680,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,1,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 4,
+  "init": 257,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 5,
+  "init": 21,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 6,
+  "init": 10280,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,3,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 2,
+  "cell": 7,
+  "init": 513,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,2,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 0,
+  "init": 5140,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,2,3B",
+    "2,2,0B",
+    "3,2,4B",
+    "4,2,1B",
+    "6,2,1B",
+    "7,2,1B",
+    "7,2,4A",
+    "8,2,2A",
+    "8,2,3B",
+    "8,2,5B",
+    "8,2,6C",
+    "3,3,4B",
+    "3,3,6C",
+    "8,3,5A",
+    "8,3,6B",
+    "4,4,7C",
+    "6,4,1A",
+    "6,4,2B",
+    "11,4,1A",
+    "11,4,2A",
+    "3,6,2A",
+    "8,6,1A",
+    "11,6,2B",
+    "1,7,3A"
+   ]
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 1,
+  "init": 64681,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,1,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 2,
+  "init": 37740,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 3,
+  "init": 32768,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 4,
+  "init": 24428,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 5,
+  "init": 51609,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 6,
+  "init": 10260,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 2,
+  "cell": 7,
+  "init": 27075,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,1,2B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 2,
+  "cell": 0,
+  "init": 57825,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,1,5A",
+    "12,1,0B",
+    "12,1,7A",
+    "7,2,1A",
+    "9,2,5B",
+    "11,2,6A",
+    "4,3,5B",
+    "7,3,1B",
+    "12,3,1B",
+    "2,4,1B",
+    "5,4,6A",
+    "12,4,6A",
+    "10,6,6B",
+    "13,6,6B",
+    "2,7,3A",
+    "4,7,7A",
+    "5,7,1A",
+    "6,7,3A",
+    "9,7,2B",
+    "3,8,2A",
+    "5,8,4B",
+    "8,8,5A",
+    "10,9,0A"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 2,
+  "cell": 1,
+  "init": 64681,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,2,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 2,
+  "cell": 2,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,6B",
+    "11,2,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 2,
+  "cell": 3,
+  "init": 10773,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,2,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 2,
+  "cell": 5,
+  "init": 10773,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 2,
+  "cell": 6,
+  "init": 43688,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 2,
+  "cell": 7,
+  "init": 4959,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,1,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 0,
+  "init": 16660,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,2C",
+    "1,2,7C",
+    "4,2,2A",
+    "12,2,6B",
+    "2,3,7B",
+    "3,3,3A",
+    "4,3,6B",
+    "6,3,1C",
+    "5,4,6D",
+    "7,4,1C",
+    "10,4,6D",
+    "2,6,4D",
+    "3,6,2C",
+    "5,6,1C",
+    "2,7,5D",
+    "5,7,6C",
+    "9,7,5C",
+    "11,7,2C",
+    "13,7,0A",
+    "1,8,1D",
+    "3,8,4C",
+    "6,8,6B",
+    "9,8,6C"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 1,
+  "init": 1,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 2,
+  "init": 38550,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 3,
+  "init": 4096,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 4,
+  "init": 49280,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 5,
+  "init": 18432,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 6,
+  "init": 1536,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 2,
+  "cell": 7,
+  "init": 18450,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 0,
+  "init": 32759,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,1A",
+    "4,1,7A",
+    "6,1,0A",
+    "6,1,3A",
+    "6,1,4B",
+    "12,1,5B",
+    "4,2,7A",
+    "7,2,3B",
+    "9,2,6A",
+    "9,2,7B",
+    "11,2,3B",
+    "7,3,4A",
+    "2,6,1C",
+    "2,6,3A",
+    "3,6,7C",
+    "8,6,2D",
+    "9,7,6C",
+    "12,7,3B",
+    "10,8,7B",
+    "9,9,3D",
+    "13,9,2C"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 1,
+  "init": 36751,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,2,4C",
+    "5,2,7B",
+    "10,2,5A",
+    "5,3,5A",
+    "10,3,1C",
+    "5,4,6C",
+    "6,4,3B",
+    "9,4,4B",
+    "12,4,7A",
+    "3,7,5C",
+    "8,7,7C",
+    "11,7,2A",
+    "11,7,7C",
+    "2,8,5A",
+    "7,8,6A",
+    "11,8,5B",
+    "12,8,5B",
+    "4,9,1C",
+    "10,9,2B",
+    "12,9,0B",
+    "12,9,6B"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 2,
+  "init": 32,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 3,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,1,7C",
+    "7,2,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 4,
+  "init": 26217,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,2,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 5,
+  "init": 27285,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 6,
+  "init": 5180,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,1,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 2,
+  "cell": 7,
+  "init": 14,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 2,
+  "cell": 0,
+  "init": 36864,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "7,1,0C",
+    "10,1,6B",
+    "2,2,5D",
+    "5,2,4B",
+    "12,2,3B",
+    "1,3,4C",
+    "8,3,7B",
+    "10,3,7B",
+    "8,4,3C",
+    "9,4,7D",
+    "3,6,4D",
+    "4,6,4B",
+    "4,6,5D",
+    "6,6,6C",
+    "7,6,6D",
+    "8,6,4C",
+    "3,8,0D",
+    "6,8,6C",
+    "10,8,1D",
+    "12,8,3D",
+    "1,9,4D",
+    "2,9,2D",
+    "7,9,2D",
+    "8,9,5D"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 2,
+  "cell": 1,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 2,
+  "cell": 3,
+  "init": 37008,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,1,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 2,
+  "cell": 5,
+  "init": 16770,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 2,
+  "cell": 6,
+  "init": 34952,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 2,
+  "cell": 7,
+  "init": 64200,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 2,
+  "cell": 0,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,3C",
+    "3,1,3C",
+    "10,1,6C",
+    "11,1,3D",
+    "12,1,7D",
+    "13,1,2C",
+    "3,2,2B",
+    "7,2,5D",
+    "7,3,1D",
+    "7,3,4D",
+    "9,3,4B",
+    "12,3,7C",
+    "13,3,2D",
+    "1,4,2D",
+    "8,4,6C",
+    "12,4,6D",
+    "2,6,3D",
+    "8,6,3D",
+    "9,6,7C",
+    "10,6,1C",
+    "10,7,7C",
+    "1,8,0D",
+    "6,8,4D",
+    "9,8,2C"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 2,
+  "cell": 1,
+  "init": 14074,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,2,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 2,
+  "cell": 3,
+  "init": 21672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 2,
+  "cell": 4,
+  "init": 8192,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,2,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 2,
+  "cell": 5,
+  "init": 72,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,2,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 2,
+  "cell": 6,
+  "init": 22937,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 2,
+  "cell": 7,
+  "init": 2448,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,1,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 2,
+  "cell": 0,
+  "init": 60330,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "11,1,3B",
+    "13,1,7D",
+    "5,2,6B",
+    "6,2,3B",
+    "6,2,7B",
+    "7,2,5C",
+    "1,3,7A",
+    "4,3,4B",
+    "11,3,3A",
+    "13,3,0B",
+    "13,3,7B",
+    "9,4,7C",
+    "1,6,6A",
+    "7,6,3B",
+    "10,7,2B",
+    "11,7,3C",
+    "1,8,1C",
+    "4,8,7A",
+    "2,9,4C",
+    "12,9,1B",
+    "12,9,4A",
+    "12,9,6C"
+   ]
+  }
+ },
+ {
+  "x": 11,
+  "y": 2,
+  "cell": 1,
+  "init": 41088,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 2,
+  "cell": 3,
+  "init": 1,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,3,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 2,
+  "cell": 4,
+  "init": 35487,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 2,
+  "cell": 5,
+  "init": 6,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,2,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 2,
+  "cell": 6,
+  "init": 1,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,3,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 2,
+  "cell": 7,
+  "init": 5397,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,2,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 2,
+  "cell": 0,
+  "init": 28672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,2,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 2,
+  "cell": 1,
+  "init": 15400,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 2,
+  "cell": 3,
+  "init": 7,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 2,
+  "cell": 4,
+  "init": 16512,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 2,
+  "cell": 5,
+  "init": 10794,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,3,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 2,
+  "cell": 6,
+  "init": 14025,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,2,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 0,
+  "init": 61423,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,7D",
+    "6,2,5D",
+    "9,2,6B",
+    "11,2,6C",
+    "4,3,6C",
+    "1,4,3B",
+    "6,4,1C",
+    "2,6,7C",
+    "11,6,2D",
+    "11,6,5C",
+    "13,6,1D",
+    "2,7,7C",
+    "7,7,6A",
+    "10,7,6B",
+    "1,8,0C",
+    "12,8,5D",
+    "8,9,7C",
+    "10,9,5D",
+    "13,9,0B"
+   ]
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 1,
+  "init": 546,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 2,
+  "init": 57630,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 3,
+  "init": 10260,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,2,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 4,
+  "init": 4698,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 5,
+  "init": 14280,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 6,
+  "init": 37727,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 2,
+  "cell": 7,
+  "init": 12337,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 3,
+  "cell": 0,
+  "init": 55255,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,3B",
+    "3,1,6A",
+    "6,1,6B",
+    "12,2,4C",
+    "1,3,5A",
+    "9,3,6C",
+    "12,3,7A",
+    "13,3,2A",
+    "3,4,6B",
+    "6,4,7C",
+    "13,4,0A",
+    "2,6,7A",
+    "8,6,4B",
+    "12,6,3A",
+    "9,7,0C",
+    "8,8,5B",
+    "4,9,7B",
+    "8,9,4C"
+   ]
+  }
+ },
+ {
+  "x": 1,
+  "y": 3,
+  "cell": 3,
+  "init": 33410,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 3,
+  "cell": 4,
+  "init": 3808,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 3,
+  "cell": 5,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,3,3B",
+    "1,3,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 3,
+  "cell": 6,
+  "init": 1542,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 3,
+  "cell": 7,
+  "init": 35723,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 3,
+  "cell": 1,
+  "init": 57825,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,3,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 3,
+  "cell": 2,
+  "init": 43560,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 3,
+  "cell": 3,
+  "init": 2304,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 3,
+  "cell": 4,
+  "init": 4864,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,3,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 3,
+  "cell": 5,
+  "init": 32776,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 3,
+  "cell": 6,
+  "init": 5397,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,3,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 3,
+  "cell": 7,
+  "init": 33345,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,3,2A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 0,
+  "init": 56829,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,3D",
+    "4,1,6B",
+    "2,2,6D",
+    "3,2,2C",
+    "7,2,1D",
+    "12,2,1D",
+    "13,2,4D",
+    "11,3,7D",
+    "12,3,2D",
+    "13,3,5D",
+    "3,4,2C",
+    "3,4,4D",
+    "9,4,1D",
+    "10,4,5C",
+    "13,4,0D",
+    "1,6,6D",
+    "9,6,5D",
+    "11,6,7C",
+    "10,7,6D",
+    "13,7,3D",
+    "13,7,6C",
+    "7,8,6D",
+    "8,8,5D"
+   ]
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 1,
+  "init": 24428,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 2,
+  "init": 57630,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,1,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 3,
+  "init": 34679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 4,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,1,0C",
+    "6,1,3C",
+    "4,6,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 5,
+  "init": 16448,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,3,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 6,
+  "init": 19,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,3,2B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 3,
+  "cell": 7,
+  "init": 1904,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 0,
+  "init": 61166,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,2,3D",
+    "5,2,6C",
+    "6,2,2B",
+    "7,2,2B",
+    "2,3,3A",
+    "8,3,5C",
+    "2,4,2B",
+    "8,4,4D",
+    "7,6,4B",
+    "3,7,2D",
+    "5,7,1C",
+    "6,7,4D",
+    "7,7,5C",
+    "12,7,4D",
+    "1,8,6D",
+    "2,8,0D",
+    "5,8,5D",
+    "8,8,7D",
+    "10,8,4D",
+    "12,8,6D"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 1,
+  "init": 35916,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 2,
+  "init": 32768,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 3,
+  "init": 770,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 4,
+  "init": 27033,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,3,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 5,
+  "init": 38490,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,3,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 6,
+  "init": 32800,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,2,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 3,
+  "cell": 7,
+  "init": 32768,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,3,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 3,
+  "cell": 0,
+  "init": 22933,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,2A",
+    "1,1,5B",
+    "3,2,7A",
+    "8,2,6B",
+    "9,2,7A",
+    "10,2,4B",
+    "6,3,6A",
+    "8,3,1A",
+    "4,4,7A",
+    "6,4,6A",
+    "7,6,2A",
+    "8,6,2A",
+    "7,7,5A",
+    "7,7,6B",
+    "9,7,1B",
+    "9,7,6B",
+    "5,8,6B",
+    "4,9,7A",
+    "5,9,2A",
+    "8,9,5A"
+   ]
+  }
+ },
+ {
+  "x": 5,
+  "y": 3,
+  "cell": 1,
+  "init": 44718,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,0A",
+    "7,1,0B",
+    "11,1,5B",
+    "5,2,3B",
+    "5,3,3B",
+    "10,3,1B",
+    "2,4,6B",
+    "2,4,7A",
+    "11,4,5B",
+    "12,4,4A",
+    "12,4,6C",
+    "5,7,5A",
+    "7,7,7A",
+    "11,7,4A",
+    "3,8,0C",
+    "3,8,6D",
+    "4,8,1C",
+    "2,9,4B",
+    "3,9,5A",
+    "4,9,2C",
+    "8,9,5B"
+   ]
+  }
+ },
+ {
+  "x": 5,
+  "y": 3,
+  "cell": 2,
+  "init": 84,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 3,
+  "cell": 3,
+  "init": 24816,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 3,
+  "cell": 4,
+  "init": 2176,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 3,
+  "cell": 5,
+  "init": 20046,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 3,
+  "cell": 6,
+  "init": 34952,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 3,
+  "cell": 0,
+  "init": 26005,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,7C",
+    "9,2,3B",
+    "11,2,1D",
+    "11,2,4A",
+    "7,3,4C",
+    "8,3,1D",
+    "1,4,1B",
+    "2,4,6C",
+    "8,4,5C",
+    "10,4,1B",
+    "1,6,3B",
+    "2,6,4C",
+    "7,6,1B",
+    "7,6,2B",
+    "11,6,6C",
+    "10,7,4A",
+    "9,8,6B"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 3,
+  "cell": 1,
+  "init": 43350,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,3,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 3,
+  "cell": 2,
+  "init": 16576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 3,
+  "cell": 3,
+  "init": 2310,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,3,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 3,
+  "cell": 4,
+  "init": 30584,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 3,
+  "cell": 6,
+  "init": 1024,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,3,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 3,
+  "cell": 7,
+  "init": 5439,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 3,
+  "cell": 0,
+  "init": 37017,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,5A",
+    "10,1,2A",
+    "6,2,1A",
+    "8,2,4A",
+    "10,2,4A",
+    "12,2,1A",
+    "3,3,7A",
+    "5,3,4A",
+    "5,4,3A",
+    "3,7,2A",
+    "9,7,0A",
+    "1,8,2A",
+    "1,8,3A",
+    "4,8,5A",
+    "10,8,4A",
+    "10,8,5A",
+    "13,8,2A",
+    "5,9,3A",
+    "8,9,4A",
+    "13,9,2A"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 3,
+  "cell": 1,
+  "init": 26208,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,2B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 3,
+  "cell": 4,
+  "init": 27033,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 3,
+  "cell": 5,
+  "init": 9,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 3,
+  "cell": 0,
+  "init": 51510,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,3,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 3,
+  "cell": 1,
+  "init": 34679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 3,
+  "cell": 3,
+  "init": 8580,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 3,
+  "cell": 4,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,4,7B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 3,
+  "cell": 5,
+  "init": 61152,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 3,
+  "cell": 6,
+  "init": 51250,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 3,
+  "cell": 7,
+  "init": 26214,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,3,3B",
+    "8,3,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 3,
+  "cell": 0,
+  "init": 8194,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,2,2C",
+    "1,2,7B",
+    "4,2,3A",
+    "7,2,3D",
+    "8,2,2B",
+    "9,2,7C",
+    "12,2,0B",
+    "10,3,4A",
+    "12,3,4C",
+    "3,4,3B",
+    "10,4,7D",
+    "5,6,5C",
+    "6,6,4B",
+    "8,6,3C",
+    "4,7,4C",
+    "11,7,3D",
+    "11,7,4B",
+    "12,7,3C",
+    "8,8,3C",
+    "10,8,7C",
+    "12,8,1C",
+    "1,9,4B",
+    "1,9,7B",
+    "2,9,2B",
+    "7,9,2C",
+    "11,9,5D"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 3,
+  "cell": 1,
+  "init": 64680,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 3,
+  "cell": 3,
+  "init": 16170,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 3,
+  "cell": 4,
+  "init": 7710,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,3,7D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 3,
+  "cell": 5,
+  "init": 16660,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 3,
+  "cell": 6,
+  "init": 6,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 3,
+  "cell": 0,
+  "init": 775,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "5,2,2B",
+    "6,2,7C",
+    "4,3,3B",
+    "12,3,7B",
+    "10,4,4B",
+    "11,4,1B",
+    "12,4,3B",
+    "2,6,6B",
+    "3,6,5A",
+    "5,6,4B",
+    "9,6,7B",
+    "13,6,1C",
+    "2,7,5C",
+    "2,7,6B",
+    "3,7,7C",
+    "6,7,2C",
+    "10,7,4C",
+    "1,8,6C",
+    "2,8,7B",
+    "10,8,5D",
+    "12,8,4C",
+    "1,9,4C",
+    "2,9,2C",
+    "3,9,5C",
+    "13,9,5C"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 3,
+  "cell": 1,
+  "init": 23145,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 3,
+  "cell": 2,
+  "init": 14,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 3,
+  "cell": 4,
+  "init": 5439,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,3,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 3,
+  "cell": 5,
+  "init": 4698,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,2,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 3,
+  "cell": 6,
+  "init": 24396,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,3,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 3,
+  "cell": 7,
+  "init": 36960,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,4,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 3,
+  "cell": 0,
+  "init": 26214,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,1,1A",
+    "4,1,5B",
+    "8,1,3B",
+    "10,1,2C",
+    "7,2,4C",
+    "6,3,6B",
+    "7,3,4B",
+    "7,3,5B",
+    "9,3,4A",
+    "5,4,1C",
+    "6,4,1B",
+    "8,4,1B",
+    "12,4,4B",
+    "13,4,1C",
+    "4,6,7D",
+    "7,6,1A",
+    "11,6,4C",
+    "13,6,5C",
+    "9,7,0D",
+    "13,7,4C",
+    "6,8,3B",
+    "10,8,2C",
+    "12,8,4B",
+    "12,8,5C",
+    "10,9,6C",
+    "11,9,5C"
+   ]
+  }
+ },
+ {
+  "x": 11,
+  "y": 3,
+  "cell": 1,
+  "init": 13000,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 3,
+  "cell": 2,
+  "init": 33280,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 3,
+  "cell": 3,
+  "init": 23112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,4,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 3,
+  "cell": 4,
+  "init": 43418,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,3,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 3,
+  "cell": 6,
+  "init": 7,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,3,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 3,
+  "cell": 7,
+  "init": 61153,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,3,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 0,
+  "init": 43433,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,2A",
+    "3,1,7B",
+    "13,1,2A",
+    "7,2,7C",
+    "8,2,4B",
+    "8,2,7B",
+    "13,2,5B",
+    "2,3,5B",
+    "8,3,3A",
+    "10,4,7B",
+    "5,6,5B",
+    "12,6,4A",
+    "2,7,3B",
+    "10,7,6A",
+    "12,7,6C",
+    "13,7,6B",
+    "6,8,1A",
+    "13,8,7C",
+    "4,9,1B",
+    "5,9,6A",
+    "10,9,5A",
+    "13,9,0A"
+   ]
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 1,
+  "init": 84,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,3,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 2,
+  "init": 1,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 3,
+  "init": 32776,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,3,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 4,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 5,
+  "init": 514,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 6,
+  "init": 40800,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 3,
+  "cell": 7,
+  "init": 33280,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 0,
+  "init": 43350,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 1,
+  "init": 26208,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 2,
+  "init": 30576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 3,
+  "init": 16512,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 4,
+  "init": 8,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,2,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 5,
+  "init": 33792,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 6,
+  "init": 43682,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 3,
+  "cell": 7,
+  "init": 30855,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,3,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 4,
+  "cell": 1,
+  "init": 1542,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 4,
+  "cell": 2,
+  "init": 26217,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,4,7B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 4,
+  "cell": 3,
+  "init": 5180,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 4,
+  "cell": 4,
+  "init": 38250,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,4,7A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 4,
+  "cell": 7,
+  "init": 38550,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,4,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 0,
+  "init": 24672,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,3B",
+    "3,1,6C",
+    "7,1,1B",
+    "9,1,6C",
+    "10,2,7A",
+    "6,3,6C",
+    "2,4,3B",
+    "6,4,4B",
+    "1,6,6B",
+    "6,6,3B",
+    "12,6,5D",
+    "6,7,6C",
+    "8,8,4A",
+    "8,8,6B",
+    "4,9,2D",
+    "10,9,5B"
+   ]
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 1,
+  "init": 24428,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 2,
+  "init": 37008,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 3,
+  "init": 38400,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,4,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 4,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 5,
+  "init": 257,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 6,
+  "init": 51510,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,4,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 4,
+  "cell": 7,
+  "init": 24428,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 0,
+  "init": 56797,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,2B",
+    "5,1,3B",
+    "2,2,4B",
+    "2,3,6B",
+    "8,4,3A",
+    "9,4,2A",
+    "10,4,6C",
+    "3,6,4C",
+    "4,6,5A",
+    "9,6,6B",
+    "13,6,2A",
+    "3,7,2B",
+    "7,7,4A",
+    "2,8,3A",
+    "4,8,1B",
+    "6,8,4A",
+    "11,8,2B"
+   ]
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 1,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 2,
+  "init": 4883,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,4,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 3,
+  "init": 7,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,4,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 4,
+  "init": 38250,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,3,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 5,
+  "init": 26985,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,3,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 6,
+  "init": 57600,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 4,
+  "cell": 7,
+  "init": 24576,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 4,
+  "cell": 0,
+  "init": 63483,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "12,1,5A",
+    "1,2,2A",
+    "3,2,6A",
+    "10,2,1A",
+    "5,3,4B",
+    "9,3,1B",
+    "10,3,2A",
+    "6,4,7A",
+    "7,6,7A",
+    "11,6,4A",
+    "2,7,1B",
+    "7,7,5B",
+    "10,8,5B",
+    "3,9,0A",
+    "5,9,0A",
+    "9,9,3B"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 4,
+  "cell": 1,
+  "init": 43682,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "7,1,3C",
+    "3,2,7D",
+    "4,2,3B",
+    "7,2,4D",
+    "3,3,1B",
+    "4,3,4C",
+    "5,3,2B",
+    "9,3,1C",
+    "13,3,2C",
+    "7,4,0C",
+    "7,4,3C",
+    "7,4,7B",
+    "8,4,1C",
+    "12,4,4C",
+    "1,6,3C",
+    "13,6,3B"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 4,
+  "cell": 2,
+  "init": 13000,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 4,
+  "cell": 5,
+  "init": 259,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 4,
+  "cell": 6,
+  "init": 1911,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 4,
+  "cell": 7,
+  "init": 27795,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,4,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 4,
+  "cell": 0,
+  "init": 65279,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "5,1,7A",
+    "6,1,5B",
+    "1,2,4A",
+    "3,2,7B",
+    "7,2,5A",
+    "3,3,6B",
+    "8,3,0C",
+    "12,3,4A",
+    "13,3,1B",
+    "4,4,6B",
+    "5,4,1A",
+    "5,4,4A",
+    "3,6,4B",
+    "4,6,7C",
+    "5,6,7A",
+    "8,6,2C",
+    "12,6,6B",
+    "12,6,7A",
+    "13,6,5B",
+    "13,6,6A",
+    "8,7,7A",
+    "1,8,1A",
+    "3,8,4A",
+    "3,8,6A",
+    "13,8,3B",
+    "1,9,6A",
+    "4,9,1A",
+    "5,9,7A",
+    "8,9,7A",
+    "9,9,7B"
+   ]
+  }
+ },
+ {
+  "x": 5,
+  "y": 4,
+  "cell": 1,
+  "init": 4096,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,2,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 4,
+  "cell": 3,
+  "init": 30584,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 4,
+  "cell": 4,
+  "init": 16234,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 4,
+  "cell": 6,
+  "init": 22185,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 4,
+  "cell": 7,
+  "init": 27285,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,4,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 0,
+  "init": 39593,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,2D",
+    "4,2,2B",
+    "1,3,4D",
+    "5,3,2C",
+    "10,4,4D",
+    "11,4,2C",
+    "11,4,3D",
+    "12,4,4D",
+    "3,6,7D",
+    "5,6,5D",
+    "5,7,1D",
+    "5,7,2C",
+    "7,7,3D",
+    "13,7,7D",
+    "6,8,6D",
+    "8,8,4D",
+    "11,8,5D",
+    "13,8,3D",
+    "3,9,2D",
+    "3,9,7D",
+    "5,9,0C",
+    "9,9,5D",
+    "10,9,1C"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 1,
+  "init": 16234,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 2,
+  "init": 23112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 3,
+  "init": 1904,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 4,
+  "init": 64681,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,4,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 5,
+  "init": 257,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,4,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 6,
+  "init": 39321,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,2,2C",
+    "7,4,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 4,
+  "cell": 7,
+  "init": 1024,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,4,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 0,
+  "init": 89,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "6,1,6A",
+    "10,1,6A",
+    "3,4,4C",
+    "2,6,2A",
+    "5,6,4A",
+    "10,6,5A",
+    "11,6,1B",
+    "5,7,4B",
+    "9,7,7B",
+    "5,8,1A",
+    "6,8,2A",
+    "2,9,5B",
+    "10,9,6A",
+    "11,9,2C",
+    "11,9,4A"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 1,
+  "init": 33792,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 2,
+  "init": 4097,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 3,
+  "init": 4940,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,2A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 4,
+  "init": 23112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 5,
+  "init": 57344,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 6,
+  "init": 38233,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,3,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 4,
+  "cell": 7,
+  "init": 1632,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 0,
+  "init": 52686,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,2,6A",
+    "1,2,7A",
+    "3,3,6A",
+    "7,3,0A",
+    "7,3,5A",
+    "8,3,7A",
+    "10,3,5A",
+    "12,3,1A",
+    "3,4,2A",
+    "3,4,4A",
+    "8,4,6A",
+    "10,4,6A",
+    "13,4,5A",
+    "5,6,3A",
+    "6,6,3A",
+    "4,7,4A",
+    "9,7,1A",
+    "10,7,2A",
+    "5,8,6A",
+    "9,8,3A",
+    "9,8,5A",
+    "10,8,6A",
+    "12,8,5A",
+    "6,9,2A",
+    "6,9,7A",
+    "11,9,1A",
+    "11,9,2A"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 1,
+  "init": 27045,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 2,
+  "init": 34679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 3,
+  "init": 38207,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 4,
+  "init": 65,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,4,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 5,
+  "init": 13000,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,4,7A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 6,
+  "init": 24582,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 4,
+  "cell": 7,
+  "init": 4369,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,4,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 0,
+  "init": 48830,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "5,1,7D",
+    "9,1,7D",
+    "10,1,7D",
+    "11,1,5D",
+    "1,2,6B",
+    "5,2,7D",
+    "6,2,3C",
+    "9,2,5D",
+    "4,3,6D",
+    "2,4,4C",
+    "9,4,3D",
+    "9,4,6D",
+    "13,4,6B",
+    "2,6,2C",
+    "6,6,3D",
+    "10,6,4B",
+    "11,6,7D",
+    "5,7,2D",
+    "1,8,5D",
+    "7,8,5C",
+    "11,8,4D",
+    "7,9,5C"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 1,
+  "init": 33280,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 2,
+  "init": 2056,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 3,
+  "init": 32,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 4,
+  "init": 21,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 5,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,2,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 6,
+  "init": 23112,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,4,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 4,
+  "cell": 7,
+  "init": 84,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 0,
+  "init": 61940,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,2,2C",
+    "4,2,5D",
+    "10,2,7C",
+    "11,2,5C",
+    "13,2,7D",
+    "5,3,4C",
+    "11,3,2C",
+    "11,3,6D",
+    "2,6,1D",
+    "9,7,1D",
+    "10,7,4D",
+    "11,7,4D",
+    "11,7,7D",
+    "13,7,6D",
+    "6,8,2D",
+    "9,8,2D",
+    "9,8,4C",
+    "9,8,6D"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 1,
+  "init": 4097,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 2,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,2,3C",
+    "9,6,2B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 3,
+  "init": 64,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 4,
+  "init": 23112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 5,
+  "init": 50070,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 6,
+  "init": 16512,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 4,
+  "cell": 7,
+  "init": 13000,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 4,
+  "cell": 0,
+  "init": 5140,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,1,7C",
+    "7,1,1D",
+    "11,1,2C",
+    "2,3,7D",
+    "6,3,2D",
+    "8,3,4A",
+    "9,3,6D",
+    "3,4,2B",
+    "8,4,4C",
+    "2,6,5D",
+    "6,6,1D",
+    "11,6,7B",
+    "3,7,6D",
+    "6,7,6D",
+    "8,7,5D",
+    "9,7,4D",
+    "12,7,4C",
+    "2,8,5D",
+    "2,8,6D",
+    "8,8,3D",
+    "11,8,4C",
+    "13,9,4B"
+   ]
+  }
+ },
+ {
+  "x": 11,
+  "y": 4,
+  "cell": 1,
+  "init": 57358,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,3,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 4,
+  "cell": 2,
+  "init": 10752,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 4,
+  "cell": 3,
+  "init": 30576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 4,
+  "cell": 4,
+  "init": 8706,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 4,
+  "cell": 5,
+  "init": 57825,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,4,7D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 4,
+  "cell": 0,
+  "init": 43434,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 4,
+  "cell": 1,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,2,2C",
+    "4,2,7C",
+    "8,2,2D",
+    "8,2,5C",
+    "13,2,4B",
+    "13,2,5C",
+    "13,2,6D",
+    "5,3,5B",
+    "13,3,5B",
+    "2,4,7C",
+    "8,4,1D",
+    "12,4,7C",
+    "1,6,2D",
+    "4,6,6C",
+    "4,7,1B",
+    "13,7,0B",
+    "1,8,3D",
+    "12,8,6C",
+    "6,9,7D"
+   ]
+  }
+ },
+ {
+  "x": 12,
+  "y": 4,
+  "cell": 3,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 4,
+  "cell": 4,
+  "init": 64681,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 4,
+  "cell": 5,
+  "init": 8226,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 4,
+  "cell": 6,
+  "init": 57358,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 4,
+  "cell": 7,
+  "init": 36864,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,3,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 4,
+  "cell": 0,
+  "init": 27285,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,4,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 4,
+  "cell": 1,
+  "init": 513,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 4,
+  "cell": 2,
+  "init": 14,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,4,7B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 4,
+  "cell": 5,
+  "init": 4940,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,3,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 4,
+  "cell": 6,
+  "init": 39321,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,4,7A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 4,
+  "cell": 7,
+  "init": 32832,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 6,
+  "cell": 0,
+  "init": 10280,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,1,6B",
+    "11,1,4D",
+    "5,2,2A",
+    "6,2,5C",
+    "10,2,1B",
+    "8,3,1B",
+    "4,4,2A",
+    "1,6,7B",
+    "5,6,1B",
+    "3,7,5B",
+    "5,7,5B",
+    "10,7,3B",
+    "11,7,7B",
+    "1,8,2C",
+    "1,8,6A",
+    "11,9,1B",
+    "11,9,4B"
+   ]
+  }
+ },
+ {
+  "x": 1,
+  "y": 6,
+  "cell": 2,
+  "init": 16512,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,6,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 6,
+  "cell": 3,
+  "init": 33,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,6,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 6,
+  "cell": 5,
+  "init": 253,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 6,
+  "cell": 6,
+  "init": 13000,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,6,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 6,
+  "cell": 7,
+  "init": 16234,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 0,
+  "init": 39530,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,2,2B",
+    "3,2,2A",
+    "3,2,5B",
+    "8,2,7A",
+    "4,3,7A",
+    "2,4,6A",
+    "5,4,3B",
+    "4,6,3B",
+    "5,6,2B",
+    "7,6,6A",
+    "10,6,3A",
+    "12,6,2B",
+    "7,7,2A",
+    "8,7,4A",
+    "11,7,6A",
+    "3,8,6B",
+    "7,8,4B",
+    "11,8,5A",
+    "12,8,3A",
+    "12,9,7B"
+   ]
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 1,
+  "init": 37727,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 2,
+  "init": 38460,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 3,
+  "init": 14074,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,6,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 4,
+  "init": 23145,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 5,
+  "init": 10260,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 6,
+  "init": 43092,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 6,
+  "cell": 7,
+  "init": 38505,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,4,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 0,
+  "init": 3853,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,2,4A",
+    "6,2,3A",
+    "9,2,3A",
+    "4,3,2B",
+    "7,3,0B",
+    "11,3,2A",
+    "11,3,6B",
+    "1,4,2A",
+    "6,4,3A",
+    "7,4,0A",
+    "10,4,3B",
+    "1,6,2A",
+    "4,6,7B",
+    "5,6,5A",
+    "6,6,1A",
+    "11,6,5A",
+    "5,7,4A",
+    "6,7,2B",
+    "6,7,6B",
+    "12,7,2B",
+    "7,8,5A",
+    "9,8,3B",
+    "12,8,2B",
+    "1,9,1B",
+    "9,9,1A",
+    "12,9,7A",
+    "13,9,2B"
+   ]
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 1,
+  "init": 26214,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,4B",
+    "3,1,6D",
+    "6,1,6D",
+    "9,1,6D",
+    "2,2,7D",
+    "3,2,1D",
+    "8,2,4D",
+    "11,2,5D",
+    "8,4,2D",
+    "8,4,3D",
+    "2,6,6D",
+    "4,6,2B",
+    "6,6,5B",
+    "8,6,1C",
+    "8,6,4D",
+    "2,7,2B",
+    "8,7,4D",
+    "5,9,0D",
+    "5,9,7D",
+    "13,9,0D",
+    "13,9,1B"
+   ]
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 2,
+  "init": 21756,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 3,
+  "init": 5140,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 4,
+  "init": 41088,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 5,
+  "init": 15400,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 6,
+  "init": 8224,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 6,
+  "cell": 7,
+  "init": 16576,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 0,
+  "init": 53880,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "5,1,3A",
+    "6,1,1A",
+    "10,1,4A",
+    "11,2,3A",
+    "13,2,3A",
+    "4,3,5A",
+    "6,4,2A",
+    "3,6,4A",
+    "8,6,2B",
+    "9,6,5B",
+    "11,6,5B",
+    "9,7,2A",
+    "5,8,4A",
+    "9,8,5B",
+    "13,8,3A",
+    "3,9,2A",
+    "4,9,2A",
+    "4,9,3B",
+    "5,9,5A",
+    "10,9,2A"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 1,
+  "init": 64447,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,1,2B",
+    "5,1,7B",
+    "12,1,7C",
+    "2,2,7B",
+    "3,2,1B",
+    "10,2,7B",
+    "2,3,4B",
+    "3,3,3B",
+    "8,3,6D",
+    "4,4,2C",
+    "9,4,1C",
+    "13,4,5C",
+    "6,6,6B",
+    "7,6,2D",
+    "5,7,3C",
+    "6,7,2D",
+    "8,8,6C",
+    "11,8,2D",
+    "2,9,7A",
+    "3,9,1C",
+    "7,9,5B"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 2,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 3,
+  "init": 16576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 4,
+  "init": 1,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 5,
+  "init": 38490,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 6,
+  "init": 1632,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,8,7B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 6,
+  "cell": 7,
+  "init": 7918,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 0,
+  "init": 43418,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "7,1,5A",
+    "9,1,7B",
+    "12,1,0A",
+    "6,2,7A",
+    "8,2,3A",
+    "9,2,1A",
+    "11,3,1A",
+    "7,4,1A",
+    "7,4,4A",
+    "9,6,4A",
+    "11,7,3A",
+    "6,8,3A",
+    "12,8,7B",
+    "3,9,2B",
+    "5,9,2B",
+    "6,9,2C",
+    "12,9,1A"
+   ]
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 1,
+  "init": 8188,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,6,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 2,
+  "init": 21672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 3,
+  "init": 7,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 4,
+  "init": 770,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 5,
+  "init": 16835,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 6,
+  "init": 42372,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 6,
+  "cell": 7,
+  "init": 22268,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,6,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 6,
+  "cell": 0,
+  "init": 27290,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,1,7C",
+    "12,1,3B",
+    "4,2,7B",
+    "10,2,3B",
+    "3,3,7D",
+    "1,4,4B",
+    "3,4,7D",
+    "2,6,3B",
+    "2,6,5B",
+    "2,6,6C",
+    "4,6,3C",
+    "4,6,5C",
+    "5,6,2C",
+    "5,6,4C",
+    "1,7,1C",
+    "3,7,7D",
+    "7,7,1D",
+    "11,7,4C",
+    "11,7,6C",
+    "2,8,1B",
+    "2,8,2C",
+    "2,8,5B",
+    "4,8,6B",
+    "6,8,3C",
+    "6,8,4C",
+    "7,8,6B",
+    "10,8,1C",
+    "4,9,1D",
+    "5,9,0B",
+    "10,9,1A"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 6,
+  "cell": 1,
+  "init": 14,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,7,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 6,
+  "cell": 3,
+  "init": 7918,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 6,
+  "cell": 4,
+  "init": 64681,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 6,
+  "cell": 5,
+  "init": 63744,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 6,
+  "cell": 6,
+  "init": 16512,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 6,
+  "cell": 7,
+  "init": 84,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 0,
+  "init": 34944,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,1A",
+    "3,1,7D",
+    "4,1,1A",
+    "6,1,7A",
+    "8,3,4B",
+    "4,4,5C",
+    "10,4,1C",
+    "1,6,6C",
+    "2,6,3C",
+    "6,6,7D",
+    "9,6,4D",
+    "6,7,7C",
+    "11,7,6D",
+    "6,8,7A",
+    "10,8,7D",
+    "1,9,1D",
+    "1,9,7D",
+    "4,9,6D",
+    "8,9,7D",
+    "12,9,4C"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 1,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 2,
+  "init": 4698,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,6,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 3,
+  "init": 1638,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,6,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 4,
+  "init": 33825,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 5,
+  "init": 5457,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 6,
+  "init": 1025,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,6,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 6,
+  "cell": 7,
+  "init": 27033,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,6,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 6,
+  "cell": 0,
+  "init": 27290,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,3C",
+    "5,1,1B",
+    "5,1,7C",
+    "6,1,6C",
+    "7,1,0D",
+    "10,1,7C",
+    "11,1,1C",
+    "2,2,0C",
+    "5,2,2C",
+    "5,2,4C",
+    "6,2,1D",
+    "10,2,1C",
+    "1,3,7B",
+    "2,3,4C",
+    "3,3,1C",
+    "3,3,6D",
+    "10,3,4C",
+    "4,4,2D",
+    "10,4,3D",
+    "10,4,5B",
+    "3,6,5B",
+    "5,6,1D",
+    "7,6,1C",
+    "8,6,1B",
+    "12,6,6D",
+    "6,7,4C",
+    "8,7,2D",
+    "2,8,3D",
+    "4,8,4B",
+    "8,8,4C",
+    "9,8,3D",
+    "10,8,4C",
+    "2,9,7C",
+    "10,9,2D",
+    "12,9,7C"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 6,
+  "cell": 1,
+  "init": 50,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 6,
+  "cell": 2,
+  "init": 3822,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 6,
+  "cell": 3,
+  "init": 61153,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 6,
+  "cell": 4,
+  "init": 8613,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,7,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 6,
+  "cell": 7,
+  "init": 770,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 0,
+  "init": 8738,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,2,6D",
+    "8,2,6D",
+    "10,2,3A",
+    "2,3,6C",
+    "8,3,3B",
+    "10,3,5B",
+    "4,4,5A",
+    "4,4,6C",
+    "9,4,6A",
+    "12,4,7B",
+    "4,6,2A",
+    "4,6,5B",
+    "5,7,1B",
+    "13,7,4B",
+    "1,8,6B",
+    "7,8,1B",
+    "8,8,7B",
+    "11,8,2C",
+    "3,9,0B",
+    "8,9,2D"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 1,
+  "init": 21841,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,1,5D",
+    "5,1,4D",
+    "12,1,2C",
+    "12,1,5D",
+    "13,1,2D",
+    "5,2,2D",
+    "10,2,3D",
+    "10,2,5C",
+    "12,2,0D",
+    "12,2,6C",
+    "13,2,2C",
+    "5,3,4D",
+    "6,3,7C",
+    "7,3,5D",
+    "8,3,5D",
+    "10,3,4D",
+    "6,4,1D",
+    "8,4,5D",
+    "5,6,4D",
+    "6,6,5C",
+    "7,6,4C",
+    "7,6,7D",
+    "11,6,4D",
+    "7,7,4D",
+    "8,7,1B",
+    "10,7,3D"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 2,
+  "init": 1551,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 3,
+  "init": 8738,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 4,
+  "init": 18450,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,4,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 5,
+  "init": 22268,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 6,
+  "init": 30584,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 6,
+  "cell": 7,
+  "init": 22185,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 6,
+  "cell": 0,
+  "init": 5185,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,2C",
+    "3,1,2A",
+    "10,1,2D",
+    "10,1,3C",
+    "8,2,7C",
+    "11,3,7B",
+    "2,4,4B",
+    "4,4,2B",
+    "6,4,3D",
+    "8,6,7B",
+    "9,6,4C",
+    "13,6,5D",
+    "10,7,7B",
+    "1,8,5A",
+    "2,8,1A",
+    "5,8,1B",
+    "5,8,7B",
+    "6,8,1B",
+    "7,8,2B",
+    "7,8,7C",
+    "8,8,1A",
+    "10,8,6B"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 6,
+  "cell": 1,
+  "init": 15465,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 6,
+  "cell": 2,
+  "init": 19475,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 6,
+  "cell": 3,
+  "init": 63240,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 6,
+  "cell": 4,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,2A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 6,
+  "cell": 5,
+  "init": 7918,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 6,
+  "cell": 6,
+  "init": 64680,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,6,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 6,
+  "cell": 0,
+  "init": 33320,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,3A",
+    "2,2,4C",
+    "5,2,1B",
+    "10,2,4C",
+    "12,2,4B",
+    "4,3,3A",
+    "10,3,1A",
+    "12,3,3A",
+    "11,4,3A",
+    "1,6,2B",
+    "11,6,4B",
+    "2,7,5B",
+    "7,7,2B",
+    "8,7,2A",
+    "8,7,5B",
+    "13,7,4A",
+    "1,8,2B",
+    "2,8,3B",
+    "4,8,4A",
+    "10,8,2B",
+    "12,8,7C",
+    "1,9,3A",
+    "4,9,3C",
+    "7,9,3B",
+    "8,9,2C",
+    "10,9,6B"
+   ]
+  }
+ },
+ {
+  "x": 11,
+  "y": 6,
+  "cell": 1,
+  "init": 18432,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,6,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 6,
+  "cell": 2,
+  "init": 22268,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 6,
+  "cell": 4,
+  "init": 22185,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 6,
+  "cell": 5,
+  "init": 57630,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 6,
+  "cell": 6,
+  "init": 26208,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 6,
+  "cell": 7,
+  "init": 1904,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 0,
+  "init": 42662,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,2,5C",
+    "13,2,2B",
+    "13,2,3C",
+    "2,3,7C",
+    "4,3,7C",
+    "8,3,0D",
+    "12,3,1C",
+    "1,4,2C",
+    "1,4,3D",
+    "6,4,2D",
+    "7,4,5B",
+    "13,4,0B",
+    "2,6,5C",
+    "7,6,2C",
+    "10,6,5D",
+    "11,6,1C",
+    "13,6,6C",
+    "3,7,5D",
+    "5,7,3B",
+    "9,7,1C",
+    "13,7,7C",
+    "1,8,5B",
+    "4,8,5C",
+    "8,8,4B",
+    "11,8,6C",
+    "3,9,0C",
+    "5,9,7C",
+    "11,9,2D"
+   ]
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 1,
+  "init": 42602,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,2B",
+    "11,1,2B",
+    "12,1,2A",
+    "4,2,1C",
+    "7,2,3C",
+    "10,2,4D",
+    "13,2,6C",
+    "10,3,2D",
+    "8,4,1A",
+    "9,4,1B",
+    "9,4,3B",
+    "9,4,6B",
+    "10,4,2B",
+    "13,4,2C",
+    "11,6,2C",
+    "4,8,1D",
+    "12,8,2D",
+    "2,9,4D",
+    "3,9,5B",
+    "12,9,4B",
+    "13,9,5B"
+   ]
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 2,
+  "init": 21,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,4,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 3,
+  "init": 23145,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,4,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 4,
+  "init": 64681,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,6,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 5,
+  "init": 57358,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,6,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 6,
+  "init": 18432,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 6,
+  "cell": 7,
+  "init": 18432,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,6,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 6,
+  "cell": 0,
+  "init": 17476,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,7A",
+    "2,1,7B",
+    "7,1,1A",
+    "7,1,3B",
+    "5,2,3A",
+    "8,3,6C",
+    "12,3,3B",
+    "12,3,4B",
+    "13,3,1C",
+    "9,4,1A",
+    "9,4,3A",
+    "13,4,2B",
+    "2,6,1B",
+    "3,6,7A",
+    "4,6,6B",
+    "9,6,6C",
+    "10,6,5B",
+    "7,7,4B",
+    "6,8,5B",
+    "7,8,1A",
+    "3,9,6A",
+    "5,9,5C"
+   ]
+  }
+ },
+ {
+  "x": 13,
+  "y": 6,
+  "cell": 1,
+  "init": 37740,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 6,
+  "cell": 2,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,6,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 6,
+  "cell": 3,
+  "init": 96,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,6,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 6,
+  "cell": 4,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 6,
+  "cell": 5,
+  "init": 34944,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,6,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 6,
+  "cell": 6,
+  "init": 39312,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 7,
+  "cell": 0,
+  "init": 32125,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "6,4,7D",
+    "13,4,1B",
+    "2,6,4B",
+    "2,6,7B",
+    "6,6,7B",
+    "12,6,5B",
+    "1,7,1A",
+    "4,7,5A",
+    "7,7,7C",
+    "9,7,2C",
+    "2,8,6C",
+    "3,8,4B",
+    "8,8,3B",
+    "9,8,3C",
+    "9,8,5D",
+    "13,8,3C",
+    "1,9,3B",
+    "13,9,7A"
+   ]
+  }
+ },
+ {
+  "x": 1,
+  "y": 7,
+  "cell": 1,
+  "init": 4940,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 7,
+  "cell": 2,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 7,
+  "cell": 3,
+  "init": 32768,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 0,
+  "init": 16660,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,2,5B",
+    "7,2,5B",
+    "11,2,5B",
+    "12,2,6A",
+    "13,2,4A",
+    "13,2,6A",
+    "13,3,5A",
+    "1,4,4A",
+    "3,4,3A",
+    "3,4,5B",
+    "9,4,7A",
+    "2,6,6A",
+    "9,7,5B",
+    "12,7,2D",
+    "2,8,6B",
+    "12,8,3B",
+    "1,9,7A",
+    "5,9,2C",
+    "13,9,5A"
+   ]
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 1,
+  "init": 7905,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 2,
+  "init": 2448,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 3,
+  "init": 27033,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 4,
+  "init": 5120,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 5,
+  "init": 2176,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 6,
+  "init": 111,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 7,
+  "cell": 7,
+  "init": 27075,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,9,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 7,
+  "cell": 0,
+  "init": 22106,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,3C",
+    "5,2,7C",
+    "2,3,1A",
+    "3,3,2B",
+    "6,3,7A",
+    "13,3,3A",
+    "7,4,3A",
+    "11,4,3C",
+    "8,6,7C",
+    "10,6,2C",
+    "4,7,5C",
+    "5,7,4C",
+    "7,7,4C",
+    "8,7,1A",
+    "10,7,4B",
+    "5,8,5C",
+    "7,8,7D",
+    "13,8,1A",
+    "6,9,3C",
+    "8,9,5C",
+    "10,9,0B",
+    "10,9,5C"
+   ]
+  }
+ },
+ {
+  "x": 3,
+  "y": 7,
+  "cell": 1,
+  "init": 4112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 7,
+  "cell": 2,
+  "init": 27075,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,7,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 7,
+  "cell": 5,
+  "init": 41088,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 7,
+  "cell": 6,
+  "init": 64681,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 7,
+  "cell": 7,
+  "init": 37740,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 7,
+  "cell": 0,
+  "init": 43962,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,1B",
+    "5,1,2C",
+    "5,1,4C",
+    "11,1,5C",
+    "12,1,1B",
+    "12,1,5C",
+    "3,2,4D",
+    "8,2,5D",
+    "12,2,0C",
+    "3,3,1D",
+    "6,3,1D",
+    "6,3,4C",
+    "2,4,7D",
+    "4,4,5D",
+    "9,4,2C",
+    "11,4,1C",
+    "12,4,3D",
+    "6,6,5A",
+    "11,6,5D",
+    "6,7,7D",
+    "1,8,2D",
+    "2,8,0C",
+    "4,8,5D",
+    "6,8,2C",
+    "10,8,6C",
+    "9,9,1B",
+    "12,9,4D"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 7,
+  "cell": 1,
+  "init": 64200,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 7,
+  "cell": 2,
+  "init": 10260,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 7,
+  "cell": 3,
+  "init": 5180,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,8,2B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 7,
+  "cell": 4,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 7,
+  "cell": 5,
+  "init": 57344,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 7,
+  "cell": 7,
+  "init": 34952,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,7,5C",
+    "4,8,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 7,
+  "cell": 0,
+  "init": 60350,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,4B",
+    "13,1,7C",
+    "8,2,4C",
+    "11,2,7B",
+    "2,3,5C",
+    "3,3,1A",
+    "8,3,3C",
+    "13,3,7A",
+    "9,4,7B",
+    "2,7,1D",
+    "4,7,3C",
+    "4,7,4B",
+    "7,7,3B",
+    "7,7,7B",
+    "8,7,4B",
+    "9,7,7C",
+    "4,8,0A",
+    "7,9,5A",
+    "9,9,3C",
+    "11,9,1C",
+    "11,9,6A"
+   ]
+  }
+ },
+ {
+  "x": 5,
+  "y": 7,
+  "cell": 1,
+  "init": 15400,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 7,
+  "cell": 2,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 7,
+  "cell": 3,
+  "init": 261,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 7,
+  "cell": 4,
+  "init": 14074,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,7,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 7,
+  "cell": 5,
+  "init": 254,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 7,
+  "cell": 6,
+  "init": 38490,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 0,
+  "init": 38502,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,2,5A",
+    "3,3,2A",
+    "4,3,2A",
+    "6,3,4A",
+    "3,4,6A",
+    "8,4,2A",
+    "11,4,5A",
+    "4,6,6A",
+    "8,6,4A",
+    "2,7,5A",
+    "8,7,5A",
+    "10,7,3A",
+    "4,8,1A",
+    "5,8,5A",
+    "7,8,4A",
+    "11,8,2A",
+    "1,9,1A",
+    "6,9,4A",
+    "11,9,2B",
+    "11,9,5A"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 1,
+  "init": 32125,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "5,1,3C",
+    "4,2,3C",
+    "13,2,3D",
+    "13,2,4C",
+    "11,3,7C",
+    "13,3,0D",
+    "13,3,3C",
+    "13,3,5C",
+    "7,4,4D",
+    "2,6,7D",
+    "4,6,4C",
+    "6,6,3C",
+    "12,6,3B",
+    "3,7,2C",
+    "5,7,3D",
+    "6,7,7B",
+    "7,7,2C",
+    "8,7,2C",
+    "2,8,3C",
+    "3,8,5C",
+    "5,8,2D",
+    "7,8,6C",
+    "10,8,2D",
+    "10,9,2C"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 2,
+  "init": 28672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 3,
+  "init": 9,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,3,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 4,
+  "init": 32832,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 5,
+  "init": 2048,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,6,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 6,
+  "init": 39318,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 7,
+  "cell": 7,
+  "init": 259,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 0,
+  "init": 11655,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,1,7A",
+    "4,1,4A",
+    "8,1,7A",
+    "9,1,7A",
+    "4,2,1A",
+    "11,2,1B",
+    "10,3,7A",
+    "11,3,6A",
+    "8,4,4A",
+    "10,4,3A",
+    "10,4,5A",
+    "5,6,2A",
+    "9,6,6A",
+    "11,6,6A",
+    "13,6,5A",
+    "6,7,6A",
+    "5,8,7A",
+    "10,8,5C",
+    "12,8,2A",
+    "5,9,3B",
+    "7,9,2A",
+    "12,9,0A"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 1,
+  "init": 4368,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,7,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 2,
+  "init": 4335,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 3,
+  "init": 1024,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,6,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 4,
+  "init": 16576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 5,
+  "init": 24428,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 6,
+  "init": 5376,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 7,
+  "cell": 7,
+  "init": 22268,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,4,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 7,
+  "cell": 0,
+  "init": 16452,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "5,1,2B",
+    "11,1,3A",
+    "13,1,2B",
+    "3,2,6B",
+    "4,2,6B",
+    "11,2,5A",
+    "11,2,7A",
+    "10,3,6D",
+    "12,3,2A",
+    "7,4,0B",
+    "7,4,4B",
+    "6,6,6A",
+    "9,6,4B",
+    "4,7,7B",
+    "5,7,6B",
+    "8,7,7B",
+    "1,8,1B",
+    "8,8,7A",
+    "13,8,7D"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 7,
+  "cell": 1,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 7,
+  "cell": 2,
+  "init": 51510,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 7,
+  "cell": 4,
+  "init": 39312,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 7,
+  "cell": 5,
+  "init": 4959,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,7,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 7,
+  "cell": 6,
+  "init": 9,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 7,
+  "cell": 7,
+  "init": 43008,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,7,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 0,
+  "init": 3822,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,1,3B",
+    "5,1,4A",
+    "7,1,1C",
+    "8,1,5B",
+    "10,1,3D",
+    "5,2,4A",
+    "6,2,7D",
+    "13,3,0C",
+    "13,3,3B",
+    "2,4,1D",
+    "7,4,7C",
+    "9,4,4D",
+    "10,4,4C",
+    "13,4,0C",
+    "1,6,3D",
+    "3,6,6C",
+    "4,6,3D",
+    "7,6,0B",
+    "10,6,2D",
+    "11,6,6D",
+    "4,7,1C",
+    "6,7,5C",
+    "8,7,4C",
+    "10,7,6C",
+    "13,7,3C",
+    "9,8,2A",
+    "13,8,1B",
+    "1,9,1C",
+    "6,9,1B",
+    "6,9,3D",
+    "11,9,6B",
+    "13,9,2D"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 1,
+  "init": 1911,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,7,2D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 2,
+  "init": 67,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 3,
+  "init": 8738,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 4,
+  "init": 32832,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 5,
+  "init": 5418,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,7,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 6,
+  "init": 8,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 7,
+  "cell": 7,
+  "init": 21756,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,8,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 0,
+  "init": 47786,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "6,1,0B",
+    "6,1,3B",
+    "12,1,2B",
+    "11,2,7C",
+    "12,3,6A",
+    "5,4,7C",
+    "8,4,6B",
+    "12,4,3C",
+    "13,6,3A",
+    "7,7,3C",
+    "8,7,6B",
+    "13,7,4D",
+    "13,7,7B",
+    "2,8,0B",
+    "7,8,1C",
+    "11,8,5C",
+    "12,8,6B",
+    "3,9,5D",
+    "5,9,6B",
+    "9,9,5B"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 1,
+  "init": 43689,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,1C",
+    "2,1,6A",
+    "1,2,4B",
+    "5,2,6D",
+    "10,2,1D",
+    "10,2,7D",
+    "12,3,4D",
+    "7,4,1D",
+    "10,4,1D",
+    "5,6,2D",
+    "8,6,1D",
+    "10,6,1D",
+    "12,6,3D",
+    "7,7,5D",
+    "10,7,7D",
+    "2,8,2D",
+    "7,8,5D",
+    "10,8,6D",
+    "3,9,1D",
+    "10,9,1D"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 2,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 3,
+  "init": 1632,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 4,
+  "init": 8613,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 5,
+  "init": 26985,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 6,
+  "init": 14074,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 7,
+  "cell": 7,
+  "init": 16835,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 0,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "9,1,3A",
+    "10,1,3B",
+    "4,2,6A",
+    "5,2,1A",
+    "7,2,4B",
+    "13,2,5A",
+    "10,3,2C",
+    "11,3,1B",
+    "7,4,7A",
+    "8,4,5B",
+    "12,4,3A",
+    "2,6,1A",
+    "7,6,3A",
+    "13,6,1B",
+    "2,7,7B",
+    "12,7,6B",
+    "13,7,7A",
+    "6,8,5A",
+    "7,8,5B",
+    "9,8,6A",
+    "3,9,2C",
+    "4,9,2B",
+    "7,9,2B"
+   ]
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 1,
+  "init": 22873,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,1,7D",
+    "9,1,3D",
+    "9,2,7D",
+    "6,3,4D",
+    "12,3,2C",
+    "7,4,3D",
+    "12,4,7D",
+    "7,6,3D",
+    "11,6,1D",
+    "12,6,2D",
+    "5,7,4D",
+    "3,8,2C",
+    "5,8,7C",
+    "8,8,1B",
+    "9,8,2B",
+    "3,9,0D",
+    "8,9,4D"
+   ]
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 2,
+  "init": 261,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 3,
+  "init": 64200,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 4,
+  "init": 10260,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 5,
+  "init": 16384,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 6,
+  "init": 23112,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 7,
+  "cell": 7,
+  "init": 8613,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 7,
+  "cell": 0,
+  "init": 5185,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,7B",
+    "4,1,3A",
+    "11,1,3C",
+    "12,2,1C",
+    "1,3,4B",
+    "2,3,4A",
+    "3,3,2C",
+    "11,3,3C",
+    "1,4,2B",
+    "5,4,1D",
+    "7,4,4C",
+    "6,6,7C",
+    "8,6,7D",
+    "9,6,6D",
+    "10,6,4A",
+    "1,7,1B",
+    "1,7,3B",
+    "6,7,3D",
+    "8,7,7D",
+    "11,7,6B",
+    "5,8,2C",
+    "5,8,4D",
+    "13,8,2C",
+    "11,9,1D",
+    "12,9,3C",
+    "13,9,7B"
+   ]
+  }
+ },
+ {
+  "x": 12,
+  "y": 7,
+  "cell": 2,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 7,
+  "cell": 3,
+  "init": 4959,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 7,
+  "cell": 4,
+  "init": 50,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,7,7A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 7,
+  "cell": 6,
+  "init": 27033,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 7,
+  "cell": 7,
+  "init": 4369,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 7,
+  "cell": 0,
+  "init": 24672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,7,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 7,
+  "cell": 3,
+  "init": 8320,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,8,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 7,
+  "cell": 4,
+  "init": 24582,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,7,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 7,
+  "cell": 6,
+  "init": 49280,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 7,
+  "cell": 7,
+  "init": 64681,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 0,
+  "init": 42390,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,7B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 1,
+  "init": 18450,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 2,
+  "init": 15400,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 3,
+  "init": 1904,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 4,
+  "init": 3854,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,9,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 5,
+  "init": 23112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 6,
+  "init": 22268,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,7A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 8,
+  "cell": 7,
+  "init": 35498,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 0,
+  "init": 32800,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,8,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 1,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,8,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 2,
+  "init": 1,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,8,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 3,
+  "init": 16170,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 4,
+  "init": 514,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 5,
+  "init": 9,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,8,7D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 6,
+  "init": 4096,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,7D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 8,
+  "cell": 7,
+  "init": 225,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,8,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 8,
+  "cell": 0,
+  "init": 18432,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,7,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 8,
+  "cell": 2,
+  "init": 51250,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,8,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 8,
+  "cell": 4,
+  "init": 14074,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,7,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 8,
+  "cell": 5,
+  "init": 2457,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,6,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 8,
+  "cell": 6,
+  "init": 23145,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,8,7A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 8,
+  "cell": 7,
+  "init": 257,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 8,
+  "cell": 0,
+  "init": 30855,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "3,2,1A",
+    "13,3,0A",
+    "3,4,7B",
+    "5,4,6B",
+    "5,4,7A",
+    "11,4,2B",
+    "11,6,6B",
+    "4,7,2C",
+    "6,7,3B",
+    "7,7,1C",
+    "3,8,0B",
+    "5,8,2B",
+    "8,9,4B",
+    "8,9,7B"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 8,
+  "cell": 1,
+  "init": 37727,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,8,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 8,
+  "cell": 2,
+  "init": 8738,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 8,
+  "cell": 4,
+  "init": 38550,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,7,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 8,
+  "cell": 5,
+  "init": 26208,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,8,2A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 8,
+  "cell": 6,
+  "init": 34680,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 8,
+  "cell": 7,
+  "init": 26217,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 0,
+  "init": 61682,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,3A",
+    "11,1,1B",
+    "5,2,6A",
+    "12,2,1B",
+    "4,3,4A",
+    "5,4,7B",
+    "9,4,2B",
+    "1,6,2C",
+    "2,6,4A",
+    "5,6,7B",
+    "6,6,7A",
+    "10,6,5C",
+    "7,8,7A",
+    "8,8,5C",
+    "10,8,1A",
+    "12,8,1B",
+    "12,8,2C",
+    "4,9,7C"
+   ]
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 1,
+  "init": 16576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,8,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 2,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 3,
+  "init": 1028,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,8,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 4,
+  "init": 43008,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,9,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 5,
+  "init": 24428,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 6,
+  "init": 16234,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,8,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 8,
+  "cell": 7,
+  "init": 27033,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 0,
+  "init": 39424,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "10,1,7B",
+    "3,3,2D",
+    "4,3,5C",
+    "8,3,3D",
+    "9,3,3D",
+    "10,3,1D",
+    "10,3,5D",
+    "11,3,6C",
+    "1,4,3C",
+    "3,4,3D",
+    "7,4,3B",
+    "8,4,4B",
+    "9,4,3C",
+    "3,6,2D",
+    "3,6,6B",
+    "7,6,7C",
+    "9,6,5C",
+    "3,8,5B",
+    "4,8,7B",
+    "7,8,2C",
+    "8,8,7C",
+    "12,8,3C",
+    "1,9,7C",
+    "3,9,6B",
+    "13,9,1A"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 1,
+  "init": 135,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,9,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 2,
+  "init": 4959,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 3,
+  "init": 2448,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,8,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 4,
+  "init": 16512,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,8,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 5,
+  "init": 30576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 6,
+  "init": 9,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 8,
+  "cell": 7,
+  "init": 39321,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,8,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 8,
+  "cell": 0,
+  "init": 21853,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,2,3A",
+    "7,2,7A",
+    "12,2,3A",
+    "7,3,1A",
+    "9,3,3B",
+    "1,4,3A",
+    "2,4,1A",
+    "6,4,7B",
+    "8,4,5A",
+    "5,6,3B",
+    "10,6,6A",
+    "3,7,5A",
+    "6,7,5B",
+    "6,7,7A",
+    "7,7,1B",
+    "1,8,3B",
+    "11,8,6A",
+    "12,8,1A",
+    "12,8,6A",
+    "6,9,1A",
+    "6,9,2B"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 8,
+  "cell": 1,
+  "init": 50,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 8,
+  "cell": 2,
+  "init": 33825,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 8,
+  "cell": 4,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 8,
+  "cell": 5,
+  "init": 272,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 8,
+  "cell": 6,
+  "init": 9,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 8,
+  "cell": 7,
+  "init": 32,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 0,
+  "init": 32125,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,5A",
+    "6,2,5B",
+    "8,2,6A",
+    "12,2,4A",
+    "5,3,3A",
+    "9,3,1A",
+    "10,3,6B",
+    "7,4,5A",
+    "9,4,4A",
+    "10,6,1A",
+    "11,6,1A",
+    "11,6,2A",
+    "12,6,2A",
+    "12,6,5A",
+    "12,6,6A",
+    "13,6,1A",
+    "3,7,6A",
+    "3,7,7A",
+    "4,7,2B",
+    "4,7,3B",
+    "9,7,4B",
+    "10,7,7A",
+    "10,8,2A",
+    "8,9,2A"
+   ]
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 1,
+  "init": 24576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,2C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 2,
+  "init": 35980,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 3,
+  "init": 8613,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 4,
+  "init": 2448,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,9,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 5,
+  "init": 19,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 6,
+  "init": 14074,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 8,
+  "cell": 7,
+  "init": 38460,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,2B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 8,
+  "cell": 0,
+  "init": 25942,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,2,5A",
+    "6,2,5A",
+    "11,2,1A",
+    "8,3,0A",
+    "8,3,6A",
+    "9,3,6A",
+    "3,4,4B",
+    "10,4,6B",
+    "9,6,5A",
+    "2,7,7A",
+    "6,7,4A",
+    "7,7,1A",
+    "12,7,6A",
+    "13,7,3B",
+    "2,8,2A",
+    "11,8,4A",
+    "13,8,7A"
+   ]
+  }
+ },
+ {
+  "x": 9,
+  "y": 8,
+  "cell": 1,
+  "init": 5397,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,8,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 8,
+  "cell": 2,
+  "init": 2176,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 8,
+  "cell": 3,
+  "init": 34679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 8,
+  "cell": 4,
+  "init": 64681,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,8,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 8,
+  "cell": 5,
+  "init": 27285,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,8,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 8,
+  "cell": 6,
+  "init": 38505,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,8,2A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 0,
+  "init": 5397,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "13,4,1D"
+   ]
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 1,
+  "init": 3808,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 2,
+  "init": 273,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 3,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 4,
+  "init": 34680,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,7,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 5,
+  "init": 15465,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 6,
+  "init": 7905,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,8,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 8,
+  "cell": 7,
+  "init": 24396,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 8,
+  "cell": 0,
+  "init": 38550,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "8,1,7B",
+    "11,1,6C",
+    "4,2,5B",
+    "6,3,4B",
+    "11,3,3B",
+    "2,4,1C",
+    "5,4,3C",
+    "5,4,4B",
+    "10,4,4A",
+    "12,6,5C",
+    "12,6,7B",
+    "2,7,3C",
+    "4,7,1A",
+    "4,7,5B",
+    "12,7,6D",
+    "1,8,3C",
+    "1,9,3C",
+    "3,9,1B",
+    "4,9,7D",
+    "6,9,3B"
+   ]
+  }
+ },
+ {
+  "x": 11,
+  "y": 8,
+  "cell": 1,
+  "init": 38505,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 8,
+  "cell": 2,
+  "init": 6,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,9,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 8,
+  "cell": 3,
+  "init": 41514,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 8,
+  "cell": 4,
+  "init": 10752,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 8,
+  "cell": 5,
+  "init": 30584,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 8,
+  "cell": 6,
+  "init": 4680,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 0,
+  "init": 55159,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "1,1,0B",
+    "5,1,1A",
+    "7,1,5C",
+    "13,2,7C",
+    "3,3,3C",
+    "12,3,3D",
+    "12,6,2C",
+    "13,6,6D",
+    "1,7,1D",
+    "1,7,2B",
+    "2,7,2A",
+    "7,7,7D",
+    "4,9,6C",
+    "5,9,5D",
+    "6,9,1C",
+    "13,9,0C"
+   ]
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 1,
+  "init": 21588,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,9,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 2,
+  "init": 5439,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,9,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 3,
+  "init": 64680,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 4,
+  "init": 46260,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 5,
+  "init": 14025,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 6,
+  "init": 23145,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 8,
+  "cell": 7,
+  "init": 34679,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,8,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 8,
+  "cell": 1,
+  "init": 2313,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,8,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 8,
+  "cell": 2,
+  "init": 514,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,8,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 8,
+  "cell": 3,
+  "init": 21,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,8,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 8,
+  "cell": 4,
+  "init": 8738,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,6,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 8,
+  "cell": 5,
+  "init": 10914,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,6,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 8,
+  "cell": 7,
+  "init": 37727,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,8,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 9,
+  "cell": 0,
+  "init": 26214,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": false,
+  "readBy": {
+   "F": [],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 9,
+  "cell": 1,
+  "init": 57358,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 9,
+  "cell": 3,
+  "init": 36873,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,9,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 9,
+  "cell": 4,
+  "init": 19456,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,9,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 9,
+  "cell": 5,
+  "init": 4112,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,8,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 9,
+  "cell": 6,
+  "init": 1799,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,9,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 1,
+  "y": 9,
+  "cell": 7,
+  "init": 2176,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,8,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 9,
+  "cell": 0,
+  "init": 33410,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": false,
+  "readBy": {
+   "F": [],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 9,
+  "cell": 1,
+  "init": 5140,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,6,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 9,
+  "cell": 2,
+  "init": 8352,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "1,9,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 9,
+  "cell": 4,
+  "init": 2448,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 9,
+  "cell": 5,
+  "init": 13000,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 9,
+  "cell": 6,
+  "init": 5140,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 2,
+  "y": 9,
+  "cell": 7,
+  "init": 51200,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 9,
+  "cell": 0,
+  "init": 28679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 9,
+  "cell": 1,
+  "init": 64200,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 9,
+  "cell": 2,
+  "init": 27045,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 9,
+  "cell": 5,
+  "init": 21672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "3,9,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 9,
+  "cell": 6,
+  "init": 32640,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 3,
+  "y": 9,
+  "cell": 7,
+  "init": 64681,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "2,9,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 0,
+  "init": 26214,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "2,1,7A",
+    "5,1,2A",
+    "7,1,7A",
+    "9,1,2A",
+    "11,1,5A",
+    "13,1,3A",
+    "2,2,5A",
+    "7,2,3A",
+    "13,2,2A",
+    "2,3,7A",
+    "3,3,4A",
+    "8,3,0B",
+    "3,4,5A",
+    "4,4,7B",
+    "6,4,4A",
+    "8,6,3A",
+    "7,9,3A"
+   ]
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 1,
+  "init": 1025,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 2,
+  "init": 33345,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 3,
+  "init": 50050,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 4,
+  "init": 41634,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,8,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 5,
+  "init": 16660,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 6,
+  "init": 2184,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 4,
+  "y": 9,
+  "cell": 7,
+  "init": 27285,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 9,
+  "cell": 0,
+  "init": 261,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,9,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 9,
+  "cell": 1,
+  "init": 257,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,7,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 9,
+  "cell": 2,
+  "init": 64,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,9,1A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 9,
+  "cell": 3,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,9,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 9,
+  "cell": 5,
+  "init": 50070,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,8,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 9,
+  "cell": 6,
+  "init": 120,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "4,9,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 5,
+  "y": 9,
+  "cell": 7,
+  "init": 18450,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "5,9,1B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 9,
+  "cell": 0,
+  "init": 26214,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "4,2,6C",
+    "5,2,1C",
+    "12,2,4D",
+    "11,3,1D",
+    "12,3,6C",
+    "1,4,4C",
+    "4,4,6D",
+    "5,6,6B",
+    "10,6,3C",
+    "12,6,3C",
+    "2,7,3D",
+    "9,7,6D",
+    "10,7,3C",
+    "11,7,2D",
+    "5,8,1C",
+    "6,8,5C",
+    "2,9,5D",
+    "2,9,7B",
+    "7,9,3C",
+    "9,9,5C",
+    "10,9,1B",
+    "10,9,6D"
+   ]
+  }
+ },
+ {
+  "x": 6,
+  "y": 9,
+  "cell": 1,
+  "init": 61153,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,9,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 9,
+  "cell": 2,
+  "init": 18,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,9,5C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 9,
+  "cell": 3,
+  "init": 24576,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,9,5B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 9,
+  "cell": 4,
+  "init": 39321,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,1C",
+    "7,9,4B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 9,
+  "cell": 5,
+  "init": 48640,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,9,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 6,
+  "y": 9,
+  "cell": 7,
+  "init": 5418,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,9,5A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 9,
+  "cell": 0,
+  "init": 63225,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": true,
+  "readBy": {
+   "F": [],
+   "Q": [
+    "7,1,3A",
+    "11,1,6A",
+    "13,1,3B",
+    "3,2,7C",
+    "5,3,6A",
+    "8,3,5B",
+    "11,3,2B",
+    "1,6,7A",
+    "7,6,6B",
+    "2,7,6A",
+    "9,7,5A",
+    "13,7,6A",
+    "3,8,6C",
+    "6,8,2B",
+    "9,8,5C",
+    "11,8,6B",
+    "6,9,7C",
+    "12,9,3B"
+   ]
+  }
+ },
+ {
+  "x": 7,
+  "y": 9,
+  "cell": 1,
+  "init": 57600,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,9,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 9,
+  "cell": 2,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 9,
+  "cell": 3,
+  "init": 5418,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 9,
+  "cell": 4,
+  "init": 159,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 9,
+  "cell": 5,
+  "init": 257,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 7,
+  "y": 9,
+  "cell": 6,
+  "init": 4369,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,8,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 9,
+  "cell": 0,
+  "init": 38550,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": false,
+  "readBy": {
+   "F": [],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 9,
+  "cell": 2,
+  "init": 18,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,9,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 9,
+  "cell": 4,
+  "init": 34679,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,9,6A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 9,
+  "cell": 5,
+  "init": 1632,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,9,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 9,
+  "cell": 6,
+  "init": 514,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "8,9,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 8,
+  "y": 9,
+  "cell": 7,
+  "init": 24576,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 9,
+  "cell": 0,
+  "init": 10280,
+  "hasFlipFlop": true,
+  "combinationalInside": false,
+  "registeredInside": false,
+  "readBy": {
+   "F": [],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 9,
+  "cell": 1,
+  "init": 30720,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "7,9,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 9,
+  "cell": 3,
+  "init": 27030,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,9,1D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 9,
+  "cell": 5,
+  "init": 1,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,9,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 9,
+  "y": 9,
+  "cell": 7,
+  "init": 34952,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,9,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 9,
+  "cell": 0,
+  "init": 257,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,9,0B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 9,
+  "cell": 1,
+  "init": 51200,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,9,3A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 9,
+  "cell": 2,
+  "init": 5180,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,9,3C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 9,
+  "cell": 3,
+  "init": 20757,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "6,7,1C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 9,
+  "cell": 5,
+  "init": 3808,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,9,3D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 10,
+  "y": 9,
+  "cell": 6,
+  "init": 272,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,9,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 9,
+  "cell": 1,
+  "init": 15465,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 9,
+  "cell": 2,
+  "init": 24428,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,8,0A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 9,
+  "cell": 4,
+  "init": 120,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "10,8,3B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 9,
+  "cell": 5,
+  "init": 1025,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,9,4D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 11,
+  "y": 9,
+  "cell": 6,
+  "init": 34952,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "11,9,4C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 9,
+  "cell": 0,
+  "init": 62985,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,7,7B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 9,
+  "cell": 1,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,9,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 9,
+  "cell": 2,
+  "init": 17476,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,8,0D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 9,
+  "cell": 3,
+  "init": 4864,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,9,2B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 9,
+  "cell": 4,
+  "init": 32776,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,8,5D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 9,
+  "cell": 6,
+  "init": 30576,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,9,7D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 12,
+  "y": 9,
+  "cell": 7,
+  "init": 30584,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "12,9,2A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 9,
+  "cell": 0,
+  "init": 19475,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,8,4A"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 9,
+  "cell": 1,
+  "init": 34952,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,9,7C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 9,
+  "cell": 2,
+  "init": 30855,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,9,6D"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 9,
+  "cell": 4,
+  "init": 4369,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,9,6C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 9,
+  "cell": 5,
+  "init": 24672,
+  "hasFlipFlop": true,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,9,6B"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 9,
+  "cell": 6,
+  "init": 35498,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "9,9,0C"
+   ],
+   "Q": []
+  }
+ },
+ {
+  "x": 13,
+  "y": 9,
+  "cell": 7,
+  "init": 2304,
+  "hasFlipFlop": false,
+  "combinationalInside": true,
+  "registeredInside": false,
+  "readBy": {
+   "F": [
+    "13,8,4B"
+   ],
+   "Q": []
+  }
+ }
+]

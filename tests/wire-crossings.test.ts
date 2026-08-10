@@ -12,7 +12,11 @@
 
 import { describe, expect, test } from 'vitest'
 import { type Dir, orthogonalRoute, type Pt } from '../src/renderer/orthogonal-route.ts'
-import { findWireCrossings, type WireMeta } from '../src/renderer/wire-crossings.tsx'
+import {
+  findWireCrossings,
+  markableWireCrossings,
+  type WireMeta,
+} from '../src/renderer/wire-crossings.tsx'
 
 /** The full drawn path a NetEdge reports: source + the router's interior waypoints + target. */
 const routed = (from: Pt, fromDir: Dir, to: Pt, toDir: Dir): Pt[] => [
@@ -199,5 +203,124 @@ describe('wire crossings on auto-routed paths — the junction thing + the auto-
     expect(crossings).toHaveLength(2)
     expect(crossings.map((c) => Math.round(c.x)).sort((a, b) => a - b)).toEqual([50, 150])
     expect(crossings.every((c) => !c.connected)).toBe(true)
+  })
+
+  /**
+   * The bound. A canvas cannot draw an unbounded number of crossing marks — a design read back off a real
+   * chip file produced 290,091 of them — so the caller may say how many it can take, and the scan stops
+   * there. What matters is that it stops at exactly that many (so the caller can tell "more than I can
+   * draw" from "this is all of them"), and that the default is still unbounded, since every other test
+   * here relies on getting every crossing.
+   */
+  describe('the mark limit', () => {
+    // Ten horizontal rails crossed by ten vertical ones: 100 crossings, none of them connected.
+    const grid = () => {
+      const geoms = new Map<string, Pt[]>()
+      const edges: WireMeta[] = []
+      for (let i = 0; i < 10; i++) {
+        geoms.set(`h${i}`, [
+          { x: -10, y: i * 20 },
+          { x: 200, y: i * 20 },
+        ])
+        edges.push({ id: `h${i}`, source: `hs${i}`, target: `ht${i}` })
+        geoms.set(`v${i}`, [
+          { x: i * 20, y: -10 },
+          { x: i * 20, y: 200 },
+        ])
+        edges.push({ id: `v${i}`, source: `vs${i}`, target: `vt${i}` })
+      }
+      return { geoms, edges }
+    }
+
+    test('with no limit every crossing of the grid is found', () => {
+      const { geoms, edges } = grid()
+      expect(findWireCrossings(geoms, edges)).toHaveLength(100)
+    })
+
+    test('a limit stops the scan at exactly that many marks', () => {
+      const { geoms, edges } = grid()
+      expect(findWireCrossings(geoms, edges, 7)).toHaveLength(7)
+      expect(findWireCrossings(geoms, edges, 1)).toHaveLength(1)
+    })
+
+    test('a limit above the real count changes nothing', () => {
+      const { geoms, edges } = grid()
+      const all = findWireCrossings(geoms, edges)
+      expect(findWireCrossings(geoms, edges, 101)).toEqual(all)
+      expect(findWireCrossings(geoms, edges, 100)).toEqual(all)
+    })
+  })
+})
+
+/**
+ * Telling "here are all the crossings" apart from "here are the first two thousand of them".
+ *
+ * THE DEFECT THIS GUARDS. `findWireCrossings` stops at its limit, so a canvas holding exactly `limit`
+ * crossings and a canvas holding hundreds of thousands both come back holding `limit` — the caller cannot
+ * tell them apart from the result alone. The scan is therefore asked for one MORE than may be drawn, and
+ * coming back with that extra one is the only evidence the scan stopped early.
+ *
+ * It matters because the number is not bounded by anything the user did: the design recovered from
+ * `fixtures/gowin-gw1n1-splitout.fs` (1,582 parts, 2,761 wires) has 290,091 crossings, per the note on
+ * `findWireCrossings`. Marking 2,000 of those and saying nothing reads as "these are the crossings" and is
+ * wrong — which the overlay's own `unmarked` prop exists to prevent.
+ *
+ * Every test here fails for a one-token change to `markableWireCrossings`, and each was checked to do so.
+ */
+describe('more crossings than may be marked', () => {
+  /** A ladder of `count` horizontal over `count` vertical wires, every pair on its own net: count² marks. */
+  function crossingGrid(count: number) {
+    const geoms = new Map<string, Pt[]>()
+    const edges: WireMeta[] = []
+    for (let i = 0; i < count; i++) {
+      geoms.set(`h${i}`, [
+        { x: -50, y: i * 10 },
+        { x: count * 10 + 50, y: i * 10 },
+      ])
+      edges.push({ id: `h${i}`, source: `hs${i}`, target: `ht${i}` })
+      geoms.set(`v${i}`, [
+        { x: i * 10, y: -50 },
+        { x: i * 10, y: count * 10 + 50 },
+      ])
+      edges.push({ id: `v${i}`, source: `vs${i}`, target: `vt${i}` })
+    }
+    return { geoms, edges }
+  }
+
+  test('a grid of five by five really does make twenty-five crossings', () => {
+    const { geoms, edges } = crossingGrid(5)
+    expect(findWireCrossings(geoms, edges).length).toBe(25)
+  })
+
+  test('past the limit, the overflow is REPORTED — not silently truncated', () => {
+    // The mutation this exists for is dropping the `+ 1` from the scan cap. The scan then returns exactly
+    // `limit`, `length > limit` is false for ever, and a canvas of any size claims to be showing all of
+    // its crossings while showing an arbitrary ten of them.
+    const { geoms, edges } = crossingGrid(5)
+    const result = markableWireCrossings(geoms, edges, 10)
+    expect(result.unmarked).toBe(true)
+  })
+
+  test('past the limit, NO crossings are handed over to be drawn', () => {
+    // Reporting the overflow and then drawing the truncated set anyway would put ten dots on the canvas
+    // with a note beside them, which is the same wrong picture the note is meant to replace.
+    const { geoms, edges } = crossingGrid(5)
+    expect(markableWireCrossings(geoms, edges, 10).crossings).toEqual([])
+  })
+
+  test('exactly at the limit is NOT an overflow, and every crossing is drawn', () => {
+    // The other half of the boundary, and the mutation is one character: `>` to `>=`. A canvas with
+    // exactly the maximum number of crossings would then refuse to mark any of them and show the note.
+    const { geoms, edges } = crossingGrid(5)
+    const result = markableWireCrossings(geoms, edges, 25)
+    expect(result.unmarked).toBe(false)
+    expect(result.crossings.length).toBe(25)
+  })
+
+  test('under the limit, everything is marked and nothing is claimed to be missing', () => {
+    const { geoms, edges } = crossingGrid(5)
+    const result = markableWireCrossings(geoms, edges, 1000)
+    expect(result.unmarked).toBe(false)
+    expect(result.crossings.length).toBe(25)
   })
 })

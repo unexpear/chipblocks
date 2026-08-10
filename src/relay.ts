@@ -14,6 +14,7 @@
 
 import { arcVoltageTargets, ayrtonArcBaseVoltages, worldWithArcVoltages } from './arc-model.ts'
 import type { Instance, World } from './cross-fk-validator.ts'
+import { dcRefused } from './dc-solver.ts'
 import {
   type ElectroThermalOptions,
   type ElectroThermalResult,
@@ -27,6 +28,7 @@ import {
   shockleyStatesOf,
   worldWithShockleyStates,
 } from './shockley-diode.ts'
+import { solveDeadline } from './solver-budget.ts'
 
 const MAX_RELAY_ITERATIONS = 20
 
@@ -92,13 +94,19 @@ export function solveWithRelays(world: World, options?: ElectroThermalOptions): 
       worldWithRelayStates(worldWithShockleyStates(world, shockleyStates), relayStates),
       arcVoltages,
     )
-  let result = solveElectroThermal(composed(), options)
+  // ONE deadline for the whole fixed point — every pass below drives a complete electro-thermal solve,
+  // so without sharing it a buzzer could spend the full budget twenty times over.
+  const budgeted = { ...options, deadline: solveDeadline(options?.deadline) }
+  let result = solveElectroThermal(composed(), budgeted)
   if (relayStates.size === 0 && shockleyStates.size === 0) {
     return { ...result, relayStates, shockleyStates, relaysSettled: true }
   }
 
   let relaysSettled = false
   for (let i = 0; i < MAX_RELAY_ITERATIONS; i++) {
+    // Nothing was solved, so there are no coil voltages to move the contacts from — re-reading them
+    // would just be guessing, and re-solving would walk into the same wall.
+    if (dcRefused(result.solution.status)) break
     const relayTargets = relayCoilTargets(composed(), result.solution)
     const shockleyTargets = shockleyDiodeTargets(composed(), result.solution)
     const arcTargets = arcVoltageTargets(composed(), result.solution, arcBaseVoltages, arcVoltages)
@@ -118,7 +126,7 @@ export function solveWithRelays(world: World, options?: ElectroThermalOptions): 
       arcVoltages = new Map(arcVoltages)
       for (const [id, v] of arcTargets) arcVoltages.set(id, v)
     }
-    result = solveElectroThermal(composed(), options)
+    result = solveElectroThermal(composed(), budgeted)
   }
   return { ...result, relayStates, shockleyStates, relaysSettled }
 }

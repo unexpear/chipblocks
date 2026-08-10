@@ -1,0 +1,18 @@
+{
+ "note": "What fixtures/gowin-gw1n1-mux8.v computes, taken from Icarus Verilog simulating that source directly - NOT from the recovered netlist.",
+ "tool": "Icarus Verilog version 14.0 (devel) (s20260301-328-geda9fdcd1-dirty), from oss-cad-suite",
+ "testbench": "generated beside the source; each output is a full truth table",
+ "reading": "inputs names the source ports from least-significant bit upward: input vector v drives bit k of the design with (v >> k) & 1. Each output string is hexadecimal, one character per FOUR consecutive input vectors: character c covers vectors 4c..4c+3, and vector 4c+j is bit (1 << j) of that character.",
+ "inputs": [
+  "a[0]",
+  "a[1]",
+  "a[2]",
+  "a[3]",
+  "a[4]",
+  "a[5]",
+  "a[6]",
+  "a[7]"
+ ],
+ "inputBits": 8,
+ "y": "0000000000000001000000400000000000000000020000000000000000000000"
+}

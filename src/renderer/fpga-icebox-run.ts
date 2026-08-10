@@ -7,8 +7,10 @@
  * The new piece is CONNECTIVITY reconstruction: the parsed ON pips form the routed wires, so for each recovered
  * cell's input pin (`lutff_<cell>/in_<p>`) that the LUT actually depends on, we trace BACKWARD along those pips
  * (each routed sink has one driving source) until we reach some cell's output wire (`lutff_<cell>/out`) — that
- * cell drives this input. A depended-on pin whose trace dead-ends at a wire no cell drives is a PRIMARY input (an
- * external signal the testbench sets); a pin the LUT ignores (a don't-care), or one whose wire is not on the
+ * cell drives this input. A depended-on pin that IS routed but whose trace dead-ends at a wire no cell drives is a
+ * PRIMARY input (an external signal the testbench sets); a depended-on pin with no driver pip at all was never
+ * routed, and an unrouted iCE40 input reads LOW on silicon, so it is a constant 0 (`kind: 'const'`) and NOT an
+ * input anyone can drive; a pin the LUT ignores (a don't-care), or one whose wire is not on the
  * device at all, is unused (it contributes no logical edge — see `dependsOnInput`). With the netlist rebuilt,
  * `simulateCombinational` evaluates it: drive the primary inputs, evaluate each cell's LUT (`evalLut4`) in
  * dependency order, read the outputs. So a design that was synthesized to a bitstream (increments 4–6), read back
@@ -19,7 +21,8 @@
  * so registered cells are reported in `registered` and hold `false` in this pass; a clocked simulation is the
  * follow-up. It also inherits the parser's limits (the cell POOL / routing come from the bitstream; primary
  * inputs are named by their net, left for the caller to drive). Nothing is invented — a pin becomes a primary
- * input only when the LUT depends on it and no cell drives it (else it is unused), never a guessed connection.
+ * input only when the LUT depends on it, the bitstream ROUTED it, and no cell drives what it traces back to
+ * (else it is unused or tied low), never a guessed connection.
  */
 
 import type { IceboxDevice } from './fpga-icebox.ts'
@@ -50,7 +53,8 @@ export type InputSource =
   | { kind: 'cell'; driver: CellRef; net: number } // another placed cell's output, reached over routed pips
   | { kind: 'carry'; driver: CellRef; net: number } // a cell's CARRY output (`lutff_c/cout`), reached over routed pips
   | { kind: 'primary'; net: number } // an external input the LUT uses, driven from outside the design
-  | { kind: 'const'; value: boolean } // a pin tied to a supply rail; only the Gowin path emits this
+  | { kind: 'const'; value: boolean } // a pin at a fixed level: tied to a supply rail (Gowin), or an iCE40 pin
+  //                                     the bitstream never routed, which reads LOW on silicon
   | { kind: 'unused' } // this LUT does not depend on the pin (a don't-care), or the pin has no wire
 
 /** Whether a 16-entry LUT truth table actually depends on input `pin` (some index pair differing only in that
@@ -97,7 +101,31 @@ export type RecoveredCell = {
    *  `get_carry_bit`). An adder that starts at 1 (`a + 1`, a subtractor) sets it. Defaults to false. */
   carryInConst?: boolean
 }
-export type RecoveredNetlist = { cells: RecoveredCell[] }
+/** One cell a decoder could not fully stand behind, and the plain-English reason. */
+export type CellCaveat = { ref: CellRef; reason: string }
+
+/**
+ * A recovered design, plus everything its decoder could not fully stand behind.
+ *
+ * The caveats ride on the NETLIST rather than being handed separately to each consumer, because the netlist is
+ * what travels: it is what `loadBitstream` returns, what the simulators take, and what `lowerNetlistToCanvas`
+ * turns into canvas gates. A caveat parked anywhere else is a caveat the next hop forgets — the ECP5
+ * wide-multiplexer and distributed-memory findings and the Gowin unsupported list all reached the canvas
+ * lowering and stopped dead there, so a cell the decoder had declared untrustworthy became two ordinary gates
+ * with nothing anywhere saying so.
+ */
+export type RecoveredNetlist = {
+  cells: RecoveredCell[]
+  /** Cells that ARE in `cells`, but whose recovered function must not be trusted — an arithmetic or
+   *  distributed-memory slice, a wide-multiplexer output. They simulate; the answer may be wrong. */
+  unfaithful?: readonly CellCaveat[]
+  /** Cells the decoder could not describe at all, so they are ABSENT from `cells`. Whatever they drove is
+   *  missing from the design, which is why they have to be named rather than merely left out. */
+  undecoded?: readonly CellCaveat[]
+  /** Cells that are in `cells` and right for everything that reads them, but with something the silicon holds
+   *  left out — a flip-flop whose reader could not be followed. Not a wrong value; an incomplete picture. */
+  incomplete?: readonly CellCaveat[]
+}
 
 /**
  * Rebuild the logical netlist from a parsed design: for each recovered cell, resolve the source of each of its
@@ -138,14 +166,23 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
     }
     return cur
   }
-  // The source of a routed sink net: the cell whose LUT drives it, else the cell whose CARRY output drives it, else
-  // the external wire it dead-ends at (a primary).
+  // The source of a sink net: the cell whose LUT drives it, else the cell whose CARRY output drives it, else — if
+  // the sink is ROUTED — the external wire it dead-ends at (a primary), else a physically unrouted pin, which is
+  // TIED LOW.
+  //
+  // That last case is the one that used to be missing. A pin with no driver pip at all is not an external signal
+  // arriving from an IO block; it is a pin the vendor never routed, and an unrouted iCE40 input reads LOW on
+  // silicon. icebox_vlog draws exactly this line: `seg_to_net((x, y, "lutff_N/in_p"), "1'b0")` — a segment no
+  // routing reaches becomes the constant `1'b0`, never a module port. Calling it a `primary` invented drivable
+  // external inputs the design does not have (a real nextpnr 2-flip-flop bitstream reported 11 where the vendor
+  // declares 1 data input), and driving one of the invented ones changed the simulated answer.
   const sourceOf = (net: number): InputSource => {
     const cur = traceBack(net)
     const cellDriver = cellByOutNet.get(cur)
     if (cellDriver !== undefined) return { kind: 'cell', driver: cellDriver, net: cur }
     const carryDriver = cellByCoutNet.get(cur)
     if (carryDriver !== undefined) return { kind: 'carry', driver: carryDriver, net: cur }
+    if (!driverOf.has(net)) return { kind: 'const', value: false }
     return { kind: 'primary', net: cur }
   }
 
@@ -181,6 +218,8 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
     // The carry unit's operands are resolved WITHOUT the LUT don't-care mask: icebox fetches in_1/in_2 for the
     // carry independently of the truth table, so a carry-only cell (all-zero LUT) or an operand the LUT happens
     // to ignore still carries its real signal. `inputs` stays masked, so no phantom LUT edge is created.
+    // The unrouted-pin rule applies here too, and icebox agrees: inside its carry branch it re-fetches in_1/in_2
+    // with the SAME `"1'b0"` default, so an unrouted carry operand adds zero rather than an invented input.
     const carryPin = (pin: 1 | 2): InputSource => {
       const net = at(c.x, c.y, `lutff_${c.cell}/in_${pin}`)
       return net === undefined ? { kind: 'unused' } : sourceOf(net)

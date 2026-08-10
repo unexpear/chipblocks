@@ -293,6 +293,7 @@ export function ToolbarItems({
   projectAmbientC,
   onProjectAmbient,
   onSolve,
+  solveBlocked,
   onAddPart,
   onNewPart,
   onNewFootprint,
@@ -338,6 +339,8 @@ export function ToolbarItems({
   projectAmbientC: number
   onProjectAmbient: (c: number) => void
   onSolve: () => void
+  /** True while a design is still being drawn — there is no whole circuit to solve yet. */
+  solveBlocked: boolean
   onAddPart: () => void
   onNewPart: () => void
   onNewFootprint: () => void
@@ -443,8 +446,20 @@ export function ToolbarItems({
         <button
           type="button"
           onClick={onSolve}
-          title="Run the physics now — recompute every wire's current, length, and resistance"
-          style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
+          disabled={solveBlocked}
+          title={
+            solveBlocked
+              ? 'The design is still being drawn — there is no whole circuit to solve yet'
+              : "Run the physics now — recompute every wire's current, length, and resistance"
+          }
+          style={{
+            ...toolButton(false),
+            flexDirection: 'row',
+            gap: 6,
+            padding: '8px 12px',
+            opacity: solveBlocked ? 0.45 : 1,
+            cursor: solveBlocked ? 'not-allowed' : 'pointer',
+          }}
         >
           <span aria-hidden style={{ color: THEME.accentBlue, fontSize: 13 }}>
             ▶

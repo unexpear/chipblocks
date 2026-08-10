@@ -181,6 +181,13 @@ import {
   updateZenerGuess,
 } from './nr-loop.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
+import {
+  MAX_MNA_UNKNOWNS,
+  overBudgetMessage,
+  pastDeadline,
+  solveDeadline,
+  tooLargeMessage,
+} from './solver-budget.ts'
 import { NR_MAX_ITERATIONS } from './solver-constants.ts'
 import { SparseSession } from './sparse-linear.ts'
 import { propagationDelayS } from './transmission-line-model.ts'
@@ -318,6 +325,16 @@ export type TransientOptions = {
    * own waveform. It only READS a value onStepBegin already computed, so it is safe inside the Newton loop.
    */
   externalSourceV?: (sourceId: string) => number | undefined
+  /**
+   * The absolute time (`performance.now` clock) this run must stop by — see solver-budget.ts. A march
+   * is (steps × Newton iterations × matrix solves) and the caller picks the step count, so nothing but
+   * a clock bounds it. Absent ⇒ the default budget; only a caller that genuinely wants an unbounded
+   * run passes Infinity.
+   */
+  deadline?: number
+  /** Override the size ceiling (MAX_MNA_UNKNOWNS) for this run — the transient twin of the DC solver's
+   *  own `maxUnknowns`, so a test can pin the refusal boundary on a tiny circuit. */
+  maxUnknowns?: number
 }
 
 export type TransientPoint = {
@@ -348,6 +365,12 @@ export type TransientStatus =
    *  (treated as an open circuit) — the DC solver's honesty status, mirrored. Displayable: the
    *  supported physics genuinely ran; the warnings name what was left out. */
   | 'unsupported-element'
+  /** Refused before the march started: more unknowns than the solver will attempt (MAX_MNA_UNKNOWNS). */
+  | 'too-large'
+  /** Stopped by the clock partway through the march. The series holds the steps that DID solve — real
+   *  physics, just not the whole run — and the warnings say where it stopped. Not `transientRan`: an
+   *  instrument must not present a truncated sweep as the finished one. */
+  | 'over-budget'
 
 /** Did the physics actually run (a real series to display)? 'unsupported-element' still ran — the
  *  supported circuit solved; the warnings say what was skipped. The instruments (scope, meter, timeline,
@@ -2509,6 +2532,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   if (!(dt > 0) || !(duration > 0) || dt > duration) {
     return { status: 'bad-options', series: [], ground: undefined, warnings }
   }
+  const deadline = solveDeadline(options.deadline)
 
   const ground = identifyGround(inputWorld, options, warnings)
   if (ground === undefined) {
@@ -2942,6 +2966,20 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     (inst) => inst.definition === 'cccs' && inst.connects?.length === 4,
   )
   const C = cccsList.length
+
+  // The size ceiling (solver-budget.ts), against the LARGEST system this run will build — the t = 0
+  // solve, which carries the extra initial-condition rows. Same reasoning as the DC solver: one Newton
+  // iteration is atomic, so past this point a single uninterruptible step outlives any time budget.
+  const largestSystem = N + S + C + caps.length + icList.length
+  const maxUnknowns = options.maxUnknowns ?? MAX_MNA_UNKNOWNS
+  if (largestSystem > maxUnknowns) {
+    return {
+      status: 'too-large',
+      series: [],
+      ground,
+      warnings: [tooLargeMessage(largestSystem, maxUnknowns), ...warnings],
+    }
+  }
 
   // Solve one instant at time t with the diodes linearized at their current
   // guesses. 'initial' holds each capacitor at its initial condition (a
@@ -3479,7 +3517,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
         : inst,
     )
   }
-  const seed = solveDCRobust({ ...world, instances: seedInstances })
+  const seed = solveDCRobust({ ...world, instances: seedInstances }, { deadline })
   // 'unsupported-element' still converged (a skipped black box, warned) — its operating point is real.
   if (dcRan(seed.status)) {
     const at = (net: string) => (net === ground ? 0 : (seed.nodes.get(net) ?? 0))
@@ -3553,6 +3591,14 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   // refresh the companion histories.
   const steps = Math.round(duration / dt)
   for (let k = 1; k <= steps; k++) {
+    // Out of time. The steps that DID solve are real physics and are handed back, but the status and
+    // the note say the sweep is truncated — an instrument must not draw a partial run as a whole one.
+    if (pastDeadline(deadline)) {
+      const note = overBudgetMessage(
+        `${(k - 1).toLocaleString()} of ${steps.toLocaleString()} time steps`,
+      )
+      return { status: 'over-budget', series, ground, warnings: [note, ...warnings] }
+    }
     const t = k * dt
     options.onStepBegin?.(k, t, series[series.length - 1]?.nodes ?? new Map<string, number>())
     let solved = solveConverged('step', t)

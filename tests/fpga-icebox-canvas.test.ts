@@ -44,9 +44,13 @@ const drive = (node: CanvasNodeLike, volts: number): CanvasNodeLike => ({
 })
 
 describe('lowerNetlistToCanvas — a real bitstream becomes canvas gates our own engine runs', () => {
+  // A bitstream from the vendor toolchain (yosys -> nextpnr-ice40 --lp384 -> icepack) of
+  // `assign y = ^i` over a 5-bit input, so its inputs are genuinely routed in from IO blocks. It replaced our
+  // own flow's icebox-ice40-384-routed.bin here, whose LUT input pins carry no routing at all — those pins read
+  // LOW on silicon, so the old "drive them and get i0 & i1" run was driving inputs the file does not have.
   const loaded = loadIce40Bitstream(
     new Uint8Array(
-      readFileSync(new URL('../fixtures/icebox-ice40-384-routed.bin', import.meta.url)),
+      readFileSync(new URL('../fixtures/icebox-ice40-384-vendor-xor5.bin', import.meta.url)),
     ),
     CHIPDBS,
   )
@@ -62,28 +66,30 @@ describe('lowerNetlistToCanvas — a real bitstream becomes canvas gates our own
     )
     for (const n of names) expect(['AND', 'OR', 'NOT', 'Buffer']).toContain(n)
     expect(lowered.cellOutputs.size).toBe(loaded.netlist.cells.length) // one output node per recovered cell
-    expect(lowered.inputNodes.size).toBe(2) // the design's two primary inputs (i0, i1)
+    expect(lowered.inputNodes.size).toBe(5) // the design's five primary inputs, and no phantoms
     expect(lowered.unlowered).toEqual([]) // nothing was silently dropped
     expect(lowered.registered).toEqual([]) // this design is purely combinational
   })
 
-  test("the app's fast logic engine computes the same function: B = A = i0 & i1", () => {
-    const outNode = lowered.cellOutputs.get('1_1_5') as string // cell 5 = B, the buffer of A
+  test("the app's fast logic engine computes the same function the FPGA simulator does", () => {
     const nets = [...lowered.inputNodes.entries()].sort((a, b) => a[0] - b[0])
-    for (const i0 of [false, true])
-      for (const i1 of [false, true]) {
-        // drive the two primary-input power sources, then run the canvas through simulateLogic
-        const nodes = lowered.nodes.map((n) =>
-          n.id === nets[0]?.[1]
-            ? drive(n, i0 ? 5 : 0)
-            : n.id === nets[1]?.[1]
-              ? drive(n, i1 ? 5 : 0)
-              : n,
+    for (let pattern = 0; pattern < 32; pattern++) {
+      // drive the five primary-input power sources, then run the canvas through simulateLogic
+      const nodes = lowered.nodes.map((n) => {
+        const at = nets.findIndex(([, id]) => id === n.id)
+        return at < 0 ? n : drive(n, ((pattern >> at) & 1) === 1 ? 5 : 0)
+      })
+      const result = simulateLogic(nodes, lowered.edges)
+      expect(result.settled).toBe(true)
+      const values = new Map(nets.map(([net], k) => [net, ((pattern >> k) & 1) === 1]))
+      const reference = simulateCombinational(loaded.netlist, values)
+      for (const cell of loaded.netlist.cells) {
+        const key = `${cell.ref.x}_${cell.ref.y}_${cell.ref.cell}`
+        expect(result.value(lowered.cellOutputs.get(key) as string, 'out')).toBe(
+          reference.outputs.get(key),
         )
-        const result = simulateLogic(nodes, lowered.edges)
-        expect(result.settled).toBe(true)
-        expect(result.value(outNode, 'out')).toBe(i0 && i1) // same answer as the FPGA simulator
       }
+    }
   })
 })
 

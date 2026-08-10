@@ -10,8 +10,10 @@ import {
   type MenuItemConstructorOptions,
   session,
 } from 'electron'
-import { deserializeCircuit } from '../src/renderer/circuit-file.ts'
 import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
+import { type CanvasLoadingItemId, canvasLoadingItems } from './canvas-menu.ts'
+import { planChipDescriptionRequest } from './chip-description.ts'
+import { type CircuitOpenDecision, decideCircuitOpen } from './circuit-open.ts'
 import { isInternalNavigation } from './navigation.ts'
 
 // Reconstruct __dirname under ESM output (package.json is type: module).
@@ -72,6 +74,17 @@ const LIB_FILTERS = [
   { name: 'Liberty timing library', extensions: ['lib'] },
   { name: 'All files', extensions: ['*'] },
 ]
+// A programmed FPGA chip file, and the open-source description of the chip it was programmed into. Only the
+// extensions the renderer can actually read are offered by name; All files is there so anything else can be
+// tried and get the renderer's specific refusal rather than being hidden behind a filter.
+const BITSTREAM_FILTERS = [
+  { name: 'FPGA chip file', extensions: ['bin', 'asc', 'bit', 'fs'] },
+  { name: 'All files', extensions: ['*'] },
+]
+const CHIP_DESCRIPTION_FILTERS = [
+  { name: 'FPGA chip description', extensions: ['txt', 'db', 'json'] },
+  { name: 'All files', extensions: ['*'] },
+]
 
 /** The file the window is working on (drives plain Save + the window title). */
 let currentCircuitPath: string | null = null
@@ -81,6 +94,28 @@ let pendingSaveAs = false
 function setCircuitPath(window: BrowserWindow, path: string | null): void {
   currentCircuitPath = path
   window.setTitle(path ? `ChipBlocks — ${basename(path)}` : 'ChipBlocks')
+}
+
+/**
+ * Whether a project's circuit canvas is on screen — the renderer says so whenever the user changes tab.
+ *
+ * The three File items below hand a file to that canvas. Without one there is nothing listening: measured in
+ * the running app, picking "Read an FPGA Chip File…" from the My Projects screen opened the file chooser, read
+ * the file, and then showed the user nothing whatsoever. Worse, with two projects open it was delivered to
+ * whichever tab happened to have subscribed last — so a design could be read into a tab the user was not
+ * looking at, over the top of the work already in it. The renderer now only listens in the tab on screen, and
+ * these items go grey when there is no such tab, so the door is shut at both ends.
+ */
+let circuitCanvasOpen = false
+
+function setCircuitCanvasOpen(open: boolean): void {
+  circuitCanvasOpen = open
+  const menu = Menu.getApplicationMenu()
+  if (menu === null) return
+  for (const { id, enabled } of canvasLoadingItems(open)) {
+    const item = menu.getMenuItemById(id)
+    if (item !== null) item.enabled = enabled
+  }
 }
 
 async function openCircuit(window: BrowserWindow): Promise<void> {
@@ -97,9 +132,15 @@ async function openCircuit(window: BrowserWindow): Promise<void> {
     dialog.showErrorBox('Could not open circuit', `Reading the file failed: ${String(error)}`)
     return
   }
-  const result = deserializeCircuit(text)
-  if (!result.ok) {
-    dialog.showErrorBox('Could not open circuit', result.reason)
+  // Both failures — not a circuit file, and too big to draw — are refused HERE, before the canvas hears
+  // about it and before the window is retitled for this file. The retitling is why the size check
+  // belongs in the main process and not only in the renderer: `setCircuitPath` makes this the file Save
+  // writes to, so a file refused AFTER the path was set would be quietly overwritten by whatever small
+  // circuit was already on the canvas the next time the user pressed Ctrl+S. A refusal must not cost the
+  // user the file it refused.
+  const decision = decideCircuitOpen(text)
+  if (!decision.ok) {
+    dialog.showErrorBox('Could not open circuit', decision.reason)
     return
   }
   window.webContents.send('file:opened', text)
@@ -124,6 +165,122 @@ async function importNetlist(window: BrowserWindow): Promise<void> {
   // circuit (not the opened .chipblocks file), so clear the current path → Save asks for a location.
   window.webContents.send('file:netlist-opened', text)
   setCircuitPath(window, null)
+}
+
+async function openBitstream(window: BrowserWindow): Promise<void> {
+  const picked = await dialog.showOpenDialog(window, {
+    filters: BITSTREAM_FILTERS,
+    properties: ['openFile'],
+  })
+  const path = picked.filePaths[0]
+  if (picked.canceled || path === undefined) return
+  let bytes: Buffer
+  try {
+    bytes = await readFile(path)
+  } catch (error) {
+    dialog.showErrorBox('Could not open the chip file', `Reading the file failed: ${String(error)}`)
+    return
+  }
+  // Bytes, not text: a bitstream is binary and utf8 decoding would corrupt it. The renderer decides what the
+  // file IS — main deliberately does not validate here, because the renderer's refusal names the chip and says
+  // which description file to go and find, which a native error box cannot.
+  window.webContents.send('file:bitstream-opened', {
+    name: basename(path),
+    bytes: new Uint8Array(bytes),
+  })
+  // A decoded chip file is a NEW unsaved circuit, not the currently-open .chipblocks file — same as an import.
+  setCircuitPath(window, null)
+}
+
+/** Which of the three canvas-loading File items runs what. Keyed by the id the menu carries, so an item and
+ *  the thing it does cannot drift apart. */
+const openCanvasLoad: Record<CanvasLoadingItemId, (window: BrowserWindow) => Promise<void>> = {
+  'open-circuit': openCircuit,
+  'import-netlist': importNetlist,
+  'read-fpga-chip-file': openBitstream,
+}
+
+// Which chip-description files the user has already pointed at, per chip, so they are asked once and not on
+// every open. Beside the personal parts + templates libraries, in the same ~/.chipblocks folder.
+const chipDescriptionStorePath = () =>
+  join(app.getPath('home'), '.chipblocks', 'fpga-chip-descriptions.json')
+
+async function readChipDescriptionStore(): Promise<Record<string, string[]>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(chipDescriptionStorePath(), 'utf8'))
+    if (parsed === null || typeof parsed !== 'object') return {}
+    const store: Record<string, string[]> = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>))
+      if (Array.isArray(value) && value.every((p) => typeof p === 'string'))
+        store[key] = value as string[]
+    return store
+  } catch {
+    return {} // never pointed at any yet, or the file is unreadable → ask
+  }
+}
+
+/** Read every path as text, or null if ANY of them cannot be read — a half-read chip description is useless. */
+async function readAllAsText(
+  paths: readonly string[],
+): Promise<{ name: string; text: string }[] | null> {
+  if (paths.length === 0) return null
+  const files: { name: string; text: string }[] = []
+  for (const path of paths) {
+    try {
+      files.push({ name: basename(path), text: await readFile(path, 'utf8') })
+    } catch {
+      return null
+    }
+  }
+  return files
+}
+
+function registerChipDescriptionHandler(window: BrowserWindow): void {
+  // The renderer knows which chip the file is for and what to say about it; this just remembers where the
+  // description files are and hands their text back. `ask: false` is the silent first try on open — it answers
+  // from what was remembered and never pops a dialog, so opening a chip file twice only ever asks once.
+  ipcMain.removeHandler('fpga:chip-description')
+  ipcMain.handle(
+    'fpga:chip-description',
+    async (
+      _event,
+      request: { family: string; device: string; ask: boolean },
+    ): Promise<{ ok: boolean; files?: { name: string; text: string }[] }> => {
+      const store = await readChipDescriptionStore()
+      const key = `${request.family}/${request.device}`
+      const plan = planChipDescriptionRequest(request.ask, store[key] ?? [])
+      if (!plan.ask) {
+        const remembered = await readAllAsText(plan.use)
+        return remembered === null ? { ok: false } : { ok: true, files: remembered }
+      }
+
+      const picked = await dialog.showOpenDialog(window, {
+        title: `Choose the description of the ${request.device} chip`,
+        filters: CHIP_DESCRIPTION_FILTERS,
+        properties: ['openFile', 'multiSelections'],
+        // start where they looked last time, which is usually the right folder even when the pick was wrong
+        ...(plan.startIn === null ? {} : { defaultPath: plan.startIn }),
+      })
+      if (picked.canceled || picked.filePaths.length === 0) return { ok: false }
+      const files = await readAllAsText(picked.filePaths)
+      if (files === null) {
+        dialog.showErrorBox(
+          'Could not read the chip description',
+          'One of the files you chose could not be read. Nothing has been changed.',
+        )
+        return { ok: false }
+      }
+      store[key] = [...picked.filePaths]
+      const path = chipDescriptionStorePath()
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, JSON.stringify(store, null, 2), 'utf8')
+      } catch {
+        // Remembering is a convenience; failing to remember must not fail the open the user asked for.
+      }
+      return { ok: true, files }
+    },
+  )
 }
 
 function registerSaveHandler(window: BrowserWindow): void {
@@ -284,19 +441,17 @@ function registerLefDefExportHandlers(window: BrowserWindow): void {
 }
 
 /** Read + validate a .chipblocks file at `path` (shared by the open-into-a-new-tab handlers below,
- *  which RETURN content to the renderer instead of pushing it onto the one canvas like the menu does). */
-async function readCircuitAt(
-  path: string,
-): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+ *  which RETURN content to the renderer instead of pushing it onto the one canvas like the menu does).
+ *  Same decision as the menu's, from the same function — a project too big to draw is refused before a
+ *  tab is opened for it, and its `kind` tells the launcher to keep the entry rather than prune it. */
+async function readCircuitAt(path: string): Promise<CircuitOpenDecision> {
   let text: string
   try {
     text = await readFile(path, 'utf8')
   } catch (error) {
-    return { ok: false, reason: `Reading the file failed: ${String(error)}` }
+    return { ok: false, kind: 'unreadable', reason: `Reading the file failed: ${String(error)}` }
   }
-  const result = deserializeCircuit(text)
-  if (!result.ok) return { ok: false, reason: result.reason }
-  return { ok: true, text }
+  return decideCircuitOpen(text)
 }
 
 /**
@@ -379,12 +534,28 @@ function registerCircuitOpenHandlers(window: BrowserWindow): void {
     }
     return { ok: true, path, text: read.text }
   })
+  // A file this window opened but whose design never landed on the canvas — the user pressed Stop
+  // while it was still being drawn, and the canvas went back to what it was before.
+  //
+  // `openCircuit` sets the path at the moment it hands the text over, because that is what makes the
+  // window's Save write to the file the user opened. If the draw is then stopped, the canvas is the
+  // OLD design and the path is the NEW file, and a plain Ctrl+S would write one over the other with
+  // no dialog. So the renderer says the draw was abandoned and the window forgets the file, exactly
+  // as if it had never been opened. This project has already destroyed a project file by writing a
+  // canvas over it; a Stop must not be able to do the same.
+  ipcMain.removeHandler('circuit:forget-path')
+  ipcMain.handle('circuit:forget-path', () => {
+    setCircuitPath(window, null)
+    return { ok: true }
+  })
   // Reopen a recent project by its known path (from the My Projects list). A missing/moved file
   // returns ok:false with a reason so the launcher can prune the stale entry.
   ipcMain.removeHandler('circuit:read')
   ipcMain.handle('circuit:read', async (_event, path: string) => {
     const read = await readCircuitAt(path)
-    return read.ok ? { ok: true, path, text: read.text } : { ok: false, reason: read.reason }
+    return read.ok
+      ? { ok: true, path, text: read.text }
+      : { ok: false, kind: read.kind, reason: read.reason }
   })
 }
 
@@ -504,15 +675,11 @@ function installMenu(window: BrowserWindow): void {
     {
       label: 'File',
       submenu: [
-        {
-          label: 'Open Circuit…',
-          accelerator: keybinds.openCircuit,
-          click: () => void openCircuit(window),
-        },
-        {
-          label: 'Import Netlist / Schematic / Verilog…',
-          click: () => void importNetlist(window),
-        },
+        ...canvasLoadingItems(circuitCanvasOpen).map((item) => ({
+          ...item,
+          ...(item.id === 'open-circuit' ? { accelerator: keybinds.openCircuit } : {}),
+          click: () => void openCanvasLoad[item.id](window),
+        })),
         { type: 'separator' },
         {
           label: 'Save Circuit',
@@ -701,6 +868,10 @@ function installMenu(window: BrowserWindow): void {
     (_event, payload: { themes: { id: string; label: string }[]; active: string }) =>
       apply(payload.themes, payload.active),
   )
+  ipcMain.removeAllListeners('window:circuit-canvas-open')
+  ipcMain.on('window:circuit-canvas-open', (_event, open: unknown) =>
+    setCircuitCanvasOpen(open === true),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -807,6 +978,7 @@ function createWindow(): void {
   registerOasisExportHandler(window)
   registerLefDefExportHandlers(window)
   registerCircuitOpenHandlers(window)
+  registerChipDescriptionHandler(window)
   registerKeybindHandlers(window)
   registerUserLibraryHandlers()
   registerUserTemplatesHandlers()

@@ -1,0 +1,47 @@
+{
+ "note": "nextpnr-himbaechel placement of gowin-gw1n1-widemux-narrow.fs - the SAME source synthesised with -nowidelut, so there is no wide multiplexer anywhere in it.",
+ "lutBels": {
+  "10,8,6": {
+   "kind": "LUT2",
+   "init": "0010"
+  },
+  "10,9,6": {
+   "kind": "LUT4",
+   "init": "1010000011000000"
+  },
+  "13,4,0": {
+   "kind": "LUT3",
+   "init": "10000111"
+  },
+  "14,4,2": {
+   "kind": "LUT2",
+   "init": "0110"
+  },
+  "7,7,5": {
+   "kind": "LUT4",
+   "init": "0010001100100000"
+  },
+  "7,7,6": {
+   "kind": "LUT4",
+   "init": "1000101011001111"
+  },
+  "7,8,0": {
+   "kind": "LUT4",
+   "init": "0000101000001100"
+  },
+  "7,8,6": {
+   "kind": "LUT4",
+   "init": "0101010101010001"
+  },
+  "7,8,7": {
+   "kind": "LUT2",
+   "init": "0100"
+  },
+  "7,9,0": {
+   "kind": "LUT2",
+   "init": "0001"
+  }
+ },
+ "muxBels": {},
+ "dffBels": []
+}

@@ -12,11 +12,12 @@
  *
  * Honest scope: recovering cell functions needs only the device's logic-tile bit layout; recovering the routing
  * additionally needs the device's full chipdb (its `.buffer`/`.routing` switch table). Only routing that switch
- * table describes is recovered — global networks, IO, and BRAM/DSP data paths are not traced — and an input that
- * cannot be traced to a driver is reported as a primary, never guessed.
+ * table describes is recovered — global networks, IO, and BRAM/DSP data paths are not traced — and a ROUTED input
+ * that cannot be traced to a driver is reported as a primary, never guessed. A pin the bitstream never routed at
+ * all is not an input: it reads LOW on silicon, and is reported as a constant 0.
  */
 
-import type { IceboxDevice } from './fpga-icebox.ts'
+import type { IceboxDevice, ProgrammedBit } from './fpga-icebox.ts'
 import type { BinBanks } from './fpga-icebox-bin.ts'
 import type { PlacedCell } from './fpga-icebox-bitstream.ts'
 import { cramToProgrammedBits, tileType } from './fpga-icebox-cram-index.ts'
@@ -55,8 +56,9 @@ export function recoverLogicCells(
  *
  * Honest scope: this recovers what a real bitstream's cells compute AND how they are wired, for a device whose
  * chipdb you have. It inherits the recover/reconstruct limits — only routing the chipdb's switch table describes is
- * recovered (global networks, IO, BRAM/DSP data paths are not traced), and unrecovered inputs are reported as
- * primaries, never guessed.
+ * recovered (global networks, IO, BRAM/DSP data paths are not traced), a routed input whose driver is outside that
+ * is reported as a primary, and a pin the bitstream never routed is reported as the constant 0 it reads on
+ * silicon — never guessed.
  */
 export function recoverNetlist(
   deviceName: string,
@@ -64,7 +66,23 @@ export function recoverNetlist(
   layout: LogicTileBits,
   cram: BinBanks,
 ): RecoveredNetlist {
-  const bits = cramToProgrammedBits(deviceName, cram)
+  return recoverNetlistFromBits(deviceName, device, layout, cramToProgrammedBits(deviceName, cram))
+}
+
+/**
+ * The same recovery, from per-tile bits that were read some other way.
+ *
+ * The binary `.bin` reaches those bits by un-permuting four CRAM banks; the TEXT `.asc`
+ * (`fpga-icebox-asc.ts`) already prints them per tile and needs no un-permuting at all. Both files describe the
+ * same chip settings, so both must produce the same design — which they do by sharing every step from here on,
+ * rather than by two decoders that agree until one of them is changed.
+ */
+export function recoverNetlistFromBits(
+  deviceName: string,
+  device: IceboxDevice,
+  layout: LogicTileBits,
+  bits: ProgrammedBit[],
+): RecoveredNetlist {
   // Only logic tiles: a DSP or ipcon tile is wider, so its bits could land on the CarryInSet coordinate and
   // invent a carry-in on a tile that has no carry chain.
   const logicBits = bits.filter((bit) => tileType(deviceName, bit.x, bit.y) === 'logic')

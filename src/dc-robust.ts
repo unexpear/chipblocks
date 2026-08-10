@@ -1,11 +1,13 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import {
   dcRan,
+  dcRefused,
   LIGHT_CURRENT_DEFINITIONS,
   type Solution,
   type SolveOptions,
   solveDC,
 } from './dc-solver.ts'
+import { solveDeadline } from './solver-budget.ts'
 
 /**
  * Robust DC operating-point finding by SOURCE STEPPING — the textbook fallback for
@@ -103,7 +105,14 @@ export function scaleSources(world: World, alpha: number): World {
  * (no stable operating point can be reached) — never a faked answer.
  */
 export function solveDCBySourceStepping(world: World, options?: SolveOptions): Solution {
-  const rampOptions: SolveOptions = { maxIterations: RAMP_SOLVE_MAX_ITERATIONS, ...options }
+  // ONE deadline for the whole ramp, not one per level: up to 400 levels × 1000 Newton passes each is
+  // precisely the shape of work that used to run until someone killed the process.
+  const deadline = solveDeadline(options?.deadline)
+  const rampOptions: SolveOptions = {
+    maxIterations: RAMP_SOLVE_MAX_ITERATIONS,
+    ...options,
+    deadline,
+  }
   let alpha = 0
   let step = RAMP_STEP_INITIAL
   let seed: Map<string, number> | undefined
@@ -115,6 +124,9 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
     const sol = seed
       ? solveDC(scaled, { ...rampOptions, initialNodes: seed })
       : solveDC(scaled, rampOptions)
+    // Refused, not failed: a smaller supply step cannot make the circuit smaller or the clock slower,
+    // so the ramp stops here and hands the refusal straight back.
+    if (dcRefused(sol.status)) return sol
     if (dcRan(sol.status)) {
       alpha = next
       seed = sol.nodes
@@ -140,7 +152,13 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
  * is only the DEFAULT — a caller that passes its own maxIterations is honored.
  */
 export function solveDCRobust(world: World, options?: SolveOptions): Solution {
-  const direct = solveDC(world, { maxIterations: RAMP_SOLVE_MAX_ITERATIONS, ...options })
-  if (dcRan(direct.status) || direct.status === 'no-ground') return direct
-  return solveDCBySourceStepping(world, options)
+  const deadline = solveDeadline(options?.deadline)
+  const direct = solveDC(world, {
+    maxIterations: RAMP_SOLVE_MAX_ITERATIONS,
+    ...options,
+    deadline,
+  })
+  if (dcRan(direct.status) || direct.status === 'no-ground' || dcRefused(direct.status))
+    return direct
+  return solveDCBySourceStepping(world, { ...options, deadline })
 }

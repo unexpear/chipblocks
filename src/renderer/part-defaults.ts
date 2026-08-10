@@ -107,6 +107,16 @@ const DEFAULTS: Record<string, Parameters> = {
     // default 470 Ω resistor, τ = R·C ≈ 47 ms: a charging curve the Scope shows well.
     capacitance: scalar(100e-6, 'farad'),
     voltage_rating: scalar(16, 'volt'),
+    // A real electrolytic is NOT a perfect capacitor: it has series loss, and the way that loss is
+    // specified for this family is the loss angle tan δ, not an ESR. Nichicon UVR (CAT.8100M, the
+    // standard miniature electrolytic series), Specifications table, "Tangent of loss angle (tan δ)":
+    // 16 V rated → tan δ 0.20 MAX, measured at 120 Hz, 20 ˚C (the same 0.20 appears on every 16 V line
+    // of the ratings table; the "+0.02 per 1000 µF" adder starts above 1000 µF, so 100 µF takes none).
+    // CONDITIONS MATTER HERE: that is a 120 Hz figure and a MAXIMUM. The AC engine holds the loss ANGLE
+    // constant (ESR = tanδ/ωC), so it is right at 120 Hz — ESR = 0.20/(2π·120·100µF) = 2.65 Ω — and
+    // OPTIMISTIC far above it, where a real electrolytic's ESR flattens out instead of falling as 1/f.
+    // Only the AC analyses read it; the DC and transient solvers do not (ac-analysis.ts header).
+    dissipation_factor: scalar(0.2, 'dimensionless'),
   },
   inductor: {
     // Bourns RLB1014-103KL, a 10 mH radial-lead choke. (Previously cited to the
@@ -829,6 +839,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
   capacitor: {
     capacitance: 'E12 standard — 100 µF aluminum electrolytic',
     voltage_rating: '16 V electrolytic voltage class',
+    dissipation_factor:
+      'Nichicon UVR (CAT.8100M): tan δ 0.20 max for a 16 V part, at 120 Hz / 20 ˚C — a 120 Hz maximum, so the AC engine is right there and optimistic well above it',
   },
   inductor: {
     inductance: 'Bourns RLB1014-103KL, 10 mH radial-lead choke (the RLB0914 package is µH-only)',
@@ -987,6 +999,14 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     characteristic_impedance: 'open two-wire line ~300 Ω (Z₀ = (η₀/π)·acosh(D/d))',
     length: '~300 m → τ ≈ 1.05 µs end to end (visible on the µs timebase)',
     velocity_factor: '~0.95 c for open wire in air; ~0.66 for typical coax',
+    series_resistance:
+      'NOT a measured cable value: 0 ships an IDEAL lossless conductor. A real line has real copper (RG-58 ≈ 0.5 Ω/m) — type it in, or the AC curves read a line that cannot exist',
+    shunt_conductance:
+      'NOT a measured cable value: 0 ships an IDEAL lossless dielectric (a real low-loss one is ~1 µS/m at HF)',
+    skin_effect_onset_hz:
+      '0 = a flat series resistance with frequency; it only shapes a declared series_resistance, so on its own it adds no loss',
+    loss_tangent:
+      'NOT a measured cable value: 0 ships an IDEAL dielectric (solid PE ≈ 2e-4, PTFE ≈ 2e-4, FR-4 ≈ 0.02 — Pozar §2.7)',
   },
   transformer: {
     primary_inductance: 'small EI mains transformer class, low-voltage winding',

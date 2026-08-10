@@ -22,8 +22,9 @@ const digitBits = (n: number, d: number) => {
 }
 
 /** One pass through the real ALU: result = A + B (sub=false) or A − B (sub=true), with the carry-out
- *  (Cout=1 ⇒ A≥B, a valid subtraction). This is the only arithmetic — the gate circuit does it. */
-function aluOp(a: number, b: number, sub: boolean): { result: number; cout: number } {
+ *  (add: Cout=1 ⇒ the sum overflowed 10 digits; subtract: Cout=1 ⇒ A≥B, a valid subtraction). This is the
+ *  ONLY arithmetic in the whole calculator — the gate circuit does it; the control unit just sequences it. */
+export function aluOp(a: number, b: number, sub: boolean): { result: number; cout: number } {
   const w = (id: string, s: string, sh: string, t: string, th: string): CanvasEdgeLike => ({
     id,
     source: s,

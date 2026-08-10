@@ -1,0 +1,76 @@
+{
+  "source": "prjoxide bba-export LIFCL <constids.inc> out.bba, labels d0_branches / d0_spines / d0_hr0_sc / d0_hr1_sc / d0_hrows",
+  "device": "LIFCL-40",
+  "branches": [
+    {
+      "branchCol": 7,
+      "fromCol": 1,
+      "tapCol": 14,
+      "tapSide": "L",
+      "toCol": 13
+    },
+    {
+      "branchCol": 19,
+      "fromCol": 14,
+      "tapCol": 14,
+      "tapSide": "R",
+      "toCol": 25
+    },
+    {
+      "branchCol": 32,
+      "fromCol": 26,
+      "tapCol": 38,
+      "tapSide": "L",
+      "toCol": 37
+    },
+    {
+      "branchCol": 43,
+      "fromCol": 38,
+      "tapCol": 38,
+      "tapSide": "R",
+      "toCol": 49
+    },
+    {
+      "branchCol": 56,
+      "fromCol": 50,
+      "tapCol": 62,
+      "tapSide": "L",
+      "toCol": 61
+    },
+    {
+      "branchCol": 67,
+      "fromCol": 62,
+      "tapCol": 62,
+      "tapSide": "R",
+      "toCol": 73
+    },
+    {
+      "branchCol": 80,
+      "fromCol": 74,
+      "tapCol": 74,
+      "tapSide": "R",
+      "toCol": 86
+    }
+  ],
+  "spines": {
+    "fromRow": 1,
+    "toRow": 55,
+    "spineRow": 28
+  },
+  "hrows": [
+    {
+      "hrowCol": 31,
+      "spineCols": [
+        13,
+        37
+      ]
+    },
+    {
+      "hrowCol": 61,
+      "spineCols": [
+        61,
+        73
+      ]
+    }
+  ]
+}

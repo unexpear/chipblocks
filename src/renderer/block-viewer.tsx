@@ -6,10 +6,10 @@ import {
   ReactFlowProvider,
   useReactFlow,
   useStore,
-  ViewportPortal,
 } from '@xyflow/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BlockData } from './blocks.ts'
+import { FlowViewportPortal } from './flow-portals.tsx'
 import type { Point } from './net-edge.tsx'
 import { type Box, type Dir, orthogonalRoute, routesOverlap } from './orthogonal-route.ts'
 import { nodeTypes } from './symbols.tsx'
@@ -57,7 +57,7 @@ type DescendWire = {
  * Draw the block's internal wires ourselves. We read each part's box and each pin's centre straight
  * from the DOM (React Flow won't measure these nodes, so its own positions are empty), convert them to
  * flow coordinates, route every wire AROUND the parts with the orthogonal router (never through one),
- * and render the routes as SVG in a ViewportPortal so they pan/zoom with the parts. Each route is also
+ * and render the routes as SVG in a viewport portal so they pan/zoom with the parts. Each route is also
  * reported up for the crossing markers. Flow coordinates are viewport-independent, so we compute once.
  */
 function DescendWires({
@@ -197,7 +197,7 @@ function DescendWires({
   const stroke = light ? THEME.borderStrong : THEME.textSoft
   const openFill = light ? THEME.textBright : THEME.surfaceBase
   return (
-    <ViewportPortal>
+    <FlowViewportPortal>
       {/* One SVG at the flow origin; straight orthogonal wires in flow coords, riding the viewport
           transform. Optional dull net colouring tints each wire by its net (visual only). */}
       {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative wire overlay, hidden from the a11y tree */}
@@ -241,7 +241,7 @@ function DescendWires({
           <circle key={`f${p.x},${p.y}`} cx={p.x} cy={p.y} r={4.5} fill={stroke} />
         ))}
       </svg>
-    </ViewportPortal>
+    </FlowViewportPortal>
   )
 }
 

@@ -1,4 +1,4 @@
-import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
+import { Handle, type NodeProps, Position } from '@xyflow/react'
 import { Fragment, useContext, useEffect } from 'react'
 import { SymbolStyleContext } from './symbol-style.tsx'
 import { THEME } from './theme.ts'
@@ -15,6 +15,7 @@ import {
   thermalWarmthTint,
 } from './lens.ts'
 import { FrontContext } from './net-edge.tsx'
+import { useCoalescedUpdateNodeInternals } from './node-internals.ts'
 import {
   ANNOTATION_DEFINITIONS,
   fuseIntact,
@@ -2320,6 +2321,9 @@ export type DeviceNodeData = {
   /** Calculator keypad button: the key this switch types ('0'..'9', '+', '-', '*', '/', '=', 'C', '±').
    *  Clicking the switch feeds this key to the calculator's control unit. */
   calcKey?: string
+  /** Why this part must not be believed — set when it was read out of an FPGA chip file and the reader could
+   *  not stand behind it. Drawn as a ⚠ beside the part's name, with these words as its hover text. */
+  caveat?: string
 }
 
 // A user-authored part's electrical roles that get a filled pin dot (a source of drive), vs the hollow
@@ -2633,7 +2637,7 @@ function EnergyFlowHalo({ fraction, into }: { fraction: number; into: boolean })
  * + the instance id.
  */
 export function DeviceNode({ id, data }: NodeProps) {
-  const { definition, label, rotation = 0, parameters } = data as DeviceNodeData
+  const { definition, label, rotation = 0, parameters, caveat } = data as DeviceNodeData
   const value = primaryValue(definition, parameters)
   const health = useContext(HealthContext).get(id)
   // A CRT renders as a real phosphor SCREEN on the canvas (not the tiny tube glyph): a wide TV face
@@ -2689,7 +2693,7 @@ export function DeviceNode({ id, data }: NodeProps) {
   const energyFraction =
     energyW !== undefined && lensState.pMax > 0 ? Math.min(1, energyW / lensState.pMax) : 0
   const terminals = terminalsOf(definition, parameters)
-  const updateNodeInternals = useUpdateNodeInternals()
+  const updateNodeInternals = useCoalescedUpdateNodeInternals()
   // After a rotation — or a lead-count change (a source's terminals are
   // parameter-driven) — re-measure the handles so wires follow the terminals.
   // biome-ignore lint/correctness/useExhaustiveDependencies: rotation + the terminal count are intentional re-run triggers — the effect must re-measure when they change, though it doesn't read them
@@ -2915,6 +2919,16 @@ export function DeviceNode({ id, data }: NodeProps) {
           {health?.failed ? (
             <span title={health.note} style={{ marginLeft: 5 }}>
               💥
+            </span>
+          ) : null}
+          {caveat ? (
+            // The caption row is click-through so it never steals a drag; this one mark takes pointer events
+            // back, because a warning nobody can hover is a warning that says nothing.
+            <span
+              title={caveat}
+              style={{ color: THEME.statusWarn, marginLeft: 5, pointerEvents: 'auto' }}
+            >
+              ⚠
             </span>
           ) : null}
         </div>

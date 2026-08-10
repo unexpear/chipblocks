@@ -56,6 +56,19 @@ export function checkpoint<T>(
   }
 }
 
+/**
+ * Take back the newest checkpoint, but only if it is the one named — for an action that checkpointed,
+ * began, and was then abandoned with the canvas put back exactly as it was. Leaving that checkpoint
+ * behind would put a step in the history that undoes to the state already on screen, so the user's
+ * first Ctrl+Z would appear to do nothing. Anything else on top means another edit landed in between
+ * and the history is not ours to trim, so it is returned untouched.
+ */
+export function dropLastCheckpoint<T>(history: UndoHistory<T>, tag: string): UndoHistory<T> {
+  const last = history.past[history.past.length - 1]
+  if (last === undefined || last.tag !== tag) return history
+  return { past: history.past.slice(0, -1), future: history.future }
+}
+
 export const canUndo = <T>(history: UndoHistory<T>): boolean => history.past.length > 0
 export const canRedo = <T>(history: UndoHistory<T>): boolean => history.future.length > 0
 

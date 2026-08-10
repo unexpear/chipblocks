@@ -35,6 +35,11 @@ export type NexusRegister = {
   regset: string | null
   /** what the register samples, e.g. `DL`. Null when unspecified. */
   select: string | null
+  /**
+   * `LSR` (an ordinary set/reset) or `PRLD` (the set/reset VALUE comes from the slice's `M` input instead of
+   * being the fixed level `regset` names). Null when the design did not say.
+   */
+  lsrMode: string | null
 }
 
 /** One slice: its lookup tables, its registers, and the settings they share. */
@@ -50,6 +55,17 @@ export type NexusSlice = {
   setReset: string | null
   /** how set/reset and clock-enable interact, e.g. `LSR_OVER_CE`. */
   srMode: string | null
+  /** what the slice's two lookup tables ARE: `CCU2` (an arithmetic carry unit), `DPRAM`, `LOGIC`, or null. */
+  mode: string | null
+  /**
+   * `NO` or `YES` for `CCU2.INJECT` — whether the carry unit's incoming carry is cut off at this slice.
+   * Null when the design did not say, which is NOT the same as `NO`: a blank device reads as `YES`.
+   */
+  carryInject: string | null
+  /** the slice-wide clock-enable selection, `CE` or `INV`. Null when the design did not say. */
+  clockEnable: string | null
+  /** `ENABLED` when the slice's registers clock on BOTH clock edges. Null when the design did not say. */
+  regDdr: string | null
 }
 
 const SLICE_PART = /^SLICE([A-Z])\.(.+)$/
@@ -75,6 +91,10 @@ export function decodeNexusSlices(fasm: NexusFasm): NexusSlice[] {
         clock: null,
         setReset: null,
         srMode: null,
+        mode: null,
+        carryInject: null,
+        clockEnable: null,
+        regDdr: null,
       }
       slices.set(key, slice)
     }
@@ -84,7 +104,7 @@ export function decodeNexusSlices(fasm: NexusFasm): NexusSlice[] {
   const registerFor = (slice: NexusSlice, name: string): NexusRegister => {
     let register = slice.registers.find((r) => r.name === name)
     if (register === undefined) {
-      register = { name, used: false, regset: null, select: null }
+      register = { name, used: false, regset: null, select: null, lsrMode: null }
       slice.registers.push(register)
     }
     return register
@@ -120,11 +140,16 @@ export function decodeNexusSlices(fasm: NexusFasm): NexusSlice[] {
         if (setting === 'USED') target.used = feature.value === 'YES'
         else if (setting === 'REGSET') target.regset = feature.value
         else if (setting === 'SEL') target.select = feature.value
+        else if (setting === 'LSRMODE') target.lsrMode = feature.value
         continue
       }
       if (inner === 'CLKMUX') slice.clock = feature.value
       else if (inner === 'LSRMUX') slice.setReset = feature.value
       else if (inner === 'SRMODE') slice.srMode = feature.value
+      else if (inner === 'MODE') slice.mode = feature.value
+      else if (inner === 'CCU2.INJECT') slice.carryInject = feature.value
+      else if (inner === 'CEMUX') slice.clockEnable = feature.value
+      else if (inner === 'REGDDR') slice.regDdr = feature.value
     }
   }
 

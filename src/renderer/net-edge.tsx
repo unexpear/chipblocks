@@ -1,4 +1,4 @@
-import { BaseEdge, EdgeLabelRenderer, type EdgeProps, Position, useReactFlow } from '@xyflow/react'
+import { BaseEdge, type EdgeProps, Position, useReactFlow } from '@xyflow/react'
 import {
   createContext,
   type MouseEvent as ReactMouseEvent,
@@ -14,6 +14,7 @@ import {
   WIRE_INSULATION_MAX_C,
   wireThermalProfile,
 } from '../thermal-model.ts'
+import { EdgeLabelPortal } from './flow-portals.tsx'
 import { frontFraction, type WireFront } from './front-propagation.ts'
 import {
   FIELD_COLOR,
@@ -49,8 +50,8 @@ import { roundedPathD, samplePathPoints } from './wire-path.ts'
  *    corner when drawn with the curve subtool (each wire keeps its own sweep
  *    size).
  *
- * The chip (net id + current + length·resistance) is rendered via
- * EdgeLabelRenderer, lifted above the wire so it never covers a symbol.
+ * The chip (net id + current + length·resistance) is rendered into the label
+ * layer, lifted above the wire so it never covers a symbol.
  */
 
 const LABEL_LIFT = 26
@@ -560,6 +561,23 @@ export function NetEdge({
     lensReadouts.push({ text: formatEng(Math.abs(amps), 'A'), color: THEME.accentBlueSoft })
   }
 
+  // Has this wire anything to put in the label layer at all — a lens readout, the hover chip, a
+  // collision or overheat marker, the riding probe, or a draggable corner?
+  //
+  // WHY the mount is gated instead of just its children: the label layer is a store subscription plus a
+  // portal per wire, and a wire with nothing to show has no use for either. The drawn result is identical
+  // either way — a portal whose children are all null puts nothing in the DOM — so the gate only removes
+  // work. (It used to remove far more: the portal was React Flow's own `EdgeLabelRenderer`, whose selector
+  // walks the document on every store check. `EdgeLabelPortal` in flow-portals.tsx no longer does, and the
+  // measurements behind that change are recorded there.)
+  const showsLabelLayer =
+    (lensReadouts.length > 0 && !hovered) ||
+    Boolean(hovered && label) ||
+    collidesPart ||
+    wireOverheating ||
+    probe !== null ||
+    waypoints.length > 0
+
   return (
     <>
       {fieldBands.map((band) => (
@@ -676,169 +694,171 @@ export function NetEdge({
           setProbe(null)
         }}
       />
-      <EdgeLabelRenderer>
-        {lensReadouts.length > 0 && !hovered ? (
-          <div
-            className="nodrag nopan"
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 13}px)`,
-              background: 'rgba(10,10,12,0.8)',
-              borderRadius: 3,
-              padding: '1px 5px',
-              fontSize: 9,
-              fontWeight: 600,
-              fontFamily: 'system-ui, sans-serif',
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              display: 'flex',
-              gap: 5,
-            }}
-          >
-            {lensReadouts.map((r) => (
-              <span key={r.text} style={{ color: r.color }}>
-                {r.text}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        {hovered && label ? (
-          <div
-            className="nodrag nopan"
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - LABEL_LIFT}px)`,
-              background: THEME.surfaceDeep,
-              border: `1px solid ${THEME.borderStrong}`,
-              borderRadius: 3,
-              padding: '3px 5px',
-              fontSize: 9,
-              fontFamily: 'system-ui, sans-serif',
-              color: THEME.textPrimary,
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              textAlign: 'center',
-            }}
-          >
-            <div>{label}</div>
-            {amps !== null ? (
-              <div style={{ color: THEME.accentBlue, fontSize: 8, marginTop: 1 }}>
-                {formatEng(amps, 'A')}
-              </div>
-            ) : null}
-            {lengthM !== null && ohms !== null ? (
-              <div style={{ color: THEME.textMuted, fontSize: 8, marginTop: 1 }}>
-                {formatLength(lengthM)} · {formatEng(ohms, 'Ω')}
-              </div>
-            ) : null}
-            {drop !== null ? (
-              <div style={{ color: THEME.accentTimeline, fontSize: 8, marginTop: 1 }}>
-                drop {formatEng(drop, 'V')}
-              </div>
-            ) : null}
-            {lensState.lens === 'field' && amps !== null ? (
-              <div style={{ color: FIELD_COLOR, fontSize: 8, marginTop: 1 }}>
-                B at 1 cm: {formatEng((MU_0 * Math.abs(amps)) / (2 * Math.PI * 0.01), 'T')}
-              </div>
-            ) : null}
-            {wireOverheating && wirePeakC !== null ? (
-              <div
-                style={{ color: THEME.statusDanger, fontSize: 8, marginTop: 1, fontWeight: 600 }}
-              >
-                💥 overheating {wirePeakC.toFixed(0)} °C (over {WIRE_INSULATION_MAX_C} °C)
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {collidesPart ? (
-          <div
-            className="nodrag nopan"
-            title="This wire runs through a part — parts are solid. Double-click the wire to drop a corner and route it around."
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY + 13}px)`,
-              fontSize: 12,
-              pointerEvents: 'none',
-              filter: `drop-shadow(0 0 2px ${THEME.black})`,
-            }}
-          >
-            ⛔
-          </div>
-        ) : null}
-        {wireOverheating ? (
-          <div
-            className="nodrag nopan"
-            title={`Wire overheating — ${wirePeakC?.toFixed(0)} °C, over the ${WIRE_INSULATION_MAX_C} °C insulation limit`}
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              fontSize: 13,
-              pointerEvents: 'none',
-              filter: `drop-shadow(0 0 2px ${THEME.black})`,
-            }}
-          >
-            💥
-          </div>
-        ) : null}
-        {probe ? (
-          <>
+      {showsLabelLayer ? (
+        <EdgeLabelPortal>
+          {lensReadouts.length > 0 && !hovered ? (
             <div
               className="nodrag nopan"
               style={{
                 position: 'absolute',
-                transform: `translate(-50%, -50%) translate(${probe.x}px, ${probe.y}px)`,
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-                background: THEME.accentTimeline,
-                border: `1px solid ${THEME.surfaceDeep}`,
-                pointerEvents: 'none',
-              }}
-            />
-            <div
-              className="nodrag nopan"
-              style={{
-                position: 'absolute',
-                transform: `translate(-50%, -50%) translate(${probe.x}px, ${probe.y - 18}px)`,
-                background: THEME.surfaceDeep,
-                border: `1px solid ${THEME.accentTimeline}`,
+                transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 13}px)`,
+                background: 'rgba(10,10,12,0.8)',
                 borderRadius: 3,
-                padding: '2px 5px',
+                padding: '1px 5px',
+                fontSize: 9,
+                fontWeight: 600,
+                fontFamily: 'system-ui, sans-serif',
+                pointerEvents: 'none',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                gap: 5,
+              }}
+            >
+              {lensReadouts.map((r) => (
+                <span key={r.text} style={{ color: r.color }}>
+                  {r.text}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {hovered && label ? (
+            <div
+              className="nodrag nopan"
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - LABEL_LIFT}px)`,
+                background: THEME.surfaceDeep,
+                border: `1px solid ${THEME.borderStrong}`,
+                borderRadius: 3,
+                padding: '3px 5px',
                 fontSize: 9,
                 fontFamily: 'system-ui, sans-serif',
-                color: THEME.statusWarn,
+                color: THEME.textPrimary,
                 pointerEvents: 'none',
                 whiteSpace: 'nowrap',
                 textAlign: 'center',
               }}
             >
-              <div>{`${probe.delta <= 0 ? 'drop' : 'rise'} ${formatEng(Math.abs(probe.delta), 'V')}`}</div>
-              <div style={{ fontSize: 8, color: THEME.statusWarn, marginTop: 1 }}>
-                {formatEng(probe.vHere, 'V', { signed: true })} here
-              </div>
+              <div>{label}</div>
+              {amps !== null ? (
+                <div style={{ color: THEME.accentBlue, fontSize: 8, marginTop: 1 }}>
+                  {formatEng(amps, 'A')}
+                </div>
+              ) : null}
+              {lengthM !== null && ohms !== null ? (
+                <div style={{ color: THEME.textMuted, fontSize: 8, marginTop: 1 }}>
+                  {formatLength(lengthM)} · {formatEng(ohms, 'Ω')}
+                </div>
+              ) : null}
+              {drop !== null ? (
+                <div style={{ color: THEME.accentTimeline, fontSize: 8, marginTop: 1 }}>
+                  drop {formatEng(drop, 'V')}
+                </div>
+              ) : null}
+              {lensState.lens === 'field' && amps !== null ? (
+                <div style={{ color: FIELD_COLOR, fontSize: 8, marginTop: 1 }}>
+                  B at 1 cm: {formatEng((MU_0 * Math.abs(amps)) / (2 * Math.PI * 0.01), 'T')}
+                </div>
+              ) : null}
+              {wireOverheating && wirePeakC !== null ? (
+                <div
+                  style={{ color: THEME.statusDanger, fontSize: 8, marginTop: 1, fontWeight: 600 }}
+                >
+                  💥 overheating {wirePeakC.toFixed(0)} °C (over {WIRE_INSULATION_MAX_C} °C)
+                </div>
+              ) : null}
             </div>
-          </>
-        ) : null}
-        {waypoints.map((w, i) => (
-          <div
-            key={w.id}
-            className="nodrag nopan"
-            onPointerDown={dragWaypoint(i)}
-            title="Drag to route — the wire bends through here"
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${w.x}px, ${w.y}px)`,
-              width: 9,
-              height: 9,
-              borderRadius: '50%',
-              background: THEME.accentBlue,
-              border: `1px solid ${THEME.surfaceDeep}`,
-              cursor: 'grab',
-              pointerEvents: 'all',
-            }}
-          />
-        ))}
-      </EdgeLabelRenderer>
+          ) : null}
+          {collidesPart ? (
+            <div
+              className="nodrag nopan"
+              title="This wire runs through a part — parts are solid. Double-click the wire to drop a corner and route it around."
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY + 13}px)`,
+                fontSize: 12,
+                pointerEvents: 'none',
+                filter: `drop-shadow(0 0 2px ${THEME.black})`,
+              }}
+            >
+              ⛔
+            </div>
+          ) : null}
+          {wireOverheating ? (
+            <div
+              className="nodrag nopan"
+              title={`Wire overheating — ${wirePeakC?.toFixed(0)} °C, over the ${WIRE_INSULATION_MAX_C} °C insulation limit`}
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+                fontSize: 13,
+                pointerEvents: 'none',
+                filter: `drop-shadow(0 0 2px ${THEME.black})`,
+              }}
+            >
+              💥
+            </div>
+          ) : null}
+          {probe ? (
+            <>
+              <div
+                className="nodrag nopan"
+                style={{
+                  position: 'absolute',
+                  transform: `translate(-50%, -50%) translate(${probe.x}px, ${probe.y}px)`,
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: THEME.accentTimeline,
+                  border: `1px solid ${THEME.surfaceDeep}`,
+                  pointerEvents: 'none',
+                }}
+              />
+              <div
+                className="nodrag nopan"
+                style={{
+                  position: 'absolute',
+                  transform: `translate(-50%, -50%) translate(${probe.x}px, ${probe.y - 18}px)`,
+                  background: THEME.surfaceDeep,
+                  border: `1px solid ${THEME.accentTimeline}`,
+                  borderRadius: 3,
+                  padding: '2px 5px',
+                  fontSize: 9,
+                  fontFamily: 'system-ui, sans-serif',
+                  color: THEME.statusWarn,
+                  pointerEvents: 'none',
+                  whiteSpace: 'nowrap',
+                  textAlign: 'center',
+                }}
+              >
+                <div>{`${probe.delta <= 0 ? 'drop' : 'rise'} ${formatEng(Math.abs(probe.delta), 'V')}`}</div>
+                <div style={{ fontSize: 8, color: THEME.statusWarn, marginTop: 1 }}>
+                  {formatEng(probe.vHere, 'V', { signed: true })} here
+                </div>
+              </div>
+            </>
+          ) : null}
+          {waypoints.map((w, i) => (
+            <div
+              key={w.id}
+              className="nodrag nopan"
+              onPointerDown={dragWaypoint(i)}
+              title="Drag to route — the wire bends through here"
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, -50%) translate(${w.x}px, ${w.y}px)`,
+                width: 9,
+                height: 9,
+                borderRadius: '50%',
+                background: THEME.accentBlue,
+                border: `1px solid ${THEME.surfaceDeep}`,
+                cursor: 'grab',
+                pointerEvents: 'all',
+              }}
+            />
+          ))}
+        </EdgeLabelPortal>
+      ) : null}
     </>
   )
 }

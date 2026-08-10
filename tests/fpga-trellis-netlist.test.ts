@@ -228,11 +228,11 @@ describe('arithmetic slices are declared untrustworthy, not silently simulated',
     for (const listed of netlist.unfaithful) expect(listed.reason).toMatch(/carry/)
   })
 
-  test('HONEST GAP: no CCU2 bitstream exists in the fixtures, so the POSITIVE case is unverified', () => {
-    // Written as a test rather than a comment so it cannot be forgotten. The fixture we have contains no
-    // arithmetic slice, so the test above currently checks only that nothing is wrongly flagged. Whether a real
-    // arithmetic slice is correctly DETECTED and reported is not yet demonstrated — building a CCU2 adder
-    // through yosys/nextpnr/ecppack would close it, and this assertion flips the moment such a fixture lands.
+  test('THIS fixture holds no arithmetic slice — the positive case now lives beside a real adder', () => {
+    // This used to record an honest gap: no CCU2 bitstream existed, so only the negative half of the flag was
+    // demonstrated. `fixtures/trellis-ecp5-ccu2-add4.bit` (a real yosys/nextpnr/ecppack 4-bit adder, five
+    // `MODE CCU2` slices per ecpunpack) closed it — see `tests/fpga-trellis-slice-modes.test.ts`. What this
+    // assertion still does is keep the test above honest about WHICH half it is checking here.
     expect(realNetlist().cells.some((c) => c.config.carryEnable)).toBe(false)
   })
 })

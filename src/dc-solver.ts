@@ -64,6 +64,13 @@ import {
   updateVacuumDiodeGuess,
   updateZenerGuess,
 } from './nr-loop.ts'
+import {
+  MAX_MNA_UNKNOWNS,
+  overBudgetMessage,
+  pastDeadline,
+  solveDeadline,
+  tooLargeMessage,
+} from './solver-budget.ts'
 import { NR_MAX_ITERATIONS } from './solver-constants.ts'
 import { SparseSession } from './sparse-linear.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
@@ -144,6 +151,20 @@ export type SolveOptions = {
    * a hard circuit's final solve converge instantly; harmless on easy circuits.
    */
   initialNodes?: Map<string, number>
+  /**
+   * The absolute time (`performance.now` clock) this solve must stop by — see solver-budget.ts. The
+   * SAME deadline is handed to every nested solve (the thermal loop, the relay fixed point, the
+   * source-stepping continuation), so a whole solve is bounded rather than each of its hundreds of
+   * inner solves separately. Absent ⇒ solveDC gives itself the default budget; only a caller that
+   * genuinely wants an unbounded solve passes Infinity.
+   */
+  deadline?: number
+  /**
+   * Override the size ceiling (MAX_MNA_UNKNOWNS) for this solve. Present for the same reason
+   * `maxIterations` is: a test can pin the refusal boundary exactly on a tiny circuit instead of
+   * having to build — and dense-factor — a six-thousand-unknown one to reach the shipped limit.
+   */
+  maxUnknowns?: number
 }
 
 export type SolutionStatus =
@@ -153,6 +174,13 @@ export type SolutionStatus =
   | 'unsupported-element'
   | 'numerical-error'
   | 'did-not-converge'
+  /** Refused before any matrix was built: more unknowns than the solver will attempt (MAX_MNA_UNKNOWNS).
+   *  Nothing was simulated — an honest refusal, never a plausible-looking wrong answer. */
+  | 'too-large'
+  /** Stopped by the clock, not by an answer: the solve outlived its budget (solver-budget.ts). The node
+   *  voltages carried alongside are the unfinished last iterate, reported so the user can see how far it
+   *  got — they are NOT a solution, which is why this is not `dcRan`. */
+  | 'over-budget'
 
 /** Did the DC physics actually run (real converged node voltages)? 'unsupported-element' still ran —
  *  the supported circuit converged; the warnings say what was skipped. Seeding, source-stepping, and the
@@ -160,6 +188,14 @@ export type SolutionStatus =
  *  start (or stall the ramp accepting no level at all). */
 export function dcRan(status: SolutionStatus): boolean {
   return status === 'solved' || status === 'unsupported-element'
+}
+
+/** Did the solver REFUSE the circuit — stop with no answer because it was too big or out of time —
+ *  rather than run and fail on the physics? The retry paths (source stepping, the electro-thermal and
+ *  relay fixed points) must check this and stop: each of them would otherwise walk into the same wall
+ *  hundreds of times over, which is the hang this exists to prevent. */
+export function dcRefused(status: SolutionStatus): boolean {
+  return status === 'too-large' || status === 'over-budget'
 }
 
 export type Solution = {
@@ -390,6 +426,14 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
 
 export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
   const warnings: string[] = []
+
+  // The budget is read FIRST, before any per-instance work: the loops above this one (thermal, relay,
+  // source-stepping) keep calling back after their shared deadline has passed, and each of those calls
+  // must cost nothing rather than one more full solve.
+  const deadline = solveDeadline(options?.deadline)
+  if (pastDeadline(deadline)) {
+    return emptyResult('over-budget', undefined, [overBudgetMessage('0 solver passes')])
+  }
 
   const ground = identifyGround(inputWorld, options, warnings)
   if (ground === undefined) {
@@ -648,6 +692,18 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
     }
   }
   const S = linearVoltageSources.length
+
+  // The size ceiling (solver-budget.ts). Checked HERE — after the classification pass, before
+  // `zerosMatrix` — because this is the last moment before the first cost that grows faster than the
+  // circuit does. One Newton iteration cannot be interrupted, so a matrix past this point would blow
+  // any time budget in a single uninterruptible step; refusing outright is the honest answer, and it
+  // is instant instead of a stall.
+  const maxUnknowns = options?.maxUnknowns ?? MAX_MNA_UNKNOWNS
+  if (N + S > maxUnknowns) {
+    // The refusal goes FIRST: the canvas footer shows only the first two warnings, and the one note the
+    // user cannot afford to miss is the one saying nothing was simulated.
+    return emptyResult('too-large', ground, [tooLargeMessage(N + S, maxUnknowns), ...warnings])
+  }
 
   // One sparse session for this whole solve: the circuit's matrix STRUCTURE is fixed across every Newton
   // iteration (only the companion-model VALUES change), so the fill-reducing order is computed once and
@@ -962,6 +1018,19 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
       if (acc.converged) {
         converged = true
         break
+      }
+      // Out of time. The last iterate is carried out so the user can see how far it got, but the
+      // status says plainly that this is not an answer — a wrong number would be worse than none.
+      if (pastDeadline(deadline)) {
+        return {
+          status: 'over-budget',
+          nodes: last.nodes,
+          branches: new Map(),
+          ground,
+          warnings: [overBudgetMessage(`${iterations} solver passes`), ...warnings],
+          iterations,
+          converged: false,
+        }
       }
     }
     solved = last

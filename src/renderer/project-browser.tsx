@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { tooBigFileToDrawReason } from './canvas-capacity.ts'
 import { type CircuitFile, deserializeCircuit } from './circuit-file.ts'
 import {
   listRecentProjects,
@@ -535,6 +536,10 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     })
   }
 
+  // Why the last attempt to open something did not open it. Shown on the launcher itself, because a
+  // refusal with nowhere to appear is indistinguishable from a click that did nothing.
+  const [openRefusal, setOpenRefusal] = useState<{ title: string; reason: string } | null>(null)
+
   // "My Projects": the saved .chipblocks files, and opening one (or an arbitrary file) into a new tab.
   const [recents, setRecents] = useState<RecentProject[]>(() => listRecentProjects())
   const [scanning, setScanning] = useState(false)
@@ -580,6 +585,15 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     refreshTemplates()
   }, [])
   const startTemplate = (t: UserTemplate) => {
+    // A saved template is a whole saved circuit, so it is a bulk canvas load like any other and gets the
+    // same size check. Refusing here means no tab is opened at all — the launcher stays where it is with
+    // the reason on it, rather than handing a new tab a design it cannot draw.
+    const tooBig = tooBigFileToDrawReason(t.circuit)
+    if (tooBig !== undefined) {
+      setOpenRefusal({ title: `Could not start from “${t.name}”`, reason: tooBig })
+      return
+    }
+    setOpenRefusal(null)
     onCreate({
       template: '',
       templateName: t.name,
@@ -597,9 +611,22 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     void write(serializeUserTemplates(next))
   }
   const openFromFile = (text: string, path: string) => {
-    const result = deserializeCircuit(text)
-    if (!result.ok) return
     const nm = projectNameFromPath(path)
+    const result = deserializeCircuit(text)
+    if (!result.ok) {
+      setOpenRefusal({ title: `Could not open “${nm}”`, reason: result.reason })
+      return
+    }
+    // The launcher's own copy of the canvas size check. The main process refuses too big a file before
+    // it ever gets here, so this is the backstop for the paths that do not go through it — but it is not
+    // decoration: this is the function every launcher door funnels through, and it having no check is
+    // how a 4,746-part project reached a tab that then stopped answering for over half an hour.
+    const tooBig = tooBigFileToDrawReason(result.file)
+    if (tooBig !== undefined) {
+      setOpenRefusal({ title: `Could not open “${nm}”`, reason: tooBig })
+      return
+    }
+    setOpenRefusal(null)
     recordRecentProject({ name: nm, path, savedAt: Date.now() })
     onCreate({
       template: '',
@@ -620,11 +647,20 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     const r = await window.chipblocks?.readCircuitFile?.(rp.path)
     if (r?.ok && typeof r.text === 'string') {
       openFromFile(r.text, rp.path)
-    } else {
-      // the file moved or was deleted — prune the stale entry
-      removeRecentProject(rp.path)
-      setRecents(listRecentProjects())
+      return
     }
+    // A project REFUSED for its size is still there and still the user's — say why and leave the entry
+    // alone. Only a file that has moved or gone is pruned, which is the case this branch was written for;
+    // pruning a refused one would quietly delete the user's own project from their list.
+    if (r?.kind === 'too-big') {
+      setOpenRefusal({
+        title: `Could not open “${rp.name}”`,
+        reason: r.reason ?? 'This design is too big to put on the canvas.',
+      })
+      return
+    }
+    removeRecentProject(rp.path)
+    setRecents(listRecentProjects())
   }
   const dropRecent = (path: string) => {
     removeRecentProject(path)
@@ -769,6 +805,37 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
             alignContent: 'start',
           }}
         >
+          {openRefusal !== null ? (
+            <div
+              data-testid="open-refusal"
+              style={{
+                gridColumn: '1 / -1',
+                padding: '12px 14px',
+                borderRadius: 8,
+                border: `1px solid ${THEME.statusDanger}`,
+                background: PANEL,
+                color: TEXT,
+                fontSize: 12.5,
+                lineHeight: 1.55,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{openRefusal.title}</div>
+              <div style={{ color: MUTED }}>{openRefusal.reason}</div>
+              <button
+                type="button"
+                onClick={() => setOpenRefusal(null)}
+                style={{
+                  all: 'unset',
+                  cursor: 'pointer',
+                  marginTop: 8,
+                  color: ACCENT_TEXT,
+                  textDecoration: 'underline',
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
           {catId === 'recent' ? (
             <div
               style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 12 }}

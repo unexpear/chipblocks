@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { portSParameterSweep } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { AcLossNotice } from './ac-loss-notice.tsx'
 import {
   panelColors,
   panelFieldStyle,
@@ -304,6 +305,7 @@ export function SParamPanel({
           Referenced to Z₀ = {z0} Ω.
         </div>
       ) : null}
+      <AcLossNotice world={world} light={light} />
     </div>
   )
 }

@@ -120,6 +120,29 @@ export const ECP5_DEVICES: readonly Ecp5Device[] = [
   },
 ]
 
+/**
+ * The Lattice NEXUS parts — a DIFFERENT family that starts its bitstream with the SAME `FF FF BD B3` marker as
+ * the ECP5, and is not read here at all.
+ *
+ * It is listed for one reason: without it, a Nexus file walks straight into the ECP5 parser, which reads the
+ * shared marker, fails on the first command it does not have, and reports the file as a broken ECP5 — naming
+ * the wrong chip family to the user. Matching the chip's own identifying number against this table is what lets
+ * the reader say which family the file really is for and that it cannot read it.
+ *
+ * The five numbers are transcribed from Project Oxide's own `devices.json` (the database `prjoxide` reads; ISC), as
+ * carried in the `prjoxide` build shipped in oss-cad-suite, read on 2026-08-03; the LIFCL-40 entry there names
+ * two, one per silicon revision, and both are listed because both exist in the wild. Cross-checked against a
+ * real Nexus bitstream: `prjoxide unpack` on it prints "check IDCODE is 0x010F1043" and its output names the
+ * chip LIFCL-40.
+ */
+export const NEXUS_DEVICES: readonly { name: string; idcode: number }[] = [
+  { name: 'LIFCL-17', idcode: 0x010f0043 },
+  { name: 'LIFCL-40', idcode: 0x110f1043 },
+  { name: 'LIFCL-40', idcode: 0x010f1043 },
+  { name: 'LFD2NX-40', idcode: 0x310f1043 },
+  { name: 'LFCPNX-100', idcode: 0x010f4043 },
+]
+
 /** The ECP5 bitstream command opcodes (Trellis `BitstreamCommand`). */
 const CMD = {
   SPI_MODE: 0x79,
@@ -148,6 +171,48 @@ const CMD = {
 
 /** The `FF FF BD B3` sync pattern that starts the command stream. */
 const PREAMBLE = [0xff, 0xff, 0xbd, 0xb3]
+
+/**
+ * The chip's own identifying number, read from the START of a bitstream that carries the `FF FF BD B3` marker —
+ * without decoding the rest of it.
+ *
+ * `parseEcp5Bitstream` also reads this, but only on its way through the whole file, so it throws before
+ * returning anything when the file is not an ECP5 at all. Deciding WHICH family a file belongs to has to happen
+ * before that, and needs nothing but the handful of fixed-size commands every file of either family opens with:
+ * padding, a checksum reset, then the identifying number. Anything else stops the walk and returns null rather
+ * than guessing.
+ */
+export function readLatticeIdcode(bytes: Uint8Array): number | null {
+  let pos = -1
+  for (let i = 0; i + PREAMBLE.length <= bytes.length; i++) {
+    if (PREAMBLE.every((b, k) => bytes[i + k] === b)) {
+      pos = i + PREAMBLE.length
+      break
+    }
+  }
+  if (pos < 0) return null
+  while (pos < bytes.length) {
+    const command = bytes[pos] as number
+    if (command === CMD.DUMMY) {
+      pos++
+      continue
+    }
+    if (command === CMD.LSC_RESET_CRC) {
+      pos += 4
+      continue
+    }
+    if (command !== CMD.VERIFY_ID) return null
+    if (pos + 8 > bytes.length) return null
+    return (
+      (((bytes[pos + 4] as number) << 24) |
+        ((bytes[pos + 5] as number) << 16) |
+        ((bytes[pos + 6] as number) << 8) |
+        (bytes[pos + 7] as number)) >>>
+      0
+    )
+  }
+  return null
+}
 
 /**
  * CRC-16 with polynomial 0x8005, initial value 0x0000, shifting each byte in MSB-first — Trellis's

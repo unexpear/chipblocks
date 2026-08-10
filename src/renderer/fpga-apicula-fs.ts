@@ -56,6 +56,57 @@ export const GOWIN_DEVICES: readonly GowinDevice[] = [
   { name: 'GW2A-18', idcode: 0x0000081b, padding: 0, compressPadding: 16 },
 ]
 
+/** What a `.fs` file's own header says: the chip number it declares, and the part that number names. */
+export type GowinFsHeader = {
+  idcode: number
+  /** null when the number belongs to no Gowin part this module knows — the file is still a Gowin one. */
+  device: GowinDevice | null
+}
+
+/**
+ * Read ONLY the header of a Gowin `.fs`, to answer "is this a Gowin chip file, and which chip is it for?".
+ *
+ * A Gowin file carries no marker byte the way the two Lattice formats do — it is text, and its identity is its
+ * STRUCTURE. So this walks the same header the full parser walks and demands the two records that make a file a
+ * `.fs`: the chip's own identifying number (`0x06`) and the frame count that ends the header (`0x3B`), both
+ * after the three preamble lines the format begins with. Returns null for anything that does not have them.
+ *
+ * The extra demand this makes, which the full parser does not, is that every header line be a whole number of
+ * BYTES. That is what the format is — Apicula reads each line eight characters at a time — and it is what keeps
+ * a file that merely CONTAINS rows of ones and zeros from being taken for a Gowin one: an IceStorm text chip
+ * file writes 54-character and 18-character tile rows, neither of which divides by eight. Measured across all
+ * twelve Gowin bitstreams in `fixtures/`: every line of every one of them divides by eight.
+ *
+ * Reading the header rather than the whole file matters for a second reason: the app names the chip BEFORE it
+ * holds any chip description, so it can tell the user which description to go and find.
+ */
+export function readGowinFsHeader(text: string): GowinFsHeader | null {
+  let preamble = 3
+  let idcode: number | null = null
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line.startsWith('//') || line === '') continue
+    if (!/^[01]+$/.test(line)) continue
+    if (line.length % 8 !== 0) return null
+    if (preamble > 0) {
+      preamble--
+      continue
+    }
+    const bytes = lineBytes(line)
+    if (bytes[0] === 0x06)
+      idcode =
+        (((bytes[4] as number) << 24) |
+          ((bytes[5] as number) << 16) |
+          ((bytes[6] as number) << 8) |
+          (bytes[7] as number)) >>>
+        0
+    if (bytes[0] !== 0x3b) continue
+    if (idcode === null) return null
+    return { idcode, device: GOWIN_DEVICES.find((d) => d.idcode === idcode) ?? null }
+  }
+  return null
+}
+
 /**
  * CRC-16/ARC — reflected polynomial 0x8005, initial value 0, no final xor. This is a THIRD distinct checksum
  * across the three families: iCE40 uses CCITT (0x1021, init 0xFFFF) and ECP5 a custom MSB-shifted 0x8005.

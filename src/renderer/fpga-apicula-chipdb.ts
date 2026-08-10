@@ -40,6 +40,42 @@ export type GowinTileType = {
   pipCount: number
 }
 
+/**
+ * One LONG-WIRE SEGMENT: a piece of copper that spans a whole column of the die.
+ *
+ * Every other wire this decoder handles is named as a pip destination somewhere, so the fuses say what drives
+ * it. A long branch is not: `LB01`..`LB71` appear 3,220 times as a pip SOURCE in the GW1N-1 database and never
+ * once as a destination, so a fuse-only decode reaches a signal travelling one of these and finds nothing
+ * behind it. That is not missing data — the wire is driven from a MULTIPLEXER AT ONE END OF THE COLUMN, and
+ * which end covers which tiles is fixed geometry the device family sets, recorded here.
+ *
+ * The two ends are `top_row` and `bottom_row` of column `column`; the wire each end's multiplexer drives is
+ * `topWire` / `bottomWire` (`LT02` or `LT13` on this part), and both ARE ordinary pip destinations. So the hop
+ * this closes is: a tile reads `LB<n>1` -> that is the segment covering the tile -> the segment's driven end
+ * -> an ordinary decoded pip.
+ *
+ * Apicula's own `create_segments` (`apycula/chipdb.py`) builds this table and puts it on the device object;
+ * the conversion in `fixtures/gowin-gw1n1-chipdb.json` carries it over unchanged. The gate wires it also
+ * records are deliberately left out: a gate wire is the pip SOURCE at the driven end, which the ordinary
+ * routing decode already reports.
+ */
+export type GowinSegment = {
+  /** the column the segment's two end multiplexers sit in. */
+  column: number
+  /** the index in the wire's name: this segment carries `LB<index>1`. */
+  index: number
+  /** the tiles this segment's branch reaches, inclusive. */
+  minCol: number
+  maxCol: number
+  minRow: number
+  maxRow: number
+  /** the row each end multiplexer sits in, and the wire it drives. */
+  topRow: number
+  bottomRow: number
+  topWire: string
+  bottomWire: string
+}
+
 /** A Gowin device's fabric: the tile grid, and what each tile type contains. */
 export type GowinChipdb = {
   device: string
@@ -69,6 +105,8 @@ export type GowinChipdb = {
   /** attribute id -> name, and raw value -> name. */
   attributeNames: ReadonlyMap<number, string>
   valueNames: ReadonlyMap<number, string>
+  /** the long-wire segments, grouped by the index in the branch's name — see `GowinSegment`. */
+  segments: ReadonlyMap<number, readonly GowinSegment[]>
 }
 
 /**
@@ -138,6 +176,19 @@ export function parseGowinChipdb(text: string): GowinChipdb {
     logicinfo_slice?: Record<string, number[]>
     cls_attrids?: Record<string, number>
     cls_attrvals?: Record<string, number>
+    segments?: Record<
+      string,
+      {
+        min_x: number
+        min_y: number
+        max_x: number
+        max_y: number
+        top_row: number
+        bottom_row: number
+        top_wire: string
+        bottom_wire: string
+      }
+    >
   }
 
   const grid = raw.grid
@@ -230,6 +281,30 @@ export function parseGowinChipdb(text: string): GowinChipdb {
   for (const [index, pair] of Object.entries(raw.logicinfo_slice ?? {}))
     logicinfoSlice.set(Number.parseInt(index, 10), [pair[0] as number, pair[1] as number])
 
+  // The key is Apicula's own `(top_gate_row, column, index)` tuple, joined with commas by the conversion. The
+  // row in the key is the top end's row, which the record repeats as `top_row`, so only the last two parts are
+  // read here.
+  const segments = new Map<number, GowinSegment[]>()
+  for (const [key, value] of Object.entries(raw.segments ?? {})) {
+    const parts = key.split(',')
+    if (parts.length !== 3) throw new Error(`Gowin chipdb: bad segment key "${key}"`)
+    const index = Number.parseInt(parts[2] as string, 10)
+    const list = segments.get(index) ?? []
+    list.push({
+      column: Number.parseInt(parts[1] as string, 10),
+      index,
+      minCol: value.min_x,
+      maxCol: value.max_x,
+      minRow: value.min_y,
+      maxRow: value.max_y,
+      topRow: value.top_row,
+      bottomRow: value.bottom_row,
+      topWire: value.top_wire,
+      bottomWire: value.bottom_wire,
+    })
+    segments.set(index, list)
+  }
+
   const attributeNames = new Map<number, string>()
   for (const [name, id] of Object.entries(raw.cls_attrids ?? {})) attributeNames.set(id, name)
   const valueNames = new Map<number, string>()
@@ -253,7 +328,35 @@ export function parseGowinChipdb(text: string): GowinChipdb {
     logicinfoSlice,
     attributeNames,
     valueNames,
+    segments,
   }
+}
+
+/**
+ * Which long-wire segment reaches a given tile, for one branch name.
+ *
+ * Returns null when the answer is not exactly one segment — no segment covers the tile, or more than one
+ * claims it. Both cases mean the driver of that branch cannot be named, and inventing one would put a
+ * connection on the canvas the silicon does not have. The caller says so instead.
+ *
+ * On GW1N-1 this is unambiguous where it applies: over all 11 x 20 x 8 (tile, branch) combinations, 1,694 are
+ * covered by exactly one segment, 66 by none, and none by more than one — measured, and pinned by
+ * `fpga-gowin-long-wire.test.ts`.
+ */
+export function gowinSegmentAt(
+  segments: ReadonlyMap<number, readonly GowinSegment[]>,
+  index: number,
+  row: number,
+  col: number,
+): GowinSegment | null {
+  let found: GowinSegment | null = null
+  for (const segment of segments.get(index) ?? []) {
+    if (row < segment.minRow || row > segment.maxRow) continue
+    if (col < segment.minCol || col > segment.maxCol) continue
+    if (found !== null) return null
+    found = segment
+  }
+  return found
 }
 
 /** Bits are compared as `"row,col"` strings so set operations stay cheap and exact. */

@@ -20,6 +20,13 @@
  *
  * The CLOCK network works differently and is handled separately — see `resolveNexusWire`. Its wires carry no
  * span and join tiles related by no offset at all, because they are chip-level nets rather than short hops.
+ *
+ * WHICH IS WHERE THIS FILE STOPS BEING THE ONE TO USE FOR A CLOCK. `resolveNexusWire` gives a clock wire its
+ * NAME as its identity, and that is wrong: a two-clock design reuses one set of names for both clocks and they
+ * collapse into a single net (`tests/fpga-oxide-twoclock.test.ts` pins that defect). Nothing outside the tests
+ * calls this — the netlist reconstruction resolves wires itself — and the clock scoping that a real design is
+ * read with lives in `nexusClockScope` in `fpga-oxide-netlist.ts`, keyed to the device's own clock-region
+ * table. The signed tile offset above is the part of this file that is pinned and correct.
  */
 
 /** A wire reference resolved to a name every tile that touches it will agree on. */

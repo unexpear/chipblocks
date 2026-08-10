@@ -1,0 +1,9 @@
+IO_LOC "en" 3;
+IO_LOC "a[0]" 10;
+IO_LOC "a[1]" 13;
+IO_LOC "a[2]" 15;
+IO_LOC "a[3]" 16;
+IO_LOC "a[4]" 17;
+IO_LOC "a[5]" 19;
+IO_LOC "a[6]" 21;
+IO_LOC "y" 23;

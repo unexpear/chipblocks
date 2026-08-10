@@ -1,0 +1,4 @@
+ldc_set_location -site {D12} [get_ports clk]
+ldc_set_location -site {D4} [get_ports a]
+ldc_set_location -site {E12} [get_ports b]
+ldc_set_location -site {E2} [get_ports q]

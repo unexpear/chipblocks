@@ -1,0 +1,49 @@
+{
+  "tiles": {
+    "CIB_R10C87:SYSIO_B1_0_C": {
+      "bits": 11,
+      "frames": 16,
+      "start_bit": 109,
+      "start_frame": 40,
+      "tiletype": "SYSIO_B1_0_C",
+      "x": 87,
+      "y": 10
+    },
+    "CIB_R14C1:CIB_LR": {
+      "bits": 12,
+      "frames": 106,
+      "start_bit": 157,
+      "start_frame": 56,
+      "tiletype": "CIB_LR",
+      "x": 1,
+      "y": 14
+    },
+    "CIB_R15C0:SYSIO_B7_0_ODD": {
+      "bits": 12,
+      "frames": 16,
+      "start_bit": 169,
+      "start_frame": 0,
+      "tiletype": "SYSIO_B7_0_ODD",
+      "x": 0,
+      "y": 15
+    },
+    "CIB_R56C85:SYSIO_B3_1_V18": {
+      "bits": 2,
+      "frames": 106,
+      "start_bit": 660,
+      "start_frame": 8960,
+      "tiletype": "SYSIO_B3_1_V18",
+      "x": 85,
+      "y": 56
+    },
+    "TAP_PLC_R5C14:TAP_PLC": {
+      "bits": 12,
+      "frames": 6,
+      "start_bit": 49,
+      "start_frame": 16,
+      "tiletype": "TAP_PLC",
+      "x": 14,
+      "y": 5
+    }
+  }
+}

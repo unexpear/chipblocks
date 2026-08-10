@@ -130,25 +130,34 @@ describe('detectBitstreamFamily — tells the two families apart by their sync p
 
 describe('loadBitstream — one door, both families, same netlist type', () => {
   test('an iCE40 file loads and simulates through the shared engine', () => {
-    const result = loadBitstream(read('icebox-ice40-384-routed.bin'), REFS)
+    // A vendor-built bitstream (`assign y = ^i` over 5 bits, lp384), so its inputs are really routed and the
+    // shared door really has something to drive. It replaced our own flow's icebox-ice40-384-routed.bin, whose
+    // LUT input pins carry no routing and therefore read LOW on silicon rather than being drivable inputs.
+    const result = loadBitstream(read('icebox-ice40-384-vendor-xor5.bin'), REFS)
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error(result.reason)
     expect([result.family, result.device, result.crcOk]).toEqual(['ice40', '384', true])
-    const a = result.netlist.cells.find((c) => c.ref.cell === 0)
-    const nets = (a?.inputs ?? [])
-      .filter((i) => i.kind === 'primary')
-      .map((i) => (i as { net: number }).net)
-    for (const i0 of [false, true])
-      for (const i1 of [false, true]) {
-        const sim = simulateCombinational(
-          result.netlist,
-          new Map([
-            [nets[0] as number, i0],
-            [nets[1] as number, i1],
-          ]),
-        )
-        expect(sim.outputs.get('1_1_5')).toBe(i0 && i1)
-      }
+    const nets = [
+      ...new Set(
+        result.netlist.cells.flatMap((c) =>
+          c.inputs.filter((i) => i.kind === 'primary').map((i) => i.net),
+        ),
+      ),
+    ]
+    expect(nets).toHaveLength(5)
+    const parityCells = result.netlist.cells
+      .map((c) => `${c.ref.x}_${c.ref.y}_${c.ref.cell}`)
+      .filter((key) => {
+        for (let pattern = 0; pattern < 32; pattern++) {
+          const stimulus = new Map(nets.map((net, k) => [net, ((pattern >> k) & 1) === 1]))
+          let parity = false
+          for (let k = 0; k < 5; k++) parity = parity !== (((pattern >> k) & 1) === 1)
+          if (simulateCombinational(result.netlist, stimulus).outputs.get(key) !== parity)
+            return false
+        }
+        return true
+      })
+    expect(parityCells).toHaveLength(1)
   })
 
   test('an ECP5 file loads through the very same door and yields the same kind of netlist', () => {
@@ -161,6 +170,18 @@ describe('loadBitstream — one door, both families, same netlist type', () => {
       (c) => c.ref.x === 30 && c.ref.y === 20 && c.ref.cell === 5,
     )
     expect(lut?.config.truth).toEqual(AND2)
+  }, 60000)
+
+  test('a design the decoder cannot fully model says so AT THE DOOR, not only inside the netlist', () => {
+    // `RecoveredNetlist` carries nothing but `cells`, so the ECP5 netlist's `unfaithful` list used to stop at
+    // this boundary: a caller loading a distributed-RAM bitstream got six cells presented as ordinary lookup
+    // tables and no way to learn that a written memory is not a settled function. The real 16x4 distributed-RAM
+    // bitstream (`MODE DPRAM` x2 + `MODE RAMW`, per ecpunpack) is the case that proves it comes through.
+    const result = loadBitstream(read('trellis-ecp5-dpram.bit'), REFS)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.unfaithful).toHaveLength(6)
+    for (const listed of result.unfaithful ?? []) expect(listed.reason).toMatch(/distributed-RAM/)
   }, 60000)
 })
 

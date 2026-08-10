@@ -7,7 +7,8 @@
  * rest are internal to this file.
  */
 
-import { useInternalNode, ViewportPortal } from '@xyflow/react'
+import { useInternalNode } from '@xyflow/react'
+import { FlowViewportPortal } from './flow-portals.tsx'
 import { THEME } from './theme.ts'
 import { roundedPathD } from './wire-path.ts'
 /**
@@ -51,7 +52,7 @@ export function PendingWirePreview({
     ? roundedPathD(points, curveRadius)
     : points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ')
   return (
-    <ViewportPortal>
+    <FlowViewportPortal>
       {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative rubber-band preview, hidden from the accessibility tree */}
       <svg
         width={1}
@@ -85,7 +86,7 @@ export function PendingWirePreview({
           strokeWidth={1.5}
         />
       </svg>
-    </ViewportPortal>
+    </FlowViewportPortal>
   )
 }
 
@@ -110,7 +111,7 @@ export function ConnectPointsOverlay({
   onPick: (nodeId: string, handleId: string) => void
 }) {
   return (
-    <ViewportPortal>
+    <FlowViewportPortal>
       {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative queued-pair preview lines */}
       <svg
         width={1}
@@ -135,7 +136,7 @@ export function ConnectPointsOverlay({
       {nodes.map((n) => (
         <NodeConnectPoints key={n.id} nodeId={n.id} start={start} onPick={onPick} />
       ))}
-    </ViewportPortal>
+    </FlowViewportPortal>
   )
 }
 

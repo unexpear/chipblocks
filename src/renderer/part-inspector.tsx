@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useRef } from 'react'
+import { acLossParameters } from '../ac-analysis.ts'
 import { footprintForPart, footprintOptions } from './footprint-assignment.ts'
 import { FootprintView } from './footprint-view.tsx'
 import {
@@ -58,6 +59,37 @@ export function paramMin(key: string, unit: string): number | undefined {
 
 const humanize = (key: string): string =>
   key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+/**
+ * The unit + one-line meaning of each parameter a part can carry its AC loss through. The parameter LIST comes
+ * from the AC engine (acLossParameters), so this cannot offer a value the engine does not read; only the unit
+ * to seed a fresh field with, and the hint that explains it, live here.
+ */
+const AC_LOSS_PARAMETER_FIELDS: Record<string, { unit: string; hint: string }> = {
+  esr: { unit: 'ohm', hint: 'equivalent series resistance — the capacitor as ESR − j/(ωC)' },
+  dissipation_factor: {
+    unit: 'dimensionless',
+    hint: 'loss angle tan δ — the same loss as a ratio (ESR = tanδ/ωC)',
+  },
+  winding_resistance: { unit: 'ohm', hint: "the coil wire's own DC resistance (datasheet DCR)" },
+  primary_resistance: { unit: 'ohm', hint: 'primary winding copper resistance' },
+  secondary_resistance: { unit: 'ohm', hint: 'secondary winding copper resistance' },
+  core_loss_resistance: { unit: 'ohm', hint: 'iron loss, as a resistance across the primary' },
+  series_resistance: { unit: 'ohm/meter', hint: "the line conductor's resistance per metre" },
+  shunt_conductance: { unit: 'siemens/meter', hint: 'dielectric leakage per metre' },
+  loss_tangent: { unit: 'dimensionless', hint: 'dielectric loss tangent (G = ωC·tanδ)' },
+}
+
+/**
+ * The AC loss parameters this part could declare but does not carry at all. Until now a value absent from the
+ * dropped part's defaults could not be added from anywhere in the app, so a capacitor's ESR was unreachable and
+ * "every capacitor is lossless at AC" stayed true no matter what the engine could read.
+ */
+function addableAcLossParameters(definition: string, parameters: Parameters | undefined): string[] {
+  return acLossParameters(definition).filter(
+    (key) => parameters?.[key] === undefined && AC_LOSS_PARAMETER_FIELDS[key] !== undefined,
+  )
+}
 
 const stepButton = (disabled: boolean): CSSProperties => ({
   width: 20,
@@ -997,6 +1029,36 @@ export function PartInspector({
           )
         })
       )}
+
+      {/* DECLARE A LOSS the part does not carry. Seeded at 0 — an empty declaration the user fills in, never a
+          plausible-looking number this panel made up. The AC panels keep naming the part until it is real. */}
+      {addableAcLossParameters(selected.definition, selected.parameters).length > 0 ? (
+        <>
+          <div style={sectionLabel}>Declare AC loss</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            {addableAcLossParameters(selected.definition, selected.parameters).map((key) => {
+              const field = AC_LOSS_PARAMETER_FIELDS[key]
+              if (field === undefined) return null
+              return (
+                <button
+                  key={`add:${key}`}
+                  type="button"
+                  onClick={() => onParam(key, 0, field.unit)}
+                  className="nodrag"
+                  style={{ ...deriveButton, marginTop: 0 }}
+                  title={`Add ${humanize(key)} (${field.unit}) — ${field.hint}. Starts at 0; type the value from the part's datasheet.`}
+                >
+                  + {humanize(key)}
+                </button>
+              )
+            })}
+          </div>
+          <div style={sourceNote}>
+            Adds the row at 0 for you to type a real value into. Read by the AC analyses (Bode /
+            Reflection / S-parameters) only — the DC and transient solvers do not read ESR.
+          </div>
+        </>
+      ) : null}
 
       {canDeriveResistance ? (
         <button

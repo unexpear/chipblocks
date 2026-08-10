@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { acSweep, phaseMargin } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
+import { AcLossNotice } from './ac-loss-notice.tsx'
 import { axisRange } from './plot-axis.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
@@ -395,6 +396,7 @@ export function BodePanel({
           Small-signal response, {formatEng(fLo, 'Hz')} to {formatEng(fHi, 'Hz')}.
         </div>
       ) : null}
+      <AcLossNotice world={world} light={light} />
     </div>
   )
 }

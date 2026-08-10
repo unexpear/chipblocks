@@ -1,8 +1,9 @@
-import { useInternalNode, ViewportPortal } from '@xyflow/react'
+import { useInternalNode } from '@xyflow/react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
 import { solveElectroThermal, solveTransientThermal, worldAtAmbient } from '../electro-thermal.ts'
 import { solveTransient, transientRan } from '../transient-solver.ts'
+import { FlowViewportPortal } from './flow-portals.tsx'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
 import { THEME } from './theme.ts'
 import { measureSeries } from './waveform-measure.ts'
@@ -676,7 +677,7 @@ export function ProbeMarker({
   const x = node.internals.positionAbsolute.x + handle.x + handle.width / 2
   const y = node.internals.positionAbsolute.y + handle.y + handle.height / 2
   return (
-    <ViewportPortal>
+    <FlowViewportPortal>
       <div
         style={{
           position: 'absolute',
@@ -703,7 +704,7 @@ export function ProbeMarker({
         </div>
         <div style={{ color, fontSize: 11, lineHeight: 0.7 }}>▼</div>
       </div>
-    </ViewportPortal>
+    </FlowViewportPortal>
   )
 }
 

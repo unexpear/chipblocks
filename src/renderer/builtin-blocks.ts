@@ -5812,7 +5812,13 @@ export const SRAM_CELL_BLOCK: BlockData = {
     // read it back over the bit lines), but every textbook labels these, so exposing them lets a starter
     // circuit SHOW the stored bit on an LED. Q = inv1.out, Q̄ = inv2.out.
     { id: 'q', label: 'Q', side: 'right', offset: 62, inner: { nodeId: 'inv1', handleId: 'out' } },
-    { id: 'qbar', label: 'Q̄', side: 'right', offset: 84, inner: { nodeId: 'inv2', handleId: 'out' } },
+    {
+      id: 'qbar',
+      label: 'Q̄',
+      side: 'right',
+      offset: 84,
+      inner: { nodeId: 'inv2', handleId: 'out' },
+    },
   ],
 }
 

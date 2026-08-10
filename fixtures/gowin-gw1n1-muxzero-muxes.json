@@ -1,0 +1,17 @@
+{
+ "note": "Which wide multiplexers gowin-gw1n1-muxzero.fs really uses, read back by Project Apicula's own unpacker - a separate implementation from ours.",
+ "tool": "gowin_unpack (Project Apicula 0.33.dev19+gdfb3c8702), from oss-cad-suite",
+ "reading": "selectRouted lists, per tile, the wide multiplexers whose SELECT the bitstream routes to a real signal - gowin_unpack writes an unrouted select as `= VCC`, which is the fabric power-up state. ofRead lists every tile wire that takes its signal FROM a multiplexer output OF<n>.",
+ "selectRouted": {
+  "R8C9": [
+   0
+  ]
+ },
+ "ofRead": [
+  {
+   "tile": "R8C9",
+   "output": 0,
+   "readBy": "R8C9_E10"
+  }
+ ]
+}

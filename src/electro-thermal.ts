@@ -20,8 +20,9 @@
 
 import type { Instance, World } from './cross-fk-validator.ts'
 import { solveDCRobust } from './dc-robust.ts'
-import { dcRan, type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
+import { dcRan, dcRefused, type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
+import { solveDeadline } from './solver-budget.ts'
 import {
   acrossVolts,
   bulbFilamentTemperatureC,
@@ -270,7 +271,12 @@ function solveDCConverging(world: World, options?: SolveOptions): Solution {
   const solution = solveDC(world, options)
   if (solution.converged) return solution
   const robust = solveDCRobust(world, options)
-  return robust.converged ? robust : solution
+  // A REFUSAL from the robust solve must win over the plain solve's failure. The plain solve on a circuit too
+  // large for the budget reports `singular-matrix` — a claim about the physics, and a false one — while the
+  // robust solve reports the truth, that it ran out of budget. Preferring the plain result here handed the
+  // canvas a false diagnosis with no warning and no voltages: a 262-part transistor design that solves in 34
+  // seconds came back empty and "singular", which is the silent wrong answer the budget exists to prevent.
+  return robust.converged || dcRefused(robust.status) ? robust : solution
 }
 
 export function solveElectroThermal(
@@ -279,8 +285,12 @@ export function solveElectroThermal(
 ): ElectroThermalResult {
   const warnings: string[] = []
   const projectAmbientC = options?.projectAmbientC
+  // ONE deadline shared by every pass of the loop below (each pass is a full DC solve, itself possibly
+  // a whole source-stepping continuation), so the budget bounds the settling, not one solve of it.
+  const deadline = solveDeadline(options?.deadline)
+  const budgeted = { ...options, deadline }
   let temperaturesC = new Map<string, number>()
-  let solution: Solution = solveDCConverging(world, options)
+  let solution: Solution = solveDCConverging(world, budgeted)
   let thermalConverged = false
   let iteration = 0
 
@@ -302,7 +312,7 @@ export function solveElectroThermal(
     }
 
     const adjusted = worldAtTemperatures(world, temperaturesC, warnings)
-    solution = solveDCConverging(adjusted.world, { ...options, temperaturesC })
+    solution = solveDCConverging(adjusted.world, { ...budgeted, temperaturesC })
     if (adjusted.outOfRange) break // model out of validity — report, don't fake
   }
 
@@ -437,8 +447,11 @@ export function solveTransientThermal(
   const warnings: string[] = []
   const settleSeconds = options.thermalSettleSeconds ?? options.duration / 3
   const projectAmbientC = options.projectAmbientC
+  // ONE deadline across every re-march of the loop below, for the same reason as the DC loop: each
+  // pass is a whole transient run, so budgeting them separately budgets nothing.
+  const budgeted = { ...options, deadline: solveDeadline(options.deadline) }
   let temperaturesC = new Map<string, number>()
-  let result: TransientResult = solveTransient(world, options)
+  let result: TransientResult = solveTransient(world, budgeted)
   let thermalConverged = false
   let iteration = 0
 
@@ -460,7 +473,7 @@ export function solveTransientThermal(
     }
 
     const adjusted = worldAtTemperatures(world, temperaturesC, warnings)
-    result = solveTransient(adjusted.world, { ...options, temperaturesC })
+    result = solveTransient(adjusted.world, { ...budgeted, temperaturesC })
     if (adjusted.outOfRange) break // model out of validity — report, don't fake
   }
 

@@ -16,7 +16,6 @@ import {
   useNodesInitialized,
   useNodesState,
   useReactFlow,
-  useUpdateNodeInternals,
 } from '@xyflow/react'
 import { namedCellDrc, summarizeDrc } from './cell-drc.ts'
 import { chipSignature, type Floorplan, placeCells } from './cell-place.ts'
@@ -50,6 +49,7 @@ import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { LIGHT_SENSOR_DEFINITIONS, worldWithCastLight } from '../light.ts'
 import { solveWithRelays } from '../relay.ts'
+import { refusalHeadline } from '../solver-budget.ts'
 import { analyzeTiming } from '../static-timing.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
 import { binaryToBcd8 } from './bin2bcd.ts'
@@ -74,6 +74,19 @@ import { boardRmsTerminalCurrents } from './board-ac-current.ts'
 import { boardFabStateFromFile, placementsFromSaved } from './board-fab-seed.ts'
 import { BodePanel } from './bode-panel.tsx'
 import { BUILTIN_BLOCKS, buildFrameBuffer, CALCULATOR, CHAR_GEN } from './builtin-blocks.ts'
+import {
+  designSizeOfCanvas,
+  estimateDrawCostMs,
+  isWorthStagingTheDraw,
+  tooBigCanvasToDrawReason,
+  tooBigFileToDrawReason,
+} from './canvas-capacity.ts'
+import {
+  paintThenRun,
+  StagedDraw,
+  type StagedDrawProgress,
+  stagedDrawSettleSteps,
+} from './canvas-draw-staging.ts'
 import { ConnectPointsOverlay, PendingWirePreview } from './canvas-overlays.tsx'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import { groundedComponent } from './canvas-to-world.ts'
@@ -99,9 +112,11 @@ import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DistortionPanel } from './distortion-panel.tsx'
 import { DockablePanel } from './dockable-panel.tsx'
+import { DrawProgressCard } from './draw-progress.tsx'
 import type { Footprint } from './footprint.ts'
 import { BOM_VALUE_PARAMS, terminalForPad } from './footprint-assignment.ts'
 import { FootprintEditor } from './footprint-editor.tsx'
+import { type ChipDescriptionFile, identifyBitstream, openFpgaDesign } from './fpga-open.ts'
 import {
   CrtScreenContext,
   type CrtScreenData,
@@ -109,7 +124,14 @@ import {
   HealthContext,
   mergeHealth,
 } from './health.ts'
-import { type NetlistReport, NetlistReportCard } from './import-report.tsx'
+import {
+  designFitPadding,
+  type FpgaPanel,
+  FpgaReportCard,
+  type NetlistReport,
+  NetlistReportCard,
+  REPORT_MARGIN,
+} from './import-report.tsx'
 import { eventMatchesBinding } from './keybinds.ts'
 import { parseKicadSchematic } from './kicad-schematic.ts'
 import { lassoPathD } from './lasso.ts'
@@ -146,6 +168,7 @@ import {
   WireColorContext,
   WireGeomContext,
 } from './net-edge.tsx'
+import { nodesNeedingRemeasure, useCoalescedUpdateNodeInternals } from './node-internals.ts'
 import { routeAllWires, type WireReq } from './orthogonal-route.ts'
 import { detectOutputContention } from './output-contention.ts'
 import { PageSettings } from './page-settings.tsx'
@@ -226,6 +249,7 @@ import { H_DIVISIONS, scopeRecordSteps } from './scope-scales.ts'
 import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
 import { SParamPanel } from './sparam-panel.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
+import { StagedDrawSession } from './staged-draw-session.ts'
 import { runStressSweep } from './stress-bench.ts'
 import { StressBench } from './stress-bench-panel.tsx'
 import { type DeviceNodeData, type Fidelity, nodeTypes, terminalsOf } from './symbols.tsx'
@@ -242,7 +266,7 @@ import { TimingPanel } from './timing-panel.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { type TraceBlock, TraceInspector } from './trace-inspector.tsx'
 import { CheckpointContext } from './undo-context.ts'
-import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
+import { checkpoint, dropLastCheckpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
 import { useBode } from './use-bode.ts'
 import { useConnectTool } from './use-connect-tool.ts'
@@ -284,7 +308,7 @@ import { buildDemoCpu, buildDemoCpu8 } from './verilog-cpu-demo.ts'
 import { STARTER_VERILOG, VerilogEditor } from './verilog-editor.tsx'
 import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
 import {
-  findWireCrossings,
+  markableWireCrossings,
   netColor,
   type WireCrossing,
   WireCrossingsOverlay,
@@ -310,13 +334,30 @@ declare global {
       registerThemes?: (themes: { id: string; label: string }[], active: string) => void
       onSaveRequest: (callback: () => void) => void
       saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
-      onCircuitOpened: (callback: (text: string) => void) => void
+      // The three that hand a file to THIS canvas return an unsubscribe, because only the tab on screen may
+      // be listening — see `setCircuitCanvasOpen`.
+      onCircuitOpened: (callback: (text: string) => void) => () => void
+      /** Undoes the path `file:opened` set, for a staged open the user stopped. */
+      forgetCircuitPath?: () => Promise<{ ok: boolean }>
       openCircuitDialog?: () => Promise<{ ok: boolean; path?: string; text?: string }>
-      readCircuitFile?: (
-        path: string,
-      ) => Promise<{ ok: boolean; path?: string; text?: string; reason?: string }>
+      readCircuitFile?: (path: string) => Promise<{
+        ok: boolean
+        path?: string
+        text?: string
+        kind?: 'unreadable' | 'too-big'
+        reason?: string
+      }>
       scanProjects?: () => Promise<{ path: string; name: string; savedAt: number }[]>
-      onNetlistOpened?: (callback: (text: string) => void) => void
+      onNetlistOpened?: (callback: (text: string) => void) => () => void
+      onBitstreamOpened?: (
+        callback: (file: { name: string; bytes: Uint8Array }) => void,
+      ) => () => void
+      setCircuitCanvasOpen?: (open: boolean) => void
+      requestChipDescription?: (
+        family: string,
+        device: string,
+        ask: boolean,
+      ) => Promise<{ ok: boolean; files?: { name: string; text: string }[] }>
       onExportNetlistRequest?: (callback: () => void) => void
       saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       onExportVerilogRequest?: (callback: () => void) => void
@@ -517,6 +558,25 @@ const CALC_HARNESS_EDGES: Record<string, unknown>[] = [
   ]),
 ]
 
+/**
+ * How many wire-crossing marks this canvas will draw before it stops drawing them altogether.
+ *
+ * A crossing mark is a real DOM element with its own hover and click handlers, and the number of crossings
+ * grows with the SQUARE of the wiring, so it is not bounded by anything the user did. Measured in the
+ * running app on the two designs read back from real Gowin chip files: the 452-part one produced 158,535
+ * marks and the 1,582-part one 290,091 — which were 290,091 of that document's 346,154 elements, and the
+ * largest single reason the design took over two minutes to appear. A canvas anyone draws by hand has
+ * crossings in the tens; this bound sits far above that and far below the counts above, and when it is
+ * passed the canvas says so rather than marking an arbitrary subset (see WireCrossingsOverlay's note).
+ */
+const WIRE_CROSSING_MARK_LIMIT = 2000
+
+/** The per-wire colouring switched off, as ONE map, so the context every wire reads never changes. */
+const NO_WIRE_COLORS = new Map<string, string>()
+
+/** No crossings found yet, as ONE array, so nothing downstream re-renders for a new empty list. */
+const NO_WIRE_CROSSINGS: WireCrossing[] = []
+
 /** The hand-placements Map → the file's SavedPlacement[] (id-sorted for a stable, reviewable diff). */
 function placementsToSaved(placements: ReadonlyMap<string, PlacementOverride>): SavedPlacement[] {
   return [...placements]
@@ -526,9 +586,33 @@ function placementsToSaved(placements: ReadonlyMap<string, PlacementOverride>): 
 
 /**
  * Map a loaded / imported CircuitFile to the canvas's React Flow nodes + edges. Shared by Open (a
- * .chipblocks file) and Import (a parsed netlist) so the two paths build the canvas identically.
+ * .chipblocks file), Import (a parsed netlist), Read-a-chip-file, and a tab opening on a saved project,
+ * so all four paths build the canvas identically.
+ *
+ * It REFUSES a file too big to draw instead of returning one, and says so in the result type. That is
+ * deliberate: the previous shape returned a canvas unconditionally and left each door to remember the
+ * size check on its own, and two of the four forgot — including the first item in the File menu, where a
+ * 4,746-part project stopped the window for over half an hour. A door cannot forget a check it cannot
+ * get past the compiler without handling.
  */
-function circuitFileToFlow(file: CircuitFile) {
+type CanvasFromFile = { ok: true; nodes: Node[]; edges: Edge[] } | { ok: false; reason: string }
+
+/**
+ * The canvas as it was before a staged draw started — everything Stop puts back. Parts, wires and the
+ * logic state of whatever was running on them are put back here; `onStop` is the door's own undo of the
+ * rest, because only the door that swapped in a file's ambient, sheet and copper knows it changed them.
+ */
+type PreDrawCanvas = {
+  nodes: Node[]
+  edges: Edge[]
+  logicState: Map<string, boolean>
+  undoTag: string | undefined
+  onStop: (() => void) | undefined
+}
+
+function circuitFileToFlow(file: CircuitFile): CanvasFromFile {
+  const tooBig = tooBigFileToDrawReason(file)
+  if (tooBig !== undefined) return { ok: false, reason: tooBig }
   const nodes = file.nodes.map((n) => ({
     id: n.id,
     type: (n.definition === 'block'
@@ -549,6 +633,9 @@ function circuitFileToFlow(file: CircuitFile) {
         ? { fidelity: n.fidelity }
         : {}),
       ...(n.block ? { block: n.block } : {}),
+      // A part that arrived with a warning keeps it. This is the only thing standing between the user and a
+      // part that produces a plausible wrong value with nothing anywhere saying so.
+      ...(n.caveat ? { caveat: n.caveat } : {}),
     },
   }))
   const edges = file.wires.map((w) => ({
@@ -572,7 +659,7 @@ function circuitFileToFlow(file: CircuitFile) {
         }
       : {}),
   }))
-  return { nodes, edges }
+  return { ok: true, nodes: nodes as Node[], edges: edges as Edge[] }
 }
 
 /** The meter chip's V⎓ / Ω dial buttons — the mode switch on a real meter. */
@@ -782,6 +869,13 @@ export function App() {
     },
     [tabs],
   )
+
+  // Tell the native menu whether a project's canvas is on screen. Open Circuit, Import Netlist and Read an
+  // FPGA Chip File all hand a file TO that canvas, so from the launcher they have nowhere to put it — and a
+  // menu item that reads a file and then does nothing is worse than one that is plainly unavailable.
+  useEffect(() => {
+    window.chipblocks?.setCircuitCanvasOpen?.(activeId !== 'home')
+  }, [activeId])
 
   // Load the personal parts library (~/.chipblocks/user-parts.json) ONCE at app start, before any
   // project opens, so your authored parts are in every tab's palette + draw on any project that uses
@@ -2416,6 +2510,27 @@ async function persistAuthoredFootprint(footprint: Footprint): Promise<void> {
   }))
 }
 
+/**
+ * Run one circuit solve after the current BURST of canvas updates, not one per update. Returns the
+ * effect cleanup that cancels a solve the next update supersedes.
+ *
+ * Why a timer and not a plain call, and why it cannot be a microtask. React Flow does not hand the
+ * canvas its new nodes and wire geometry in one go: it measures them and reports them a few at a time,
+ * and each report is a state change that re-runs the always-on re-solve. Solving inside that cascade
+ * makes every report pay for a whole solve, and because the cascade is synchronous the window cannot
+ * paint or answer until the last one lands. Placing the calculator — 119 parts, 241 wires — cost 155
+ * solves and 30 s of dead window that way; deferring to a macrotask collapses it to 6 solves and 3.3 s.
+ * A microtask would NOT work: it runs before the task ends, so it stays inside the same cascade.
+ *
+ * The delay is zero because the deferral, not its width, is what coalesces the burst: swept at 0 / 40 /
+ * 100 ms the calculator gives 6 / 6 / 6 solves and 4,039 / 3,333 / 4,299 ms, which is scatter, not a
+ * trend (…/appl/settle-0.json, debounce-probe.json, settle-100.json).
+ */
+function solveAfterTheBurst(solve: () => void): () => void {
+  const pending = setTimeout(solve, 0)
+  return () => clearTimeout(pending)
+}
+
 function Canvas({ project, active = true }: { project: ProjectChoice; active?: boolean }) {
   // Only the active tab is "live" — a background tab keeps its state mounted but must NOT grab global
   // keystrokes (delete/copy/paste) or the single window.__chip CDP slot. activeRef lets the
@@ -2432,15 +2547,42 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     // fills current/length/resistance either way. Register the opened project's custom parts FIRST (a
     // non-clobbering merge, idempotent) so its nodes draw + wire as their real symbols — the File>Open path
     // does the same; without it a browser-opened project's user parts render as unknown boxes.
-    if (project.loaded?.userParts && project.loaded.userParts.length > 0) {
-      mergeUserParts(project.loaded.userParts)
+    //
+    // The size check happens FIRST, before the project's parts are registered and before anything is
+    // built: this is where the launcher's doors (reopen a saved project, start from a saved template,
+    // open a .chipblocks from the file dialog) all land, and it had no check at all. Those doors refuse
+    // in the launcher now, so a refusal reaching here means one got past them — the tab opens empty with
+    // the reason on it rather than mounting a canvas nobody can wait for.
+    const loadedFlow = project.loaded ? circuitFileToFlow(project.loaded) : undefined
+    const refusedReason = loadedFlow !== undefined && !loadedFlow.ok ? loadedFlow.reason : undefined
+    const openable = refusedReason === undefined ? project.loaded : undefined
+    if (openable?.userParts && openable.userParts.length > 0) {
+      mergeUserParts(openable.userParts)
     }
-    if (project.loaded?.userFootprints && project.loaded.userFootprints.length > 0) {
-      mergeUserFootprints(project.loaded.userFootprints)
+    if (openable?.userFootprints && openable.userFootprints.length > 0) {
+      mergeUserFootprints(openable.userFootprints)
     }
-    const flow = project.loaded ? circuitFileToFlow(project.loaded) : templateFlow(project.template)
-    const nodes: Node[] = flow.nodes
-    const baseEdges: Edge[] = flow.edges
+    const flow =
+      loadedFlow?.ok === true
+        ? { nodes: loadedFlow.nodes, edges: loadedFlow.edges }
+        : templateFlow(project.template)
+    // A design big enough that drawing it in one call would drop a frame is handed to the stager
+    // instead, and this tab starts EMPTY: the parts arrive in batches with the bar counting them.
+    //
+    // This is the door the whole guard was written for — a project opened from the launcher, from
+    // File > Open Circuit, or a tab remounting on a saved project — and until it was staged too, the
+    // raised ceiling would have meant a saved design being allowed a MINUTE of dead window where it
+    // used to be refused at five seconds. Under the shortest draw worth watching there is nothing to
+    // watch, so small designs (every built-in template among them) are drawn in one go as before — which
+    // this comment claimed before it was true: comparing the whole estimate against the batch target was
+    // true for every design, blank ones included, and put a card reading "Placing parts — 0 of 0" on
+    // screen when a new project was created.
+    const wholeFlow = { nodes: flow.nodes as Node[], edges: flow.edges as Edge[] }
+    const stageOnMount = isWorthStagingTheDraw(
+      designSizeOfCanvas(wholeFlow.nodes, wholeFlow.edges.length),
+    )
+    const nodes: Node[] = stageOnMount ? [] : wholeFlow.nodes
+    const baseEdges: Edge[] = stageOnMount ? [] : wholeFlow.edges
     // Catalog material ids for the Properties panel's material dropdown.
     const materials = [...world.definitions.values()]
       .filter((d) => (d as { kind?: string }).kind === 'material')
@@ -2482,13 +2624,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       validMaterialsByDef,
       // The board-fab state a saved project seeds this tab with (placements, copper, stack-up, board
       // shape, sheet, chip floorplan, ambient) — one tested derivation shared with File>Open so a
-      // browser-opened project restores all of it instead of dropping to defaults.
-      boardFab: boardFabStateFromFile(project.loaded),
+      // browser-opened project restores all of it instead of dropping to defaults. A refused project
+      // seeds nothing: a board laid out for a circuit that is not here would be a board of ghosts.
+      boardFab: boardFabStateFromFile(openable),
+      refusedReason,
+      stagedFlow: stageOnMount ? wholeFlow : undefined,
     }
   }, [project.template, project.loaded])
 
   // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
   // also let the palette drop new parts and the user draw new wires.
+  // The staged draw in flight, if any — the stager itself, the canvas as it was before it started, and
+  // the flag that is held high while a design is arriving so the always-on re-solve does not fire on
+  // every batch and solve a circuit that is still half on the canvas, and so the startup fit does not
+  // frame the first four parts of a design still arriving. The stager solves once, at the end.
+  const drawSessionRef = useRef(new StagedDrawSession<PreDrawCanvas>())
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   // Part collision: where each dragged part started, so a drop that lands on another part
   // snaps back — parts are solid and can't occupy the same space.
@@ -2603,8 +2753,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     blackProbe: { nodeId: string; handleId: string } | undefined
     readout: string | null
   } | null>(null)
-  const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
-  const updateNodeInternals = useUpdateNodeInternals()
+  const { screenToFlowPosition, fitView, getNodes, deleteElements } = useReactFlow()
+  const updateNodeInternals = useCoalescedUpdateNodeInternals()
   // A loaded project resumes its id counter ABOVE the saved ids (so new drops never collide); a fresh
   // template project just counts its seeded parts.
   const dropCount = useRef(
@@ -2635,6 +2785,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const nodesInitialized = useNodesInitialized()
   const didStartupFit = useRef(false)
   useEffect(() => {
+    if (drawSessionRef.current.isDrawing) return // a design still arriving would be framed four parts at a time
     if (nodesInitialized && !didStartupFit.current && nodesRef.current.length > 0) {
       didStartupFit.current = true
       fitView({ padding: 0.15 })
@@ -2688,6 +2839,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     [snapshotCanvas],
   )
 
+  // What the canvas is drawing right now, or null when it is not drawing. Real counts, straight from the
+  // stager — the card renders this and nothing else, so there is no second, prettier version of the truth.
+  const [drawProgress, setDrawProgress] = useState<StagedDrawProgress | null>(null)
   // Wire-to-wire crossings: each wire reports its drawn path here; the overlay finds where two
   // wires cross (an open dot), and a click JOINS them at a junction (a filled dot = one net).
   const [wireGeoms, setWireGeoms] = useState(new Map<string, Point[]>())
@@ -2698,27 +2852,48 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       return next
     })
   }, [])
-  const wireCrossings = useMemo(
+  // NO UNIT TEST IN THIS PROJECT CATCHES EITHER OF THE TWO LINES BELOW, and they are written down here
+  // rather than left to be assumed. Mutation-tested: deleting the `drawProgress !== null` skip, and
+  // building a fresh empty Map above instead of returning the shared one, each leave the whole suite
+  // green. Both change only WHEN work happens and what identity a value has, and the suite cannot see
+  // either — the evidence for both is on the built app, in the artifacts each cites.
+  //
+  // NOT WHILE THE DESIGN IS STILL BEING DRAWN. The scan compares every wire with every other one, so it
+  // costs the SQUARE of the wires — and it was being re-run from scratch on every batch of a staged draw,
+  // over a half-finished canvas whose crossings nobody can click yet. Profiled on the built app over a
+  // 46.7-second draw of 2,000 grouped blocks with 3,400 wires, `findWireCrossings` and the segment
+  // intersection under it held the thread for 15,071 and 9,501 ms — 53 % of the whole draw
+  // (…/cg/prof-b2000w3400.json, V8 sampling profiler at 1 ms). It runs once, when the draw has settled.
+  const { crossings: wireCrossings, unmarked: wireCrossingsUnmarked } = useMemo(
     () =>
-      findWireCrossings(
-        wireGeoms,
-        edges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: e.sourceHandle ?? null,
-          targetHandle: e.targetHandle ?? null,
-        })),
-      ),
-    [wireGeoms, edges],
+      drawProgress !== null
+        ? { crossings: NO_WIRE_CROSSINGS, unmarked: false }
+        : markableWireCrossings(
+            wireGeoms,
+            edges.map((e) => ({
+              id: e.id,
+              source: e.source,
+              target: e.target,
+              sourceHandle: e.sourceHandle ?? null,
+              targetHandle: e.targetHandle ?? null,
+            })),
+            WIRE_CROSSING_MARK_LIMIT,
+          ),
+    [wireGeoms, edges, drawProgress],
   )
   // Optional, visual-only: give each WIRE its own dull shade so one wire can be traced end to end.
   const [colorWires, setColorWires] = useState(false)
   // A dull colour per WIRE (cycled by index, empty when the toggle is off) — each wire its own shade so
   // you can pick one and follow it through a tangle. Purely visual; never touches the solve.
+  // WHEN THE TOGGLE IS OFF THIS HAS TO BE THE SAME EMPTY MAP EVERY TIME, and building a fresh one was
+  // costing every wire on the canvas a re-render per batch of a staged draw. The value goes into a
+  // context every wire reads, and a context whose value changes identity re-renders every consumer
+  // whatever memo is around it — so committing three wires re-rendered three thousand. Measured on the
+  // built app, a 2,000-block / 3,400-wire draw handed over 3 wires and took 4,415 ms doing it, and 25
+  // wires for 7,843 (…/cg/after1-b2000w3400.json, rep 3, card samples).
   const netColorByEdge = useMemo(() => {
+    if (!colorWires) return NO_WIRE_COLORS
     const map = new Map<string, string>()
-    if (!colorWires) return map
     edges.forEach((e, i) => {
       map.set(e.id, netColor(i))
     })
@@ -2801,8 +2976,26 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     [checkpointAction, setEdges, setNodes],
   )
 
-  // The import-netlist report (rung 1b): what converted, what did not — shown until dismissed.
-  const [netlistReport, setNetlistReport] = useState<NetlistReport | null>(null)
+  // The import-netlist report (rung 1b): what converted, what did not — shown until dismissed. It also
+  // carries every canvas refusal, including the one a tab is born with when the project it was opened
+  // for is too big to draw (`initial.refusedReason`) — an empty canvas with no card would be the silent
+  // failure this whole guard exists to stop.
+  const [netlistReport, setNetlistReport] = useState<NetlistReport | null>(
+    initial.refusedReason === undefined
+      ? null
+      : {
+          kind: 'refused',
+          title: `Could not open “${project.name}”`,
+          reason: initial.refusedReason,
+        },
+  )
+  // The FPGA chip-file card, and the file it is about. The bytes are held because reading one takes two steps
+  // when the chip description is not on hand yet: refuse with the ask, then decode the SAME file once it is.
+  const [fpgaPanel, setFpgaPanel] = useState<FpgaPanel | null>(null)
+  // The card the user last dismissed, kept so it can be opened again. A report that can only ever be read once
+  // is a report the user loses the moment they click the ×, and the parts it is about stay on the canvas.
+  const [fpgaPanelDismissed, setFpgaPanelDismissed] = useState<FpgaPanel | null>(null)
+  const pendingBitstream = useRef<{ name: string; bytes: Uint8Array } | null>(null)
   // A brief confirmation after "Save as Template" lands the current canvas in My Templates.
   const [templateSaved, setTemplateSaved] = useState<string | null>(null)
 
@@ -2813,6 +3006,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     const bridge = window.chipblocks
     if (bridge?.onSaveRequest === undefined) return
     bridge.onSaveRequest(() => {
+      // MEASURED, and the worst thing this canvas could do: a save fired while a design was still
+      // arriving serialized the half-drawn canvas and main wrote it straight over the remembered path
+      // with no dialog. A file holding 119 parts and 241 wires came back holding 10 parts and the old
+      // file's 241 wires (…/repair/before-save-mid-draw.json) — a circuit that never existed, in place
+      // of the user's. Nothing is written at all until the design on screen is the whole design.
+      if (drawSessionRef.current.isDrawing) {
+        setNetlistReport({
+          kind: 'refused',
+          title: 'Not saved',
+          reason:
+            'The design is still being drawn, so saving now would write half of it over your file. ' +
+            'Nothing was written. Wait for the drawing to finish, or press Stop, and save again.',
+        })
+        return
+      }
       const file = serializeCircuit(
         nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
         edges,
@@ -2857,6 +3065,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     const read = bridge.readUserTemplates
     const write = bridge.writeUserTemplates
     bridge.onSaveTemplateRequest(() => {
+      // Same rule as Save: a design still arriving is not a design worth keeping a copy of.
+      if (drawSessionRef.current.isDrawing) {
+        setNetlistReport({
+          kind: 'refused',
+          title: 'Not saved as a template',
+          reason:
+            'The design is still being drawn, so only part of it exists to copy. Nothing was saved. ' +
+            'Wait for the drawing to finish and try again.',
+        })
+        return
+      }
       const circuit = serializeCircuit(
         nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
         edges,
@@ -2955,67 +3174,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const chipLayoutRef = useRef(chipLayout)
   chipLayoutRef.current = chipLayout
 
-  // Load: the main process already validated the file; rebuild the canvas from
-  // it, resume the drop counter above the loaded ids, and re-fit the view. The
-  // always-on physics effect re-solves the loaded circuit automatically.
-  useEffect(() => {
-    const bridge = window.chipblocks
-    if (bridge?.onCircuitOpened === undefined) return
-    bridge.onCircuitOpened((text) => {
-      const result = deserializeCircuit(text)
-      if (!result.ok) return // main validates first; this is belt-and-braces
-      checkpointAction('load')
-      // Restore the saved board ambient (older files have none → the 25 °C default). Set the ref
-      // synchronously so the auto-resolve that setNodes triggers below solves at the loaded ambient.
-      const loadedAmbient =
-        typeof result.file.projectAmbientC === 'number' &&
-        Number.isFinite(result.file.projectAmbientC)
-          ? result.file.projectAmbientC
-          : STANDARD_AMBIENT_C
-      projectAmbientRef.current = loadedAmbient
-      setProjectAmbientC(loadedAmbient)
-      // Restore the saved drawing sheet (page size + title block); an older file has none → keep the
-      // current sheet. Merge over the default so a partial/old sheet still fills every field.
-      if (result.file.sheet) setSheetSettings({ ...DEFAULT_SHEET, ...result.file.sheet })
-      // Register the project's custom parts (already validated by deserializeCircuit) so its nodes draw
-      // + wire as their real symbols. A non-clobbering merge: if an id is already in the library (e.g. a
-      // part another open tab authored), the EXISTING one is kept — loading a project never silently
-      // rewrites a part in use elsewhere. (Built-in-id clashes are skipped too.)
-      mergeUserParts(result.file.userParts ?? [])
-      mergeUserFootprints(result.file.userFootprints ?? [])
-      const flow = circuitFileToFlow(result.file)
-      setNodes(flow.nodes)
-      setEdges(flow.edges)
-      // Restore THIS file's hand placements (replacing the previous canvas's — ids repeat across files,
-      // so we never inherit the old ones); older files with none load onto their auto board.
-      setPcbPlacements(placementsFromSaved(result.file.placements))
-      // Restore THIS file's chip floorplan layer (replacing the previous canvas's); older files with none
-      // load with an empty layout, so the chip level re-generates its floorplan fresh from the design.
-      setChipLayout(result.file.chipLayout ?? EMPTY_CHIP_LAYOUT)
-      // Restore THIS file's board stack-up (copper-layer count, thickness, weight, finish) — older files
-      // with none load on the 2-layer default. Set BEFORE the copper below so the restored inner-layer
-      // hand copper lands on a board that actually has those layers (the review-caught orphaning).
-      setPcbStackupOptions(result.file.stackup ?? DEFAULT_STACKUP_OPTIONS)
-      // Restore THIS file's V-scored board edges (older files with none load all-routed).
-      setPcbVScoredSides(result.file.vScoredSides ?? [])
-      setPcbProfile(result.file.boardProfile ?? null) // hand-drawn outline, else the auto-fit rectangle
-      // Restore THIS file's hand-laid copper (replacing the previous canvas's — sanitized already by
-      // deserializeCircuit); older files with none load with only auto-routed copper.
-      setUserTraces(result.file.traces ?? [])
-      setUserVias(result.file.vias ?? [])
-      setChipFloorplan(null) // re-generate the floorplan for the loaded design on next chip entry
-      dropCount.current = maxIdSuffix(result.file.nodes)
-      window.setTimeout(() => fitView({ padding: 0.15 }), 80)
-    })
-  }, [setNodes, setEdges, fitView, checkpointAction])
-
   // Import (rung 1b): a SPICE netlist arrives as raw text; parse it to a CircuitFile, drop it on the
   // canvas exactly the way Open does, and surface the report — what converted, what didn't, what we
   // assumed. A netlist carries no board ambient, so it loads at the standard 25 °C.
   useEffect(() => {
+    if (!active) return
     const bridge = window.chipblocks
     if (bridge?.onNetlistOpened === undefined) return
-    bridge.onNetlistOpened((text) => {
+    return bridge.onNetlistOpened((text) => {
       // SPICE, KiCad, and Verilog all arrive on this channel; tell them apart by the file's own shape.
       const isKicad = text.trimStart().startsWith('(kicad_sch')
       const isVerilog = !isKicad && isVerilogText(text)
@@ -3024,10 +3190,24 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         : isKicad
           ? parseKicadSchematic(text)
           : parseSpiceNetlist(text)
+      // Same canvas limit as a recovered chip design (canvas-capacity.ts): a netlist can name more
+      // parts than the canvas can draw, and drawing them is what locks the window. Report it and open
+      // nothing, rather than start something the user cannot stop — and report it as a REFUSAL, which is
+      // what it is. Sent through the import wording with a count of zero it was headlined "Imported 0
+      // parts from the netlist" over a note reading "Nothing was opened": a card whose first line says
+      // the import happened.
+      const flow = circuitFileToFlow(circuit)
+      if (!flow.ok) {
+        setNetlistReport({
+          kind: 'refused',
+          title: 'Could not import that netlist',
+          reason: flow.reason,
+        })
+        return
+      }
       checkpointAction('import netlist')
       projectAmbientRef.current = STANDARD_AMBIENT_C
       setProjectAmbientC(STANDARD_AMBIENT_C)
-      const flow = circuitFileToFlow(circuit)
       setNodes(flow.nodes)
       setEdges(flow.edges)
       setPcbPlacements(new Map()) // imported netlists start from their own auto board
@@ -3050,7 +3230,136 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         ...(isVerilog ? { format: 'verilog' as const } : {}),
       })
     })
-  }, [setNodes, setEdges, fitView, checkpointAction])
+  }, [active, setNodes, setEdges, fitView, checkpointAction])
+
+  // Read an FPGA Chip File. A programmed chip's bytes are decoded back into the logic that was put into it and
+  // dropped on the canvas by the SAME path an imported netlist takes — a recovered chip design is a circuit, so
+  // it belongs on the circuit canvas rather than behind a level of its own.
+  //
+  // Everything the decoders could not stand behind travels with it into `fpgaPanel`, which is the whole reason
+  // this door exists: the parts that are missing, the parts that are on the canvas but must not be believed, and
+  // the parts with something left out. A run that hides those would put a design in front of the user that looks
+  // complete and is not.
+  // Fit the recovered design into the room it actually has. With the report showing, that is the canvas MINUS
+  // the strip the report covers — a report that hides the design it describes is no report — and when the
+  // report is dismissed the design is fitted again into the whole canvas, which on the densely-filled 384
+  // fixture is very nearly twice the size. The padding must carry its 'px': a bare number is read as a
+  // FRACTION of the pane, which asks for a margin hundreds of times the canvas width and shrinks the design
+  // to a speck (measured — 36 px across for the whole 286-part design).
+  const fitDesign = useCallback(
+    (reportShowing: boolean) => void fitView({ padding: designFitPadding(reportShowing) }),
+    [fitView],
+  )
+
+  // WHEN to fit it: once the parts are actually drawn, not on a timer.
+  //
+  // A design read from a chip file is not on the canvas the moment it is handed over — React Flow measures
+  // every part first, and there is nothing to fit a view to until it has. Timing that by the clock is a race,
+  // and it loses: reading the 286-part chip file over the top of a 123-part one left the view at the old
+  // design's zoom, 829 px wide in an 822 px pane and running off the bottom of the canvas. Measured in the
+  // running app, the parts took FOURTEEN SECONDS to appear that time, because the canvas re-solves the whole
+  // recovered circuit as it arrives. No timer is going to be right about that.
+  const fitWhenDrawn = useRef<boolean | null>(null)
+  useEffect(() => {
+    const reportShowing = fitWhenDrawn.current
+    if (reportShowing === null || !nodesInitialized) return
+    // And every part measured according to the CANVAS, not only to the flag. The flag is a render behind: it
+    // still said "measured" for the design that had just been replaced, and fitting on that framed 286 parts
+    // of no size at all, at 5.75× (measured, in the running app).
+    const drawn = getNodes()
+    if (drawn.length !== nodes.length) return
+    if (drawn.length === 0 || drawn.some((node) => (node.measured?.width ?? 0) === 0)) return
+    fitWhenDrawn.current = null
+    fitDesign(reportShowing)
+  }, [nodesInitialized, nodes.length, getNodes, fitDesign])
+
+  const readBitstream = useCallback(
+    (file: { name: string; bytes: Uint8Array }, descriptions: ChipDescriptionFile[]) => {
+      const result = openFpgaDesign(file.bytes, descriptions)
+      if (!result.ok) {
+        // The chip can only be asked about when the file said which chip it is for; a file we could not even
+        // identify has no description to go and find, so no button is offered.
+        setFpgaPanel({
+          kind: 'refused',
+          fileName: file.name,
+          reason: result.reason,
+          // Only when the missing thing IS the chip description. A file that was read fine and held no logic
+          // must not be offered a button that cannot help it.
+          canChooseDescription: result.needsDescription === true,
+        })
+        setFpgaPanelDismissed(null)
+        return
+      }
+      // Decoding it was fast; DRAWING it is what would take minutes with the window unable to answer
+      // (measured — canvas-capacity.ts). The refusal comes out of building the canvas, so it happens
+      // before the canvas is handed anything, and it leaves through the same door a file we could not
+      // decode goes out of.
+      const flow = circuitFileToFlow(result.circuit)
+      if (!flow.ok) {
+        setFpgaPanel({
+          kind: 'refused',
+          fileName: file.name,
+          reason: flow.reason,
+          canChooseDescription: false,
+        })
+        setFpgaPanelDismissed(null)
+        return
+      }
+      checkpointAction('read FPGA chip file')
+      projectAmbientRef.current = STANDARD_AMBIENT_C
+      setProjectAmbientC(STANDARD_AMBIENT_C)
+      setNodes(flow.nodes)
+      setEdges(flow.edges)
+      setPcbPlacements(new Map())
+      setChipLayout(EMPTY_CHIP_LAYOUT)
+      setUserTraces([])
+      setUserVias([])
+      setPcbStackupOptions(DEFAULT_STACKUP_OPTIONS)
+      setPcbVScoredSides([])
+      setPcbProfile(null)
+      setChipFloorplan(null)
+      dropCount.current = maxIdSuffix(result.circuit.nodes)
+      fitWhenDrawn.current = true
+      setFpgaPanel({ kind: 'read', fileName: file.name, report: result.report })
+      setFpgaPanelDismissed(null)
+    },
+    [setNodes, setEdges, checkpointAction],
+  )
+
+  useEffect(() => {
+    if (!active) return
+    const bridge = window.chipblocks
+    if (bridge?.onBitstreamOpened === undefined) return
+    return bridge.onBitstreamOpened((opened) => {
+      const file = { name: opened.name, bytes: new Uint8Array(opened.bytes) }
+      pendingBitstream.current = file
+      const identity = identifyBitstream(file.bytes)
+      const ask = bridge.requestChipDescription
+      // An unreadable file, or no way to ask for a chip description: decode with nothing and let the refusal
+      // say why. There is no path here that quietly does nothing.
+      if (!identity.ok || ask === undefined) {
+        readBitstream(file, [])
+        return
+      }
+      // The silent first try: answered from the description files this user already pointed at, so a chip they
+      // have opened before never asks again.
+      void ask(identity.family, identity.device, false).then((got) => {
+        readBitstream(file, got.ok ? (got.files ?? []) : [])
+      })
+    })
+  }, [active, readBitstream])
+
+  const chooseChipDescription = useCallback(() => {
+    const file = pendingBitstream.current
+    const ask = window.chipblocks?.requestChipDescription
+    if (file === null || ask === undefined) return
+    const identity = identifyBitstream(file.bytes)
+    if (!identity.ok) return
+    void ask(identity.family, identity.device, true).then((got) => {
+      if (!got.ok) return // cancelled, or the chosen files could not be read — the card stays as it is
+      readBitstream(file, got.files ?? [])
+    })
+  }, [readBitstream])
 
   // The dockable-panel layout (S19-v3-10 / Sprint 21) — where each panel docks, which tab is active in
   // each stacked group, and the drag-to-dock / drag-to-stack handler — lives in usePanelLayout now
@@ -3196,7 +3505,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     [setEdges],
   )
 
-  const handleSolve = useCallback(() => reSolve(nodes, edges), [reSolve, nodes, edges])
+  // Solve is refused while a design is still arriving. Half a design is not a circuit anybody drew: the
+  // button was measured running a full 1,927 ms solve of parts with no wires yet and reporting its
+  // answer as the canvas's. The two automatic re-solves already stand off; this is the one a user clicks.
+  const handleSolve = useCallback(() => {
+    if (drawSessionRef.current.isDrawing) return
+    reSolve(nodes, edges)
+  }, [reSolve, nodes, edges])
 
   // Changing the board ambient updates the ref synchronously (so the stable-identity reSolve picks it
   // up) and re-solves immediately, like hitting Solve.
@@ -4239,7 +4554,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         edges as unknown as BlockEdgeLike[],
         blockNodeId,
       )
-      if ('reason' in result) return
+      // ungroupBlock refuses a block whose parts would not fit on the canvas (canvas-capacity.ts) as
+      // well as one that is not a block at all. Both are shown: a click that silently does nothing is
+      // indistinguishable from a broken button.
+      if ('reason' in result) {
+        setNetlistReport({
+          kind: 'refused',
+          title: 'Could not ungroup that block',
+          reason: result.reason,
+        })
+        return
+      }
       checkpointAction('ungroup')
       setNodes(result.nodes as unknown as Node[])
       setEdges(result.edges as unknown as Edge[])
@@ -4450,8 +4775,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // routing; keying on structure not data means a re-solve never retriggers itself.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `topology` is an intentional re-run trigger — re-solve when the wiring changes (add/remove/reconnect); it isn't read in the body
   useEffect(() => {
-    if (!alwaysOn) return
-    reSolve(nodes, edgesRef.current)
+    if (!alwaysOn || drawSessionRef.current.isDrawing) return
+    return solveAfterTheBurst(() => reSolve(nodesRef.current, edgesRef.current))
   }, [alwaysOn, nodes, topology, reSolve])
 
   // Auto-router physics: when a wire's routed geometry changes (a part moved → it re-routed) or the
@@ -4459,8 +4784,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // solve only; the routed geometry is reported deduped, so this settles in one extra solve — no loop.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `wireGeoms` is the re-run trigger (read via the ref inside reSolve, not in the body)
   useEffect(() => {
-    if (!alwaysOn || !autoRouteWires) return
-    reSolve(nodesRef.current, edgesRef.current)
+    if (!alwaysOn || !autoRouteWires || drawSessionRef.current.isDrawing) return
+    return solveAfterTheBurst(() => reSolve(nodesRef.current, edgesRef.current))
   }, [alwaysOn, autoRouteWires, wireGeoms, reSolve])
 
   // A fuse blows when its solved current exceeds its rating: flip the offending
@@ -4617,6 +4942,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     ) => {
       const chosen = item ?? latestItem(clipboard)
       if (chosen === null || chosen.nodes.length === 0) return
+      // A paste does not replace the canvas, but it is the one ordinary action that can DOUBLE it, and a
+      // canvas past the limit is just as unresponsive however it got there. Refused on the total it would
+      // leave behind; the clipboard and the canvas are both untouched.
+      const tooBig = tooBigCanvasToDrawReason(
+        [...nodes, ...chosen.nodes],
+        edges.length + chosen.edges.length,
+        'Nothing was pasted.',
+      )
+      if (tooBig !== undefined) {
+        setNetlistReport({ kind: 'refused', title: 'Could not paste that', reason: tooBig })
+        return
+      }
       checkpointAction('paste')
       const center = screenToFlowPosition({
         x: window.innerWidth / 2,
@@ -4631,7 +4968,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       ])
       setEdges((current) => [...current, ...(pasted.edges as unknown as Edge[])])
     },
-    [clipboard, screenToFlowPosition, setNodes, setEdges, checkpointAction],
+    [clipboard, nodes, edges, screenToFlowPosition, setNodes, setEdges, checkpointAction],
   )
 
   // Rotate / delete / duplicate the current selection — shared by the keyboard shortcuts and the
@@ -4879,13 +5216,255 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // segment displays. The BRAIN is the real CALCULATOR gate circuit — pressCalcKey clocks it in a
   // logic harness (off-canvas, so its ~9000 gates never transistor-flatten on every render) and drives
   // these decoders from its gate output, so the decimal result lights the LEDs. No code in the loop.
+  // An appliance lays a whole design out at once, so it is a bulk canvas load exactly as a file is, and
+  // is refused the same way. It builds its nodes before it touches anything, so a refusal leaves the
+  // canvas that is there, its logic state, and its undo history all as they were.
+  const refuseApplianceIfTooBig = useCallback(
+    (built: readonly { type?: unknown; data?: unknown }[], wires: number, name: string) => {
+      const tooBig = tooBigCanvasToDrawReason(built, wires, `The ${name} was not placed.`)
+      if (tooBig === undefined) return false
+      setNetlistReport({ kind: 'refused', title: `Could not place the ${name}`, reason: tooBig })
+      return true
+    },
+    [],
+  )
+  // Put a whole design on the canvas a batch at a time, with the bar reporting what has really landed.
+  //
+  // The placers used to hand React the finished design in one call, which is why placing the calculator
+  // stopped the window for between 4.1 and 8.8 seconds (five cold runs, …/appl/mine-r1..r5.json) with
+  // nothing on screen. Handing it over in batches lets the browser paint between them, which is the only
+  // reason a progress bar can exist at all — a bar drawn around one long synchronous call never renders.
+  //
+  // Two things have to be held off while this runs. The always-on re-solve keys on `nodes`, so without
+  // `drawStagingRef` every batch would solve a half-built circuit; and the auto-router is switched on at
+  // the end rather than the start, so wires are routed once instead of once per batch. The final step
+  // does both, plus whatever the placer wanted afterwards, and is the step that cannot report a fraction.
+  const stageDraw = useCallback(
+    (plan: {
+      what: string
+      nodes: Node[]
+      edges: Edge[]
+      /** Checkpoint under this tag before anything changes; a Stop takes the checkpoint back with it. */
+      undoTag?: string
+      /** The caller's own pre-draw resets, run after the canvas has been remembered so Stop can undo them. */
+      onStart?: () => void
+      /**
+       * The caller's own undo of `onStart`, run by Stop. Parts, wires and logic state are put back by
+       * the stager itself; anything ELSE a door replaced — a loaded file's board ambient, its sheet, its
+       * copper, and the file the window would Save to — is the door's to put back, because only the door
+       * knows it changed.
+       */
+      onStop?: () => void
+      afterwards?: () => void
+      frameWhenDone?: boolean
+    }) => {
+      // Everything a Stop has to put back, remembered before one part of it changes, and handed to the
+      // session BEFORE the door's own resets run — `onStart` is where a door swaps in a loaded file's
+      // ambient, sheet and copper, and every one of those is a state change the always-on re-solve and
+      // the auto-router watch. Nothing is allowed to solve or route a canvas mid-swap. A half-drawn
+      // canvas is not a design the user ever had, so stopping restores rather than keeps: the project's
+      // rule is that a Stop must never cost the user work, and "some of the new one, none of the old
+      // one" costs them all of it.
+      drawSessionRef.current.begin({
+        nodes: nodesRef.current,
+        edges: edgesRef.current,
+        logicState: logicStateRef.current,
+        undoTag: plan.undoTag,
+        onStop: plan.onStop,
+      })
+      if (plan.undoTag !== undefined) checkpointAction(plan.undoTag)
+      plan.onStart?.()
+      // The old design goes in one step, both halves together. Replacing the parts and leaving the wires
+      // for their own phase put "4 components, 302 wires" on the status line — the new design's parts
+      // beside the old design's wires, whose endpoints no longer existed (…/repair/before-stop.json).
+      setNodes([])
+      setEdges([])
+      const runner = new StagedDraw({
+        what: plan.what,
+        parts: plan.nodes.length,
+        wires: plan.edges.length,
+        expectedMs: estimateDrawCostMs(designSizeOfCanvas(plan.nodes, plan.edges.length)),
+        now: () => performance.now(),
+        schedule: paintThenRun,
+        commit: (chunk) => {
+          if (chunk.phase === 'parts') {
+            const batch = plan.nodes.slice(chunk.from, chunk.to)
+            setNodes((current) => [...current, ...batch])
+            return
+          }
+          const batch = plan.edges.slice(chunk.from, chunk.to)
+          setEdges((current) => [...current, ...batch])
+        },
+        settle: stagedDrawSettleSteps({
+          enableAutoRoute: () => setAutoRouteWires(true),
+          reSolve: () => reSolve(plan.nodes, plan.edges),
+          afterwards: plan.afterwards,
+        }),
+        onProgress: (progress) => {
+          setDrawProgress(progress.done || progress.cancelled ? null : progress)
+          drawSessionRef.current.progressed(progress)
+          if (!progress.done && !progress.cancelled) return
+          if (!plan.frameWhenDone || progress.cancelled) return
+          didStartupFit.current = true
+          fitView({ padding: 0.15 })
+        },
+      })
+      drawSessionRef.current.attach(runner)
+      runner.start()
+    },
+    [setNodes, setEdges, reSolve, fitView, checkpointAction],
+  )
+  // Stopping puts the canvas back exactly as it was before the draw started — parts, wires, and the
+  // logic state of whatever was running on it — and takes the checkpoint back with it, so the user's
+  // first Ctrl+Z afterwards is not a no-op. A Stop must cost the user nothing at all, and a canvas
+  // holding part of one design where their own design used to be is the whole of it lost.
+  const stopStagedDraw = useCallback(() => {
+    const before = drawSessionRef.current.stop()
+    if (before === null) return
+    setDrawProgress(null)
+    setNodes(before.nodes)
+    setEdges(before.edges)
+    logicStateRef.current = before.logicState
+    before.onStop?.()
+    if (before.undoTag !== undefined) {
+      undoHistory.current = dropLastCheckpoint(undoHistory.current, before.undoTag)
+    }
+    setNetlistReport({
+      kind: 'refused',
+      title: 'Stopped drawing',
+      reason:
+        'You stopped it, so nothing was drawn. The canvas is exactly as it was before — every part, ' +
+        'every wire, and the undo history untouched.',
+    })
+  }, [setNodes, setEdges])
+  // The watchdog. It cannot report a batch that never returns — nothing on this thread runs while that
+  // is happening — but it does catch the case a spinner would sit through for ever: the scheduler not
+  // calling back at all, with the thread perfectly free. Quarter-second pulses, so a five-second stall
+  // is noticed within a fifth of its length.
+  const drawIsRunning = drawProgress !== null
+  useEffect(() => {
+    if (!drawIsRunning) return
+    return drawSessionRef.current.pulseWhileDrawing()
+  }, [drawIsRunning])
+  // File ▸ Open Circuit. It was the last door still handing React a whole design in one call — no card,
+  // no counts, no Stop — and it is the one that most needed the card, because it is the only door that
+  // makes the opened file the file a plain Ctrl+S writes to.
+  //
+  // That is also why staging it needed the main process to change too. A Stop puts the OLD canvas back;
+  // the window would still be pointed at the file just opened, and the next plain Save would write one
+  // over the other with no dialog. So a stopped open tells the window to forget the file, and it forgets
+  // it (`circuit:forget-path`, electron/main.ts). Everything else this file replaces — the board
+  // ambient, the sheet, the placements, the chip layer, the stack-up, the hand-laid copper, the id
+  // counter — is remembered here and put back by the same Stop.
+  //
+  // ONE thing a Stop does not take back: the file's own user-authored parts, merged into the library on
+  // the way in. Merging is additive and never overwrites a part already there, so what is left behind is
+  // parts the user did not have before, not work they had and lost.
+  useEffect(() => {
+    if (!active) return // only the tab ON SCREEN may be handed a file — see the note on `setCircuitCanvasOpen`
+    const bridge = window.chipblocks
+    if (bridge?.onCircuitOpened === undefined) return
+    return bridge.onCircuitOpened((text) => {
+      const result = deserializeCircuit(text)
+      if (!result.ok) return // main validates first; this is belt-and-braces
+      // Build the canvas BEFORE anything on this one is disturbed. Everything below replaces the tab's
+      // state — ambient, sheet, placements, copper, the parts themselves — and a refusal that happened
+      // half way through would have thrown away the work that was here in exchange for nothing.
+      const flow = circuitFileToFlow(result.file)
+      if (!flow.ok) {
+        setNetlistReport({
+          kind: 'refused',
+          title: 'Could not open that circuit',
+          reason: flow.reason,
+        })
+        return
+      }
+      // The saved board ambient (older files have none → the 25 °C default). The ref is set
+      // synchronously below so the solve at the end of the draw runs at the loaded ambient.
+      const loadedAmbient =
+        typeof result.file.projectAmbientC === 'number' &&
+        Number.isFinite(result.file.projectAmbientC)
+          ? result.file.projectAmbientC
+          : STANDARD_AMBIENT_C
+      const previous = {
+        ambientC: projectAmbientRef.current,
+        sheet: sheetSettingsRef.current,
+        placements: pcbPlacementsRef.current,
+        chipLayout: chipLayoutRef.current,
+        stackup: pcbStackupOptionsRef.current,
+        vScoredSides: pcbVScoredSidesRef.current,
+        boardProfile: pcbProfileRef.current,
+        traces: userTracesRef.current,
+        vias: userViasRef.current,
+        dropCount: dropCount.current,
+      }
+      stageDraw({
+        what: 'the circuit you opened',
+        nodes: flow.nodes,
+        edges: flow.edges,
+        undoTag: 'load',
+        frameWhenDone: true,
+        onStart: () => {
+          projectAmbientRef.current = loadedAmbient
+          setProjectAmbientC(loadedAmbient)
+          // An older file has no sheet → keep the current one. Merged over the default so a partial
+          // or old sheet still fills every field.
+          if (result.file.sheet) setSheetSettings({ ...DEFAULT_SHEET, ...result.file.sheet })
+          // Register the project's custom parts (already validated by deserializeCircuit) so its nodes
+          // draw + wire as their real symbols. Non-clobbering: an id already in the library keeps the
+          // part that is there, so loading a project never silently rewrites a part in use elsewhere.
+          mergeUserParts(result.file.userParts ?? [])
+          mergeUserFootprints(result.file.userFootprints ?? [])
+          // THIS file's hand placements, chip floorplan layer, stack-up, V-scored edges, outline and
+          // hand-laid copper replace the previous canvas's — node ids repeat across files, so nothing
+          // may be inherited on a collision. Older files with none load on the defaults.
+          setPcbPlacements(placementsFromSaved(result.file.placements))
+          setChipLayout(result.file.chipLayout ?? EMPTY_CHIP_LAYOUT)
+          setPcbStackupOptions(result.file.stackup ?? DEFAULT_STACKUP_OPTIONS)
+          setPcbVScoredSides(result.file.vScoredSides ?? [])
+          setPcbProfile(result.file.boardProfile ?? null)
+          setUserTraces(result.file.traces ?? [])
+          setUserVias(result.file.vias ?? [])
+          setChipFloorplan(null) // re-generate the floorplan for the loaded design on next chip entry
+          dropCount.current = maxIdSuffix(result.file.nodes)
+        },
+        onStop: () => {
+          projectAmbientRef.current = previous.ambientC
+          setProjectAmbientC(previous.ambientC)
+          setSheetSettings(previous.sheet)
+          setPcbPlacements(previous.placements)
+          setChipLayout(previous.chipLayout)
+          setPcbStackupOptions(previous.stackup)
+          setPcbVScoredSides(previous.vScoredSides)
+          setPcbProfile(previous.boardProfile)
+          setUserTraces(previous.traces)
+          setUserVias(previous.vias)
+          setChipFloorplan(null)
+          dropCount.current = previous.dropCount
+          void bridge.forgetCircuitPath?.()
+        },
+      })
+    })
+  }, [active, stageDraw])
+  // A saved project's own parts, staged in the moment the tab mounts. `initial` deliberately handed the
+  // canvas nothing, so this effect IS the load — and it is the door (the launcher, a tab remounting)
+  // whose one-call draw held the window for half a minute with nothing on screen.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once for the design this tab mounted on; re-running would redraw a canvas the user has since edited
+  useEffect(() => {
+    const staged = initial.stagedFlow
+    if (staged === undefined) return
+    stageDraw({
+      what: project.name,
+      nodes: staged.nodes,
+      edges: staged.edges,
+      frameWhenDone: true,
+    })
+  }, [initial])
   const placeCalculator = useCallback(() => {
     const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
     const display = BUILTIN_BLOCKS.display_seven_segment
     const separator = BUILTIN_BLOCKS.display_separator
     if (!decoder || !display || !separator) return
-    checkpointAction('calculator')
-    logicStateRef.current = new Map<string, boolean>() // power-on: clear the flip-flop memory
     const COL = 280 // column pitch: one decoder + display per decimal digit, fed by the CALC block
     const nodes: Record<string, unknown>[] = [
       {
@@ -5062,11 +5641,19 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       position: { x: 2800, y: 80 + 4 * 90 },
       data: { definition: 'keycap', label: '±', calcKey: '±' },
     })
-    setNodes(() => nodes as unknown as Node[])
-    setEdges(() => edges as unknown as Edge[])
-    setAutoRouteWires(true) // route the many decoder/display wires into clean lanes, not a tangle
-    reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
-  }, [setNodes, setEdges, checkpointAction, reSolve])
+    if (refuseApplianceIfTooBig(nodes as unknown as Node[], edges.length, 'calculator')) return
+    stageDraw({
+      what: 'the calculator',
+      nodes: nodes as unknown as Node[],
+      edges: edges as unknown as Edge[],
+      undoTag: 'calculator',
+      // Power-on: clear the flip-flop memory. Handed to the draw rather than done before it, so that a
+      // Stop puts back the logic state of whatever was running on the canvas along with the canvas.
+      onStart: () => {
+        logicStateRef.current = new Map<string, boolean>()
+      },
+    })
+  }, [stageDraw, refuseApplianceIfTooBig])
 
   // ── The Verilog-CPU demo: watch a CPU authored in Verilog run on real gates ──────────────────────────
   // The processor from verilog-cpu-demo.ts is SYNTHESIZED from Verilog (importVerilog → real gate + flip-flop
@@ -5206,9 +5793,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
     const display = BUILTIN_BLOCKS.display_seven_segment
     if (!decoder || !display) return
-    checkpointAction('verilog cpu')
-    logicStateRef.current = new Map<string, boolean>() // power-on
-    vcpuCompiledRef.current = null // fresh harness for this placement
     const nodes: Record<string, unknown>[] = [
       {
         id: 'vc_vp',
@@ -5320,12 +5904,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         data: { definition: 'keycap', label: c.label, demoAction: c.action },
       })
     })
-    setNodes(() => nodes as unknown as Node[])
-    setEdges(() => edges as unknown as Edge[])
-    setAutoRouteWires(true)
-    reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
-    paintVcpu({ res: 0, acc: 0, pc: 0 })
-  }, [setNodes, setEdges, checkpointAction, reSolve, READOUTS, paintVcpu])
+    if (refuseApplianceIfTooBig(nodes as unknown as Node[], edges.length, 'Verilog CPU demo'))
+      return
+    stageDraw({
+      what: 'the Verilog CPU demo',
+      nodes: nodes as unknown as Node[],
+      edges: edges as unknown as Edge[],
+      undoTag: 'verilog cpu',
+      onStart: () => {
+        logicStateRef.current = new Map<string, boolean>() // power-on
+        vcpuCompiledRef.current = null // fresh harness for this placement
+      },
+      afterwards: () => paintVcpu({ res: 0, acc: 0, pc: 0 }),
+    })
+  }, [stageDraw, READOUTS, paintVcpu, refuseApplianceIfTooBig])
 
   // ── The 8-bit Verilog-CPU demo — bigger datapath, a hardware MULTIPLY, and a DECIMAL result readout ────
   // The 8-bit CPU (verilog-cpu-demo.ts) uses the increment-6 operators as real hardware (× in one instruction).
@@ -5424,9 +6016,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
     const display = BUILTIN_BLOCKS.display_seven_segment
     if (!decoder || !display) return
-    checkpointAction('verilog cpu (8-bit)')
-    logicStateRef.current = new Map<string, boolean>()
-    vcpu8CompiledRef.current = null
     const nodes: Record<string, unknown>[] = [
       {
         id: 'vc8_vp',
@@ -5545,12 +6134,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         data: { definition: 'keycap', label: c.label, demoAction: c.action },
       })
     })
-    setNodes(() => nodes as unknown as Node[])
-    setEdges(() => edges as unknown as Edge[])
-    setAutoRouteWires(true)
-    reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
-    paintVcpu8({ h: 0, t: 0, o: 0, pc: 0 })
-  }, [setNodes, setEdges, checkpointAction, reSolve, paintVcpu8])
+    if (refuseApplianceIfTooBig(nodes as unknown as Node[], edges.length, '8-bit Verilog CPU demo'))
+      return
+    stageDraw({
+      what: 'the 8-bit Verilog CPU demo',
+      nodes: nodes as unknown as Node[],
+      edges: edges as unknown as Edge[],
+      undoTag: 'verilog cpu (8-bit)',
+      onStart: () => {
+        logicStateRef.current = new Map<string, boolean>()
+        vcpu8CompiledRef.current = null
+      },
+      afterwards: () => paintVcpu8({ h: 0, t: 0, o: 0, pc: 0 }),
+    })
+  }, [stageDraw, paintVcpu8, refuseApplianceIfTooBig])
 
   // Ids that aren't a single part — each lays out a whole appliance (keypad + displays, or CPU readouts
   // + controls) whose brain is a descendable block. Shared by BOTH placement paths — drag-drop and the
@@ -5561,6 +6158,24 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     const [calc, vcpu, vcpu8] = APPLIANCE_PART_IDS // keyed by the shared id list so the two can't drift
     return { [calc]: placeCalculator, [vcpu]: placeVerilogCpuDemo, [vcpu8]: placeVerilogCpu8Demo }
   }, [placeCalculator, placeVerilogCpuDemo, placeVerilogCpu8Demo])
+
+  // Adding ONE part is a door too, and the least obvious one. A canvas grown past what can be DRAWN is a
+  // canvas that cannot be opened again: it saves fine and then every door refuses it, which turns the
+  // user's own project into one the app will not show them. Checked on the canvas the part would leave
+  // behind, so a canvas can never end up bigger than a file of it would be allowed to be.
+  const refuseOnePartIfTooBig = useCallback(
+    (kind: 'block' | 'device') => {
+      const tooBig = tooBigCanvasToDrawReason(
+        [...nodes, { type: kind }],
+        edges.length,
+        'Nothing was added.',
+      )
+      if (tooBig === undefined) return false
+      setNetlistReport({ kind: 'refused', title: 'Could not add that part', reason: tooBig })
+      return true
+    },
+    [nodes, edges],
+  )
 
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
@@ -5577,6 +6192,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         const source = nodes.find((n) => n.id === blockSourceId)
         const block = (source?.data as { block?: BlockData } | undefined)?.block
         if (!block) return
+        if (refuseOnePartIfTooBig('block')) return
         checkpointAction('drop')
         const position = snap(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
         dropCount.current += 1
@@ -5605,6 +6221,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // descends + flattens to its real transistors like any user-grouped block.
       const builtinBlock = BUILTIN_BLOCKS[definition]
       if (builtinBlock) {
+        if (refuseOnePartIfTooBig('block')) return
         checkpointAction('drop')
         const blockPos = snap(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
         dropCount.current += 1
@@ -5619,6 +6236,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         )
         return
       }
+      if (refuseOnePartIfTooBig('device')) return
       checkpointAction('drop')
       const position = snap(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
       dropCount.current += 1
@@ -5634,7 +6252,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         }),
       )
     },
-    [screenToFlowPosition, setNodes, nodes, checkpointAction, snapToGrid, appliancePlacers],
+    [
+      screenToFlowPosition,
+      setNodes,
+      nodes,
+      checkpointAction,
+      snapToGrid,
+      appliancePlacers,
+      refuseOnePartIfTooBig,
+    ],
   )
 
   // Place a part from the Add-Part pop-up — the same node-creation as a drop, but centred in the
@@ -5648,6 +6274,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         appliance()
         return
       }
+      if (refuseOnePartIfTooBig(BUILTIN_BLOCKS[definition] ? 'block' : 'device')) return
       checkpointAction('add part')
       const raw = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
       const position = snapToGrid
@@ -5686,7 +6313,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           }),
       )
     },
-    [screenToFlowPosition, setNodes, checkpointAction, snapToGrid, appliancePlacers],
+    [
+      screenToFlowPosition,
+      setNodes,
+      checkpointAction,
+      snapToGrid,
+      appliancePlacers,
+      refuseOnePartIfTooBig,
+    ],
   )
 
   // Select a part by id from the Schematic Hierarchy outline — sets it selected (which fills the
@@ -5814,19 +6448,26 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // reordered / added / removed, or an undo restores a different layout) it won't re-read them on its
   // own, so wires would keep pointing at the pins' old spots. Re-measure whenever any block's pin
   // layout changes — keyed on a signature of every block's pin sides + order, so a plain drag doesn't.
-  const blockPinSignature = nodes
-    .map((n) => {
-      if (n.type !== 'block') return ''
-      const block = (n.data as { block?: BlockData }).block
-      return block ? `${n.id}#${block.ports.map((p) => `${p.id}.${p.side}`).join(',')}` : n.id
-    })
-    .join('|')
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure exactly when a pin layout changes
-  useEffect(() => {
+  // Each block's own signature, so the ones that changed can be told from the ones that did not. It
+  // used to be one joined string for the whole canvas, which could only answer "something changed" —
+  // and the effect then re-measured every block on the canvas. During a staged draw that is true once
+  // per batch, and re-measuring the whole canvas per batch is what made a batch cost what the canvas
+  // costs (…/repair/t2/prof-blk2000.json, and the note at the head of node-internals.ts).
+  const blockPinSignatures = useMemo(() => {
+    const signatures = new Map<string, string>()
     for (const n of nodes) {
-      if (n.type === 'block') updateNodeInternals(n.id)
+      if (n.type !== 'block') continue
+      const block = (n.data as { block?: BlockData }).block
+      signatures.set(n.id, block ? block.ports.map((p) => `${p.id}.${p.side}`).join(',') : '')
     }
-  }, [blockPinSignature, updateNodeInternals])
+    return signatures
+  }, [nodes])
+  const previousBlockPinSignatures = useRef<ReadonlyMap<string, string>>(new Map())
+  useEffect(() => {
+    const changed = nodesNeedingRemeasure(previousBlockPinSignatures.current, blockPinSignatures)
+    previousBlockPinSignatures.current = blockPinSignatures
+    for (const nodeId of changed) updateNodeInternals(nodeId)
+  }, [blockPinSignatures, updateNodeInternals])
 
   // DEV-only control surface for the AI to drive the app over CDP. There is no UI — the AI can't see
   // the Electron window, so these hidden hooks on window.__chip expose the React-internal handlers it
@@ -8324,6 +8965,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         }
       },
       // Read the RENDER itself (DOM, not a screenshot): each handle's measured side + screen centre,
+      // Read an FPGA chip file through the SAME handler the File menu calls. The menu's own step is a native
+      // file dialog, which cannot be driven from here, so this takes the bytes and the chip-description text
+      // directly and everything after that — decode, canvas, report — is the real path.
+      readChipFile(fileName: string, data: number[], files: { name: string; text: string }[]) {
+        readBitstream({ name: fileName, bytes: Uint8Array.from(data) }, files)
+      },
       // and each wire's drawn end-point — so the AI can assert e.g. a wire's end sits ON its pin.
       dom() {
         const handles = [...document.querySelectorAll('.react-flow__handle')].map((h) => {
@@ -9311,6 +9958,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                   crossings={wireCrossings}
                                   onJoin={joinCrossing}
                                   light={light}
+                                  unmarked={wireCrossingsUnmarked}
                                 />
                               </ReactFlow>
                             </CheckpointContext.Provider>
@@ -9337,6 +9985,23 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             pointerEvents: 'none',
           }}
         >
+          {/* A solve that produced NO answer — refused as too big, or stopped by its time budget —
+              leaves the canvas with no currents, no readings and no health marks, which looks exactly
+              like a circuit that solved to zero. Say so outright, above the notes. */}
+          {refusalHeadline(solution?.status ?? '') !== undefined ? (
+            <div
+              style={{
+                color: THEME.statusDanger,
+                marginBottom: 3,
+                maxWidth: 560,
+                whiteSpace: 'normal',
+                textAlign: 'right',
+                fontWeight: 600,
+              }}
+            >
+              ⛔ {refusalHeadline(solution?.status ?? '')}
+            </div>
+          ) : null}
           {/* The solve's own notes — a floating circuit set aside, an unsupported element —
               were invisible before: the engine explained itself only to the test suite. */}
           {(solution?.warnings.length ?? 0) > 0 ? (
@@ -9368,8 +10033,49 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
 
+        {drawProgress !== null ? (
+          <DrawProgressCard progress={drawProgress} onStop={stopStagedDraw} />
+        ) : null}
         {netlistReport !== null ? (
           <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
+        ) : null}
+        {fpgaPanel !== null ? (
+          <FpgaReportCard
+            panel={fpgaPanel}
+            onDismiss={() => {
+              setFpgaPanelDismissed(fpgaPanel)
+              setFpgaPanel(null)
+              // The strip the report was covering is the design's again — use it.
+              if (fpgaPanel.kind === 'read') fitDesign(false)
+            }}
+            onChooseDescription={chooseChipDescription}
+          />
+        ) : null}
+        {fpgaPanel === null && fpgaPanelDismissed !== null ? (
+          <button
+            type="button"
+            data-testid="fpga-report-reopen"
+            onClick={() => {
+              setFpgaPanel(fpgaPanelDismissed)
+              if (fpgaPanelDismissed.kind === 'read') fitDesign(true)
+            }}
+            title="Show again what was read out of the chip file, and what could not be"
+            style={{
+              position: 'absolute',
+              top: REPORT_MARGIN,
+              right: REPORT_MARGIN,
+              zIndex: 1000,
+              padding: '5px 10px',
+              borderRadius: 6,
+              border: `1px solid ${THEME.borderStrong}`,
+              background: THEME.surfaceRaised,
+              color: THEME.textPrimary,
+              cursor: 'pointer',
+              fontSize: 11,
+            }}
+          >
+            Chip-file report
+          </button>
         ) : null}
         {templateSaved !== null ? (
           <div
@@ -9957,6 +10663,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 projectAmbientC={projectAmbientC}
                 onProjectAmbient={onProjectAmbient}
                 onSolve={handleSolve}
+                solveBlocked={drawProgress !== null}
                 onAddPart={() => setPickerOpen(true)}
                 onNewPart={() => setNewPartOpen(true)}
                 onNewFootprint={() => setNewFootprintOpen(true)}

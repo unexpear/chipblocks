@@ -59,6 +59,16 @@ parameters:
     units: percent
     required: false
     description: Capacitance tolerance as a percent of nominal.
+  esr:
+    type: quantity
+    units: ohm
+    required: false
+    description: "Equivalent series resistance — the real, dissipative part of the capacitor's impedance (foil, leads, terminations, and in an electrolytic the electrolyte itself), in series with the reactance so Z = ESR - j/(wC). How an aluminium electrolytic or tantalum part is normally specified. Read by the small-signal AC engine (ac-analysis.ts); the DC engine sees an open capacitor either way. 0 / absent models a lossless capacitor, and the AC engine then names the part as having declared no loss rather than substituting a plausible value."
+  dissipation_factor:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "Dissipation factor tan(delta) — the same loss expressed as a ratio, tan(delta) = ESR * w * C. How a ceramic or film part is normally specified. Held CONSTANT with frequency by the AC engine, so the loss RESISTANCE it implies falls as 1/f; a datasheet quotes tan(delta) at one stated frequency, so a wide sweep from a single figure is an approximation, whereas esr is exact at the frequency it was measured. Used only when esr is absent. 0 / absent models a lossless capacitor."
   initial_voltage:
     type: quantity
     units: volt
