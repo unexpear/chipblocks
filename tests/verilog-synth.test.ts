@@ -282,12 +282,14 @@ describe('RTL synthesis — regressions from the adversarial review', () => {
   })
 
   test('a feed-forward assign that only READS a looped net is not itself flagged as a loop', () => {
-    // p = y & a reads the self-looped y, but p is not on a cycle — exactly ONE loop warning, naming y
+    // p = y & a reads the self-looped y, but p is not on a cycle — exactly ONE net is cut, and it is y.
+    // (The design as a whole is then refused, because p READS the cut net and so has no honest value
+    // either; that refusal names the loop too, so the count here is of the per-net cut, not of the word.)
     const { warnings } = importVerilog(
       'module m(a, y, p); input a; output y, p; assign p = y & a; assign y = y & a; endmodule',
     )
-    const loops = warnings.filter((w) => w.toLowerCase().includes('combinational loop'))
-    expect(loops.length).toBe(1)
+    const loops = warnings.filter((w) => w.includes('feeds back on itself'))
+    expect(loops.length, `warnings: ${warnings.join(' | ')}`).toBe(1)
     expect(loops[0]).toContain('"y"')
   })
 
@@ -818,5 +820,714 @@ describe('RTL synthesis — combinational always blocks', () => {
       'module m(clk, a, q); input clk, a; output reg q; always @(posedge clk) q = a; endmodule',
     )
     expect(warnings.some((w) => w.toLowerCase().includes('blocking'))).toBe(true)
+  })
+})
+
+/**
+ * X CONSTANTS — Verilog's don't-care. `x` is not a wire level a ChipBlocks net can carry, but it IS a value
+ * that folding can carry, and real designs rely on that: the 8080's own instruction decoder is written
+ * `&(~(i ^ 8'b00xxx000) | 8'b00111000)`, where the mask ORs every x away before anything drives a net.
+ * So an x is folded per IEEE 1364-2005 §5.1.9 (`0 & x` = 0, `1 | x` = 1, everything else with an x is x) and
+ * only REPORTED when one survives to something that must drive a net or clock a flip-flop.
+ * Cross-checked against Icarus Verilog over all 256 opcodes outside this file.
+ */
+describe('RTL synthesis — an x constant folds where it is masked and is reported where it is not', () => {
+  test('a mask ORs an x away: 1 | x is 1', () => {
+    assertFn(mod('a', "assign y = a | 1'bx | 1'b1;"), ['a'], () => true)
+  })
+
+  test('a mask ANDs an x away: 0 & x is 0', () => {
+    assertFn(mod('a', "assign y = (a & 1'bx) & 1'b0;"), ['a'], () => false)
+  })
+
+  test('the 8080 decoder idiom: don’t-care bits masked by their own mask', () => {
+    // cmp(i, 8'b00xxx000, 8'b00111000) is the real vm80a NOP decode: opcodes 00, 08, 10, 18, 20, 28, 30, 38.
+    const nop = new Set([0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38])
+    assertBus(
+      `module m(i, y); input [7:0] i; output y;
+       function cmp(input [7:0] a, input [7:0] c, input [7:0] msk);
+          cmp = &(~(a ^ c) | msk);
+       endfunction
+       assign y = cmp(i, 8'b00xxx000, 8'b00111000); endmodule`,
+      ['i[0]', 'i[1]', 'i[2]', 'i[3]', 'i[4]', 'i[5]', 'i[6]', 'i[7]'],
+      ['y'],
+      (b) => [nop.has(num(b))],
+    )
+  })
+
+  test('an x that nothing masks is REPORTED, never quietly made 0', () => {
+    const { warnings } = importVerilog(mod('a', "assign y = a & 1'bx;"))
+    expect(
+      warnings.some((w) => w.includes('stays x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+  })
+
+  test('an x that would be clocked into a flip-flop is REPORTED', () => {
+    const { warnings } = importVerilog(
+      "module m(clk, a, q); input clk, a; output reg q; always @(posedge clk) q <= a & 1'bx; endmodule",
+    )
+    expect(
+      warnings.some((w) => w.includes('clocks in an x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+  })
+
+  test('z (high impedance) is still refused — it is a wire state, not a value', () => {
+    const { warnings } = importVerilog(mod('a', "assign y = a & 1'bz;"))
+    expect(
+      warnings.some((w) => w.includes('high-impedance')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+  })
+
+  test('a hex x digit makes all FOUR of its bits unknown, and only those', () => {
+    // 8'hx5 = xxxx0101: the low nibble is real, so ORing 8'hf0 over the high one leaves a defined value.
+    assertBus(
+      "module m(a, y); input a; output [7:0] y; assign y = (8'hx5 | 8'hf0) & {8{a}}; endmodule",
+      ['a'],
+      ['y[0]', 'y[1]', 'y[2]', 'y[3]', 'y[4]', 'y[5]', 'y[6]', 'y[7]'],
+      ([a]) => numBits(a === true ? 0xf5 : 0x00, 8),
+    )
+  })
+})
+
+/**
+ * THE THREE x-FOLDING GUARDS, each pinned by a design where weakening it turns an honest REFUSAL into a
+ * silently-zero build — the exact failure the x machinery exists to prevent. Icarus Verilog 14.0 was run on
+ * each source and returns x for every bit this file expects to be refused, so refusing is the right answer
+ * and a built 0 would be a wrong one.
+ */
+describe('Verilog synth — an x nothing masks away is refused, never folded to 0', () => {
+  const portIds = (verilog: string) => {
+    const { block } = importVerilog(verilog)
+    return block === null ? [] : block.ports.map((p) => p.id)
+  }
+
+  test('`0 | x` stays x — iverilog gives xxxx, so no driver is built', () => {
+    const source = "module m(input a, output [3:0] y); assign y = 4'b0000 | 4'bxxxx; endmodule"
+    const { block, warnings } = importVerilog(source)
+    expect(
+      warnings.some((w) => w.includes('stays x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    // Folding `0 | x` to 0 would build a 4-bit constant-zero driver instead.
+    expect(block).toBeNull()
+  })
+
+  test('`~x` stays x — iverilog gives xxxx, so no driver is built', () => {
+    const { block, warnings } = importVerilog(
+      "module m(input a, output [3:0] y); assign y = ~4'bxxxx; endmodule",
+    )
+    expect(
+      warnings.some((w) => w.includes('stays x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(block).toBeNull()
+  })
+
+  test('a based literal whose top digit is x left-extends with x, not 0', () => {
+    // 4'bx is xxxx (IEEE 1364-2005 §3.2), so 4'bx | 4'b0001 is xxx1. MEASURED: Icarus Verilog 14.0 prints
+    // `y = xxx1` for exactly this source. Extending with 0 instead would make it 0001 and build a driver for
+    // every bit — so y[3:1] must have NO driver, while y[0] (the one bit that is not x) must have one.
+    const source = "module m(input a, output [3:0] y); assign y = 4'bx | 4'b0001; endmodule"
+    const { warnings } = importVerilog(source)
+    expect(
+      warnings.some((w) => w.includes('stays x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(portIds(source).filter((id) => id.startsWith('y'))).toEqual(['y[0]'])
+  })
+})
+
+/**
+ * TWO DRIVERS ON ONE NET. Real hardware resolves that to a contention — iverilog returns x for every one of
+ * the designs below — and a two-valued netlist has no x to return. Keeping the first driver would put a
+ * made-up value on a net whose real value is unknown, so NO driver is built for a contended bit and the
+ * warning that says so is true.
+ */
+describe('Verilog synth — a contended net gets NO driver, exactly as reported', () => {
+  test('two continuous assigns to one net: neither is built', () => {
+    const { block, warnings } = importVerilog(
+      'module m(input p, output o, output good); assign o = p; assign o = ~p; assign good = ~p; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('assigned more than once')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(block).not.toBeNull()
+    // The contended net is undriven, so it is honestly absent from the interface — while the rest builds.
+    const ids = (block as BlockData).ports.map((p) => p.id)
+    expect(ids).toContain('good')
+    expect(ids).not.toContain('o')
+  })
+
+  test('contention on ONE bit of a bus leaves the other bits driven', () => {
+    const { block, warnings } = importVerilog(
+      'module m(input [3:0] p, output [3:0] o); assign o = p; assign o[0] = ~p[0]; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('"o[0]" is assigned more than once')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    const ids = (block as BlockData).ports.map((p) => p.id)
+    expect(ids).not.toContain('o[0]')
+    expect(ids).toEqual(expect.arrayContaining(['o[1]', 'o[2]', 'o[3]']))
+  })
+
+  test('a structural gate and an assign on one net: neither drives it', () => {
+    const { block, warnings } = importVerilog(
+      'module m(input a, input b, output o, output good); and g1(o, a, b); assign o = a | b; assign good = a ^ b; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('already driven by a gate')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    const ids = (block as BlockData).ports.map((p) => p.id)
+    expect(ids).toContain('good')
+    expect(ids).not.toContain('o')
+  })
+
+  test('a clocked register on a net an assign already drives: neither drives it', () => {
+    const { block, warnings } = importVerilog(
+      'module m(input clk, input a, output o, output good); assign o = a; assign good = ~a; always @(posedge clk) o <= ~a; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('already driven by a gate or assign')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    const ids = (block as BlockData).ports.map((p) => p.id)
+    expect(ids).toContain('good')
+    expect(ids).not.toContain('o')
+  })
+})
+
+/**
+ * A register written by TWO clocked always blocks is the same contention as two drivers on one net — and
+ * the first block's flip-flops are the thing that has to be retracted, since they were already built when
+ * the second block was rejected.
+ */
+describe('Verilog synth — a register two always blocks write is left undriven', () => {
+  test('neither block’s flip-flops survive, and the rest of the module still builds', () => {
+    const { block, warnings } = importVerilog(
+      'module m(input clk, input a, output q, output good); assign good = ~a; always @(posedge clk) q <= a; always @(posedge clk) q <= ~a; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('written by more than one always block')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    const ids = (block as BlockData).ports.map((p) => p.id)
+    expect(ids).toContain('good')
+    expect(ids).not.toContain('q')
+  })
+})
+
+/**
+ * A concatenation's OPERANDS are self-determined (IEEE 1364-2005 §5.4.1) — each takes its own width AND its
+ * own signedness. Only the concatenation's RESULT is unsigned (§5.5.1). Forcing the operands unsigned made
+ * `{a >>> 1, …}` on a signed `a` a LOGICAL shift: a silently wrong answer with no warning, and one that no
+ * other test in this suite reached, because every other signed test writes the expression at the top of an
+ * assignment where the context signedness happens to be right.
+ *
+ * The expected numbers below are not derived from this code. Each design was run through Icarus Verilog
+ * 14.0 (`vvp -V` → 14.0 (devel) s20251012-184-ge4c424726) over all 16 values of `a`, and these are the
+ * values it printed.
+ */
+describe('Verilog synth — a signed operand keeps its sign inside {…} and {n{…}}', () => {
+  const sweep = (verilog: string, expected: number[]): void => {
+    const { block, warnings } = importVerilog(verilog)
+    // A bit of `a` that no gate reads (a[0] under `a >>> 1`) is honestly dropped from the interface; that
+    // report is expected here. Anything else still fails.
+    const unexpected = warnings.filter((w) => !w.includes('is not connected to any gate'))
+    expect(unexpected, `warnings: ${warnings.join(' | ')}`).toEqual([])
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt, 'should characterize as combinational').not.toBeNull()
+    if (tt === null) return
+    // Rebuild `a` from the port NAMES, so a dropped bit shifts nothing.
+    const place = tt.inputs.map((name) => Number(name.replace(/^a\[(\d+)]$/, '$1')))
+    for (const row of tt.rows) {
+      const a = place.reduce((s, bit, i) => s + (row.in[i] === true ? 1 << bit : 0), 0)
+      expect(row.out.length, `a=${a}`).toBe(8)
+      expect(num(row.out), `a=${a}`).toBe(expected[a])
+    }
+  }
+
+  test('an arithmetic right shift stays arithmetic as a concatenation operand', () => {
+    sweep(
+      "module m(input signed [3:0] a, output [7:0] y); assign y = {a >>> 1, 4'b0}; endmodule",
+      [0, 0, 16, 16, 32, 32, 48, 48, 192, 192, 208, 208, 224, 224, 240, 240],
+    )
+  })
+
+  test('a signed divide stays signed as a concatenation operand', () => {
+    sweep(
+      "module m(input signed [3:0] a, output [7:0] y); assign y = {4'b0, a / 4'sd2}; endmodule",
+      [0, 0, 1, 1, 2, 2, 3, 3, 12, 13, 13, 14, 14, 15, 15, 0],
+    )
+  })
+
+  test('a signed operand keeps its sign inside a REPLICATION too', () => {
+    sweep(
+      'module m(input signed [3:0] a, output [7:0] y); assign y = {2{a >>> 1}}; endmodule',
+      [0, 0, 17, 17, 34, 34, 51, 51, 204, 204, 221, 221, 238, 238, 255, 255],
+    )
+  })
+
+  test("a sub-module's signed port survives into the parent's concatenation", () => {
+    sweep(
+      `module sgn(input signed [3:0] p, output [3:0] q);
+          assign q = p;
+       endmodule
+       module m(input [3:0] a, output [7:0] y);
+          wire [3:0] t;
+          sgn u(.p(a), .q(t));
+          assign y = {a >>> 1, t};
+       endmodule`,
+      [0, 1, 18, 19, 36, 37, 54, 55, 72, 73, 90, 91, 108, 109, 126, 127],
+    )
+  })
+})
+
+/**
+ * A FAULT ON ONE BIT COSTS THAT BIT ITS DRIVER — NOT THE WHOLE VECTOR.
+ *
+ * `assign o = a; assign o[0] = b[0];` contends on bit 0 alone, and Icarus Verilog 14.0 returns a[3:1] on the
+ * other three bits. Retracting the whole assignment took those three drivers away too, and the warning still
+ * named only o[0] — a message that described a small local problem while four bits died. The same
+ * whole-vector retraction lived in five places (the continuous-assign contention and x faults, the
+ * combinational-loop cut, the combinational always block and the clocked always block), so each is pinned
+ * here.
+ *
+ * Every expected value below comes from Icarus Verilog 14.0 run on the same source, never from this code: a
+ * bit Icarus prints as x or z has NO driver here (its port is absent from the interface), and a bit Icarus
+ * prints as 0/1 keeps its driver and carries that value.
+ *
+ * THAT SECOND HALF HOLDS FOR THE BIT THE FAULT IS ON, NOT FOR EVERYTHING DOWNSTREAM OF IT. A net left
+ * undriven still reads 0 to anything inside the module that reads it (logic-sim.ts stepLogic — see the note
+ * beside CONTENDED_ASSIGN in verilog-synth.ts), so a driver reading a refused net publishes 0 rather than
+ * disappearing. The last test in this block is exactly that case, and its own numbers are stated there.
+ */
+describe('Verilog synth — one bad bit retracts one bit', () => {
+  const built = (
+    verilog: string,
+  ): { ids: string[]; warnings: string[]; block: BlockData | null } => {
+    const { block, warnings } = importVerilog(verilog)
+    return { ids: block === null ? [] : block.ports.map((p) => p.id), warnings, block }
+  }
+
+  test('contention written AFTER the whole-bus driver leaves the other bits driven', () => {
+    // The forward order already worked; this is the order a sub-module port produces, and it did not.
+    // iverilog: o[3:1] = a[3:1], o[0] = x.
+    const { ids, warnings, block } = built(
+      'module m(input [3:0] a, input [3:0] b, output [3:0] o); assign o[0] = b[0]; assign o = a; endmodule',
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).toEqual(
+      expect.arrayContaining(['o[1]', 'o[2]', 'o[3]']),
+    )
+    expect(ids).not.toContain('o[0]')
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt?.inputs).toEqual(['a[1]', 'a[2]', 'a[3]'])
+    expect(tt?.outputs).toEqual(['o[1]', 'o[2]', 'o[3]'])
+    for (const row of tt?.rows ?? []) expect(row.out, `in ${row.in.join(',')}`).toEqual(row.in)
+  })
+
+  test('the warning names EVERY bit that lost its driver, and the bits that kept theirs', () => {
+    const { warnings } = built(
+      'module m(input [3:0] a, input [3:0] b, output [3:0] o); assign o[0] = b[0]; assign o[2] = b[2]; assign o = a; endmodule',
+    )
+    const contention = warnings.filter((w) => w.includes('assigned more than once'))
+    expect(contention.length, `warnings: ${warnings.join(' | ')}`).toBe(1)
+    for (const dead of ['"o[0]"', '"o[2]"']) expect(contention[0]).toContain(dead)
+    for (const kept of ['"o[1]"', '"o[3]"']) expect(contention[0]).toContain(kept)
+    expect(contention[0]).toContain('keep this driver')
+  })
+
+  test('when every bit is contended the message says so instead of naming one', () => {
+    const { ids, warnings } = built(
+      'module m(input [3:0] a, input [3:0] b, output [3:0] o); assign o = a; assign o = b; endmodule',
+    )
+    const contention = warnings.filter((w) => w.includes('assigned more than once'))
+    expect(contention.length, `warnings: ${warnings.join(' | ')}`).toBe(1)
+    expect(contention[0]).toContain('every bit')
+    expect(contention[0]).not.toContain('keep this driver')
+    for (const bit of ['o[0]', 'o[1]', 'o[2]', 'o[3]']) expect(ids).not.toContain(bit)
+  })
+
+  test('an x on one bit leaves the other bits driven', () => {
+    // iverilog on `assign o = {a[3:1], 1'bx}` prints a[3:1] then x — three bits have a real driver.
+    const { ids, warnings, block } = built(
+      "module m(input [3:0] a, output [3:0] o); assign o = {a[3:1], 1'bx}; endmodule",
+    )
+    expect(
+      warnings.some((w) => w.includes('stays x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids).not.toContain('o[0]')
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt?.inputs).toEqual(['a[1]', 'a[2]', 'a[3]'])
+    expect(tt?.outputs).toEqual(['o[1]', 'o[2]', 'o[3]'])
+    for (const row of tt?.rows ?? []) expect(row.out, `in ${row.in.join(',')}`).toEqual(row.in)
+  })
+
+  test('a combinational loop on one bit leaves the other bits driven', () => {
+    // iverilog on `assign o = {a[3:1], o[0]}` prints o[3:1] = a[3:1] and o[0] = z — it never resolves.
+    const { ids, warnings, block } = built(
+      'module m(input [3:0] a, output [3:0] o); assign o = {a[3:1], o[0]}; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('combinational loop')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids).not.toContain('o[0]')
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt?.inputs).toEqual(['a[1]', 'a[2]', 'a[3]'])
+    expect(tt?.outputs).toEqual(['o[1]', 'o[2]', 'o[3]'])
+    for (const row of tt?.rows ?? []) expect(row.out, `in ${row.in.join(',')}`).toEqual(row.in)
+  })
+
+  test('a multi-output buf keeps the output nothing else drives', () => {
+    // `buf u(x, y, a)` drives TWO nets from one input (IEEE 1364-2005 §7.3). Contention on x must not take y
+    // down with it. MEASURED on this exact source, Icarus Verilog 14.0 prints
+    //   a=0 b=0 -> x=0 y=0 | a=0 b=1 -> x=x y=0 | a=1 b=0 -> x=x y=1 | a=1 b=1 -> x=1 y=1
+    // so y = a on every vector while x is unknown whenever a and b differ.
+    const { ids, warnings, block } = built(
+      'module m(input a, input b, output x, output y); buf u(x, y, a); assign x = b; endmodule',
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).not.toContain('x')
+    expect(ids).toContain('y')
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt?.inputs).toEqual(['a'])
+    expect(tt?.outputs).toEqual(['y'])
+    for (const row of tt?.rows ?? []) expect(row.out[0], `a=${row.in[0]}`).toBe(row.in[0])
+  })
+
+  test('a driver we REFUSED still claims its bit — a second driver cannot become the only one', () => {
+    // iverilog on `assign o = {a[3:1], 1'bx}; assign o[0] = b[0];` gives o[0] = x for every b[0]: the refused
+    // x driver is still a driver. Building b[0] onto o[0] would publish a value the hardware does not have.
+    const { ids, warnings } = built(
+      "module m(input [3:0] a, input [3:0] b, output [3:0] o); assign o = {a[3:1], 1'bx}; assign o[0] = b[0]; endmodule",
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).not.toContain('o[0]')
+    expect(ids).toEqual(expect.arrayContaining(['o[1]', 'o[2]', 'o[3]']))
+  })
+
+  test('the kept-bits clause never names a bit that a LATER fault killed', () => {
+    // Two combinational always blocks writing disjoint parts of one register: our lowering gives each block a
+    // whole-register next state, so both drive all four bits and the register is refused. The loop cut runs
+    // first and spares r[1:0]; the contention retraction then takes them. Claiming they were kept would
+    // describe something that did not happen.
+    //
+    // WHAT IS AND IS NOT TRUE OF THE OUTPUT, MEASURED. `r` really does get no driver and both faults are
+    // reported. `o` is NOT refused with it: `assign o = r` builds four buffers that read the now-undriven r,
+    // and an undriven net reads 0 in this two-valued engine, so o[3:0] reads 0000 on all 256 (a, b) vectors.
+    // Icarus Verilog 14.0 on this source resolves the two blocks and gives o = {b[3:2], a[1:0]}, which
+    // differs from 0000 on 512 of the 4 x 256 = 1024 published output bits. That gap belongs to the
+    // floating-input rule in logic-sim.ts, not to the contention guard — the x form suffers it identically
+    // (see the note beside CONTENDED_ASSIGN) — and it is left open here rather than described away.
+    const { ids, warnings } = built(
+      `module m(input [3:0] a, input [3:0] b, output [3:0] o);
+         reg [3:0] r;
+         always @(*) r[1:0] = a[1:0];
+         always @(*) r[3:2] = b[3:2];
+         assign o = r;
+       endmodule`,
+    )
+    for (const w of warnings)
+      expect(w, `warnings: ${warnings.join(' | ')}`).not.toContain('keep this driver')
+    expect(ids).not.toContain('r[0]')
+  })
+
+  test('the x guard and the contention guard resolve to the SAME netlist', () => {
+    // Both leave one bit with no driver and every other bit driven. The two mechanisms are meant to agree
+    // about an unknown bit; if they ever stop agreeing, these two builds stop matching.
+    const shape = (inner: string) =>
+      `module m(input [3:0] a, input [3:0] b, output [3:0] o); wire [3:0] t; ${inner} assign o = t | b; endmodule`
+    // Both leave t[0] with no driver, and `o = t | b` READS it — so under the transitive-unbuilt rule both
+    // are refused rather than published with o[0] worked out from a 0 nothing produced. They still agree,
+    // which is what this test is for; what they agree ON is now a refusal that names the same bit.
+    const x = built(shape("assign t = {a[3:1], 1'bx};"))
+    const c = built(shape('assign t = a; assign t[0] = b[0];'))
+    expect(x.block).toBeNull()
+    expect(c.block).toBeNull()
+    for (const r of [x, c])
+      expect(r.warnings.join(' | '), `warnings: ${r.warnings.join(' | ')}`).toContain('"t[0]"')
+  })
+
+  test('a clocked register keeps the bits an assign does not already drive', () => {
+    // iverilog: q[0] has two drivers (x), q[3:1] clock in a[3:1]. The flip-flops for those three must survive.
+    const { ids, warnings } = built(
+      'module m(input clk, input [3:0] a, input [3:0] b, output reg [3:0] q); assign q[0] = b[0]; always @(posedge clk) q <= a; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('already driven by a gate or assign')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids).not.toContain('q[0]')
+    expect(ids).toEqual(expect.arrayContaining(['q[1]', 'q[2]', 'q[3]']))
+  })
+  test('a COMBINATIONAL always block keeps the bits that are not x', () => {
+    // MEASURED, Icarus Verilog 14.0 on this exact source: a=1010 -> y=101x, a=0101 -> y=010x. So y[3:1]
+    // follow a[3:1] and only y[0] is unknown — the always-block path has to refuse per bit like the assign
+    // path does, or three good drivers die with the one bad bit.
+    const { ids, warnings, block } = built(
+      "module m(input [3:0] a, output reg [3:0] y); always @(*) y = {a[3:1], 1'bx}; endmodule",
+    )
+    expect(
+      warnings.some((w) => w.includes('stays x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids).not.toContain('y[0]')
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt?.inputs).toEqual(['a[1]', 'a[2]', 'a[3]'])
+    expect(tt?.outputs).toEqual(['y[1]', 'y[2]', 'y[3]'])
+    for (const row of tt?.rows ?? []) expect(row.out, `in ${row.in.join(',')}`).toEqual(row.in)
+  })
+
+  test('a CLOCKED always block keeps the bits that do not clock in an x', () => {
+    // Same shape one register deep: q[3:1] must still get flip-flops when q[0] clocks in an x.
+    const { ids, warnings } = built(
+      "module m(input clk, input [3:0] a, output reg [3:0] q); always @(posedge clk) q <= {a[3:1], 1'bx}; endmodule",
+    )
+    expect(
+      warnings.some((w) => w.includes('clocks in an x')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids, `warnings: ${warnings.join(' | ')}`).not.toContain('q[0]')
+    expect(ids).toEqual(expect.arrayContaining(['q[1]', 'q[2]', 'q[3]']))
+  })
+})
+
+/**
+ * ONE LEDGER FOR EVERY DRIVER.
+ *
+ * A continuous assign, a combinational or clocked always block, a structural primitive, a sub-module output
+ * port and the REFUSED form of each all register their target bits through a single claim, so a second claim
+ * on a bit is caught whichever pair of producers made the two claims. Two pairings had never been compared at
+ * all: a structural gate against another structural gate (they were seeded into a Set, where a duplicate
+ * output collapsed silently), and a driver the importer refused against one it built (the refused driver
+ * claimed nothing, so the built one became the bit's only owner and published a value the hardware does not
+ * have).
+ *
+ * Every expected value below is Icarus Verilog 14.0's, run on the same source over all 256 (a, b) vectors,
+ * never derived from this code. A bit Icarus prints as x has NO driver here — its port is absent from the
+ * interface — and a bit it prints as 0/1 keeps its driver.
+ */
+describe('Verilog synth — every producer of a driver claims its bits in one place', () => {
+  const built = (
+    verilog: string,
+  ): { ids: string[]; warnings: string[]; block: BlockData | null } => {
+    const { block, warnings } = importVerilog(verilog)
+    return { ids: block === null ? [] : block.ports.map((p) => p.id), warnings, block }
+  }
+  const SCALARS =
+    'module m(a0,a1,a2,a3,b0,b1,b2,b3,o0,o1,o2,o3); input a0,a1,a2,a3,b0,b1,b2,b3; output o0,o1,o2,o3;'
+
+  test('TWO STRUCTURAL GATES on one net: neither drives it, and it is reported', () => {
+    // iverilog: o0 = x wherever a0 and b0 differ (128 of the 256 vectors) and o1..o3 = a1..a3 always. This
+    // pairing produced NO warning of any kind before: the driver set was seeded from every gate output at
+    // once, so the second buf collapsed into the first entry and nothing ever compared them.
+    const { ids, warnings } = built(
+      `${SCALARS} buf g0(o0, a0); buf g1(o0, b0); buf g2(o1, a1); buf g3(o2, a2); buf g4(o3, a3); endmodule`,
+    )
+    expect(
+      // The whole source is on one line, so the second buf is on line 1 — a gate has to carry where it was
+      // written, or the message can only say that SOMETHING contends.
+      warnings.some(
+        (w) => w.includes('line 1: "buf" gate') && w.includes('assigned more than once'),
+      ),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids).not.toContain('o0')
+    expect(ids).toEqual(expect.arrayContaining(['o1', 'o2', 'o3']))
+  })
+
+  test('THREE structural gates on one net: every one of them is reported', () => {
+    // iverilog: o0 is x unless all three sources agree. Two contentions are found, not one — the third gate
+    // is compared against the ledger too, not against a "was anything already there" answered once.
+    const { ids, warnings } = built(
+      `${SCALARS} buf g0(o0,a0); buf g1(o0,b0); buf g2(o0,a1); buf g3(o1,a1); buf g4(o2,a2); buf g5(o3,a3); endmodule`,
+    )
+    expect(
+      warnings.filter((w) => w.includes('assigned more than once')).length,
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(2)
+    expect(ids).not.toContain('o0')
+  })
+
+  test('a MULTI-OUTPUT buf loses only the output another gate also drives', () => {
+    // `buf g0(o0, o1, a0)` drives two nets from one input (IEEE 1364-2005 §7.3). MEASURED, iverilog on this
+    // source: a0=1 gives o0=1 with o1=x, a0=0 gives o0=0 with o1=x — o1 is unknown on every vector because
+    // g1 drives it too, while o0 follows a0 throughout. Dropping the whole gate would take o0 down with o1.
+    const { ids, warnings } = built(
+      `${SCALARS} buf g0(o0, o1, a0); buf g1(o1, b1); buf g2(o2, a2); buf g3(o3, a3); endmodule`,
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).not.toContain('o1')
+    expect(ids).toEqual(expect.arrayContaining(['o0', 'o2', 'o3']))
+  })
+
+  test('a structural gate we REFUSED still claims its bits — an assign cannot become the only driver', () => {
+    // `buf g0(o[0], a[0])` has a bit-select terminal, which this importer does not build. iverilog builds it
+    // and reads o[0] = x wherever a[0] and b[0] differ, o[3:1] = b[3:1]. Publishing b[0] on o[0] because we
+    // declined to build the buf invents a value on 128 of the 256 vectors.
+    const { ids, warnings } = built(
+      'module m(input [3:0] a, input [3:0] b, output [3:0] o); buf g0(o[0], a[0]); assign o = b; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('"o[0]"') && w.includes('assigned more than once')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids).not.toContain('o[0]')
+    expect(ids).toEqual(expect.arrayContaining(['o[1]', 'o[2]', 'o[3]']))
+  })
+
+  test('the claim holds when the refused gate is written AFTER the driver it contends with', () => {
+    const { ids } = built(
+      'module m(input [3:0] a, input [3:0] b, output [3:0] o); assign o = b; buf g0(o[0], a[0]); endmodule',
+    )
+    expect(ids).not.toContain('o[0]')
+    expect(ids).toEqual(expect.arrayContaining(['o[1]', 'o[2]', 'o[3]']))
+  })
+
+  test('a refused MULTI-OUTPUT buf claims every output it names', () => {
+    // `buf g0(o[1], o[0], a[0])`: the refused gate drives both o[1] and o[0]. iverilog reads both as x
+    // wherever they disagree with the assign, and o[3:2] = b[3:2].
+    const { ids, warnings } = built(
+      'module m(input [3:0] a, input [3:0] b, output [3:0] o); buf g0(o[1], o[0], a[0]); assign o = b; endmodule',
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).not.toContain('o[0]')
+    expect(ids).not.toContain('o[1]')
+    expect(ids).toEqual(expect.arrayContaining(['o[2]', 'o[3]']))
+  })
+
+  test('a refused gate claims against a BUILT GATE, not only against an assign', () => {
+    // `buf g0(o0, 1)` has a constant terminal — refused. iverilog: o0 = x wherever a0 is 0 (the constant 1
+    // and a0 disagree) and 1 where a0 is 1.
+    const { ids, warnings } = built(
+      `${SCALARS} buf g0(o0, 1); buf g1(o0, a0); buf g2(o1,a1); buf g3(o2,a2); buf g4(o3,a3); endmodule`,
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).not.toContain('o0')
+    expect(ids).toEqual(expect.arrayContaining(['o1', 'o2', 'o3']))
+  })
+
+  test('a refused gate claims against a COMBINATIONAL ALWAYS block', () => {
+    const { ids } = built(
+      `module m(input [3:0] a, input [3:0] b, output [3:0] o);
+         buf g0(o[0], a[0]);
+         reg [3:0] r;
+         always @(*) r = b;
+         assign o = r;
+       endmodule`,
+    )
+    expect(ids).not.toContain('o[0]')
+    expect(ids).toEqual(expect.arrayContaining(['o[1]', 'o[2]', 'o[3]']))
+  })
+
+  test('a structural gate driving an INPUT port is reported like an assign that does the same', () => {
+    // Both producers now say the same thing about the same illegal source. iverilog accepts it and resolves
+    // the port to x wherever the internal driver and the parent disagree; we refuse the internal driver and
+    // report it, exactly as the assign form has always done.
+    const gate = built(`${SCALARS} buf g0(a0, b0); buf g1(o0, a0); endmodule`)
+    const assign = built(`${SCALARS} assign a0 = b0; buf g1(o0, a0); endmodule`)
+    for (const r of [gate, assign])
+      expect(
+        r.warnings.some((w) => w.includes('drives an input port')),
+        `warnings: ${r.warnings.join(' | ')}`,
+      ).toBe(true)
+  })
+
+  test('a combinational always block we cannot synthesize still claims its register', () => {
+    // The reasons a block is not built used to run BEFORE the claim, so an unsynthesizable block owned
+    // nothing and the next block writing the same register became its only driver. `a[7:4]` is out of range
+    // on a 4-bit a — Verilog reads x there — so neither block may drive r.
+    const { ids, warnings } = built(
+      `module m(input [3:0] a, input [3:0] b, output [3:0] o);
+         reg [3:0] r;
+         always @(*) r = a[7:4];
+         always @(*) r = b;
+         assign o = r;
+       endmodule`,
+    )
+    expect(
+      warnings.some((w) => w.includes('already driven by a gate or assign')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    expect(ids).not.toContain('r[0]')
+  })
+
+  test('a purely STRUCTURAL module is driver-checked at all', () => {
+    // Synthesis used to return early when a module had no assign and no always block, which is why two
+    // structural gates on one net were never compared: the only code that compares drivers lives after that
+    // return. A module of nothing but gates must still be checked.
+    const { warnings } = built(
+      'module m(input a, input b, output o); buf g0(o,a); buf g1(o,b); endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('assigned more than once')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+  })
+
+  test('one surviving bit reads "keeps this driver", not "keep"', () => {
+    const { warnings } = built(
+      'module m(input [3:0] a, input [3:0] b, output [3:0] o); assign o[2:0] = b[2:0]; assign o = a; endmodule',
+    )
+    const contention = warnings.filter((w) => w.includes('assigned more than once'))
+    expect(contention.length, `warnings: ${warnings.join(' | ')}`).toBe(1)
+    expect(contention[0]).toContain('the other bit ("o[3]") keeps this driver')
+  })
+
+  test('DISJOINT drivers are not contention: a gate and an assign on different nets both build', () => {
+    // The over-refusal control. Nothing here is driven twice, so nothing may be refused. The unread input
+    // ports report themselves — that is the interface, not a driver — and anything else still fails.
+    const { ids, warnings } = built(
+      `${SCALARS} buf g0(o0,a0); assign o1 = b1; buf g1(o2,a2); assign o3 = b3; endmodule`,
+    )
+    expect(
+      warnings.filter((w) => !w.includes('is not connected to any gate')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toEqual([])
+    expect(ids).toEqual(expect.arrayContaining(['o0', 'o1', 'o2', 'o3']))
+  })
+
+  test('a refused gate claims what it DRIVES and nothing it reads', () => {
+    // The over-refusal control for the refused-driver claim. `buf g0(o[0], t[0])` drives o[0] and READS
+    // t[0]; claiming the input terminal too would refuse the assign that feeds it, and iverilog builds
+    // that assign — t = a on all 256 vectors, with o[3:1] = b[3:1].
+    const { ids, warnings } = built(
+      `module m(input [3:0] a, input [3:0] b, output [3:0] o, output [3:0] t);
+         buf g0(o[0], t[0]);
+         assign t = a;
+         assign o[3:1] = b[3:1];
+       endmodule`,
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).toEqual(
+      expect.arrayContaining(['t[0]', 't[1]', 't[2]', 't[3]', 'o[1]', 'o[2]', 'o[3]']),
+    )
+  })
+
+  test('a clocked always block we cannot synthesize still claims its register', () => {
+    // Same ordering fault as the combinational path, one register deep: `a[7:4]` is out of range on a 4-bit
+    // a, so the first block is not built — but it wrote a driver, and the second block writing the same
+    // register is a contention rather than that register's only driver.
+    const { ids, warnings } = built(
+      `module m(input clk, input [3:0] a, input [3:0] b, output reg [3:0] q);
+         always @(posedge clk) q <= a[7:4];
+         always @(posedge clk) q <= b;
+       endmodule`,
+    )
+    expect(
+      warnings.some((w) => w.includes('already driven by a gate or assign')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+    for (const bit of ['q[0]', 'q[1]', 'q[2]', 'q[3]']) expect(ids).not.toContain(bit)
+  })
+
+  test('a multi-output buf with no contention keeps BOTH outputs', () => {
+    const { ids, warnings } = built(
+      `${SCALARS} buf g0(o0, o1, a0); buf g1(o2, a2); buf g2(o3, a3); endmodule`,
+    )
+    expect(ids, `warnings: ${warnings.join(' | ')}`).toEqual(
+      expect.arrayContaining(['o0', 'o1', 'o2', 'o3']),
+    )
   })
 })

@@ -30,19 +30,26 @@ import type {
   FuncDef,
   GateInst,
   MemInfo,
+  PowerOnValue,
+  RawGate,
+  RefusedDriver,
   TaskArg,
   TaskDef,
   Tok,
+  UnbuiltReport,
 } from './verilog-import.ts'
+import { assignmentTargets } from './verilog-import.ts'
 
 /** Declared memories, by name (`reg [D-1:0] m [0:W-1]`). Threaded through the parser so `m[addr]` becomes a
  *  memory read/write rather than a (rejected) non-constant bit-select. */
 type MemTable = Map<string, MemInfo>
 
 // ── expression AST ────────────────────────────────────────────────────────────
+/** One bit of a literal: known, or Verilog's don't-care `x` (see the Bit type for what that means here). */
+type ConstBit = 0 | 1 | 'x'
 type Expr =
   | { t: 'net'; name: string }
-  | { t: 'const'; bits: (0 | 1)[]; signed?: boolean } // LSB-first, length = width; signed = an `'sd`/plain-int literal
+  | { t: 'const'; bits: ConstBit[]; signed?: boolean } // LSB-first, length = width; signed = an `'sd`/plain-int literal
   | { t: 'bitsel'; name: string; index: number }
   | { t: 'partsel'; name: string; hi: number; lo: number }
   | { t: 'concat'; parts: Expr[] } // MSB-first (leftmost is the high bits)
@@ -362,7 +369,11 @@ function constExpr(v: string): Expr {
   const width = based[1] === '' ? 32 : Number.parseInt(based[1] as string, 10)
   const signed = based[2] !== ''
   const digits = (based[4] as string).replace(/_/g, '')
-  if (/[xXzZ?]/.test(digits)) return { t: 'bad', why: 'x/z constant is not representable' }
+  // z (and its `?` spelling) is high impedance — a real third WIRE state, which a ChipBlocks net does not
+  // have, so it stays refused. x is a don't-care VALUE, which folding can carry and a mask can remove.
+  if (/[zZ?]/.test(digits))
+    return { t: 'bad', why: 'z (high-impedance) constant is not representable' }
+  if (/[xX]/.test(digits)) return unknownBitsOf(digits, based[3] as string, width, signed)
   const base = { b: 2, o: 8, d: 10, h: 16 }[(based[3] as string).toLowerCase()] as number
   const val =
     base === 16
@@ -375,9 +386,30 @@ function constExpr(v: string): Expr {
   return bitsOf(val, width, signed)
 }
 function bitsOf(val: bigint, width: number, signed = false): Expr {
-  const bits: (0 | 1)[] = []
+  const bits: ConstBit[] = []
   for (let i = 0; i < width; i++) bits.push(Number((val >> BigInt(i)) & 1n) as 0 | 1)
   return signed ? { t: 'const', bits, signed: true } : { t: 'const', bits }
+}
+
+/** A literal with x digits, expanded LSB-first. Each digit contributes log2(base) bits; an x digit makes ALL
+ *  of them unknown, which is what IEEE 1364-2005 §3.2 specifies for a based literal. A decimal literal cannot
+ *  mix x with digits (`4'dx` is wholly unknown), so it is treated as unknown throughout. */
+function unknownBitsOf(digits: string, baseChar: string, width: number, signed: boolean): Expr {
+  const perDigit = { b: 1, o: 3, d: 0, h: 4 }[baseChar.toLowerCase()] as number
+  const bits: ConstBit[] = []
+  if (perDigit === 0) for (let i = 0; i < width; i++) bits.push('x')
+  else
+    for (let i = digits.length - 1; i >= 0; i--) {
+      const d = digits[i] as string
+      const value = /[xX]/.test(d) ? undefined : Number.parseInt(d, 16)
+      for (let b = 0; b < perDigit; b++)
+        bits.push(value === undefined ? 'x' : (((value >> b) & 1) as 0 | 1))
+    }
+  // Verilog left-extends a based literal with x when its most significant bit is x (§3.2), else with 0.
+  const top = bits[bits.length - 1] ?? 'x'
+  while (bits.length < width) bits.push(top === 'x' ? 'x' : 0)
+  const sized = bits.slice(0, width)
+  return signed ? { t: 'const', bits: sized, signed: true } : { t: 'const', bits: sized }
 }
 
 /** The first unsupported construct in the tree, or undefined if fully supported. */
@@ -505,8 +537,14 @@ function hasCall(e: Expr): boolean {
 }
 
 // ── bit-level synthesis ─────────────────────────────────────────────────────────
-type Bit = { c: 0 | 1 } | { n: string }
+/** A synthesized bit: a known constant, a net, or UNKNOWN. `x` is Verilog's don't-care/uninitialised value.
+ *  It is not a third wire level — a ChipBlocks net is only ever 0 or 1 — it is what we KNOW about a bit while
+ *  folding. Real designs mask their x's away (`~(i ^ 8'b00xxx000) | 8'b00111000` is the 8080's own instruction
+ *  decoder), and an x that survives to something that must drive a net is REPORTED, never quietly made 0. */
+type Bit = { c: 0 | 1 } | { x: true } | { n: string }
 const isC = (b: Bit): b is { c: 0 | 1 } => 'c' in b
+const isX = (b: Bit): b is { x: true } => 'x' in b
+const UNKNOWN: Bit = { x: true }
 type Ctx = {
   gates: GateInst[]
   fresh: () => string
@@ -520,17 +558,26 @@ type Ctx = {
   /** Per-inline map of an inlined input bit-net → a folded constant argument bit. Read by the `net`/`bitsel`/
    *  `partsel` cases so a constant function argument flows through as a real constant (no tie needed), and a
    *  constant that reaches an output is tied/reported by the assign driver like any other constant. */
-  constNets?: Map<string, 0 | 1>
+  constNets?: Map<string, 0 | 1 | 'x'>
 }
 
 function not1(a: Bit, x: Ctx): Bit {
+  if (isX(a)) return UNKNOWN
   if (isC(a)) return { c: a.c ? 0 : 1 }
   const o = x.fresh()
   x.gates.push({ prim: 'not', terminals: [o, a.n] })
   return { n: o }
 }
-/** A 2-input gate (and/or/xor/xnor) with constant folding. */
+/** A 2-input gate (and/or/xor/xnor) with constant folding. An UNKNOWN input only survives when the other
+ *  input cannot force the answer: `0 & x` is 0 and `1 | x` is 1 (IEEE 1364-2005 §5.1.9 truth tables), which is
+ *  exactly how a masked don't-care disappears; every other combination with an x is x. */
 function g2(prim: string, a: Bit, b: Bit, x: Ctx): Bit {
+  if (isX(a) || isX(b)) {
+    const known = isC(a) ? a.c : isC(b) ? b.c : undefined
+    if (known === 0 && prim === 'and') return { c: 0 }
+    if (known === 1 && prim === 'or') return { c: 1 }
+    return UNKNOWN
+  }
   if (isC(a) && isC(b)) {
     const r =
       prim === 'and'
@@ -656,6 +703,7 @@ function selfWidth(e: Expr, w: (name: string) => number): number {
 function netBit(x: Ctx, name: string, i: number): Bit {
   const bn = x.bitNet(name, i)
   const c = x.constNets?.get(bn)
+  if (c === 'x') return UNKNOWN
   return c !== undefined ? { c } : { n: bn }
 }
 
@@ -729,7 +777,7 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
   switch (e.t) {
     case 'const':
       return resizeSigned(
-        e.bits.map((b) => ({ c: b }) as Bit),
+        e.bits.map((b): Bit => (b === 'x' ? UNKNOWN : { c: b })),
         w,
         sgn,
       )
@@ -752,16 +800,19 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
       return resize(bits, w)
     }
     case 'concat': {
-      // MSB-first parts → an LSB-first bit-vector (each at its own self-width, UNSIGNED — a concat is unsigned).
+      // MSB-first parts → an LSB-first bit-vector. Each part is SELF-DETERMINED (IEEE 1364-2005 §5.4.1): it
+      // takes its own width AND ITS OWN SIGNEDNESS, which is not the same thing as being unsigned. Only the
+      // concatenation's RESULT is unsigned (§5.5.1), which is what the `resize` below honours. Forcing the
+      // parts unsigned turned `{a >>> 1, …}` on a signed `a` into a LOGICAL shift — a silent wrong answer.
       const bits: Bit[] = []
       for (let i = e.parts.length - 1; i >= 0; i--) {
         const p = e.parts[i] as Expr
-        bits.push(...synthAt(p, selfWidth(p, x.widthOf), false, x))
+        bits.push(...synthAt(p, selfWidth(p, x.widthOf), isSigned(p, S), x))
       }
       return resize(bits, w)
     }
     case 'repl': {
-      const elem = synthAt(e.of, selfWidth(e.of, x.widthOf), false, x)
+      const elem = synthAt(e.of, selfWidth(e.of, x.widthOf), isSigned(e.of, S), x)
       const bits: Bit[] = []
       for (let i = 0; i < e.count; i++) bits.push(...elem)
       return resize(bits, w)
@@ -1003,7 +1054,7 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
   const bodyWidthOf = (n: string): number =>
     n.startsWith(prefix) ? (fnWidth.get(n.slice(prefix.length)) ?? 1) : x.widthOf(n)
   const bodyBitNet = (n: string, i: number): string => (bodyWidthOf(n) === 1 ? n : `${n}[${i}]`)
-  const constNets = new Map<string, 0 | 1>()
+  const constNets = new Map<string, 0 | 1 | 'x'>()
   const bodyCtx: Ctx = { ...x, widthOf: bodyWidthOf, bitNet: bodyBitNet, constNets }
 
   // Materialize each argument at its formal's declared width, onto the renamed input net: a live bit is
@@ -1014,7 +1065,8 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
     for (let i = 0; i < inp.width; i++) {
       const dest = bodyBitNet(prefix + inp.name, i)
       const b = bits[i] as Bit
-      if (isC(b)) constNets.set(dest, b.c)
+      if (isX(b)) constNets.set(dest, 'x')
+      else if (isC(b)) constNets.set(dest, b.c)
       else x.gates.push({ prim: 'buf', terminals: [dest, b.n] })
     }
   }
@@ -1042,14 +1094,19 @@ type SynthModule = {
   portOrder: string[]
   dir: Map<string, 'input' | 'output' | 'inout'>
   gates: GateInst[]
+  rawGates: RawGate[]
   assigns: Assign[]
   alwaysBlocks: AlwaysBlock[]
+  refusedDrivers: RefusedDriver[]
+  powerOnValues: PowerOnValue[]
   flops: FlopInst[]
   widths: Map<string, number>
   mems: MemTable
   functions: Map<string, FuncDef>
   tasks: Map<string, TaskDef>
   signed: Set<string>
+  resolution: Map<string, 'or' | 'and'>
+  unbuilt: UnbuiltReport
 }
 
 /** The target bit-nets of an lhs (`y`, `y[i]`, `y[h:l]`, or a concat of those), LSB-first. */
@@ -1057,17 +1114,19 @@ function lhsBits(
   toks: Tok[],
   widthOf: (n: string) => number,
   bitNet: (n: string, i: number) => string,
-): { bits: string[] } | { bad: string } {
+): { bits: string[]; note?: string } | { bad: string } {
   if (toks[0]?.v === '{') {
     if (toks[toks.length - 1]?.v !== '}') return { bad: 'malformed concatenation target' }
     const parts = splitTopComma(toks.slice(1, -1))
     const out: string[] = []
+    const notes: string[] = []
     for (let i = parts.length - 1; i >= 0; i--) {
       const pb = lhsBits(parts[i] as Tok[], widthOf, bitNet)
       if ('bad' in pb) return pb
       out.push(...pb.bits)
+      if (pb.note !== undefined) notes.push(pb.note)
     }
-    return { bits: out }
+    return notes.length > 0 ? { bits: out, note: notes.join('; ') } : { bits: out }
   }
   if (toks[0]?.k !== 'id') return { bad: 'assign target must be a net' }
   const name = toks[0].v
@@ -1084,15 +1143,26 @@ function lhsBits(
       const lo = constInt(parts[1])
       if (hi === undefined || lo === undefined) return { bad: 'non-constant part-select target' }
       if (hi < lo) return { bad: 'ascending part-select target is unsupported' }
-      if (hi >= width)
-        return { bad: `part-select target [${hi}:${lo}] is out of range for "${name}"` }
+      // A write to a bit that does not exist goes nowhere in Verilog, and the bits that DO exist are still
+      // written (IEEE 1364-2005 §5.2.1). Refusing the whole assignment erased the in-range half of it, so the
+      // range is clamped and the drop is reported instead.
+      const top = Math.min(hi, width - 1)
       const bits: string[] = []
-      for (let k = lo; k <= hi; k++) bits.push(bitNet(name, k))
-      return { bits }
+      for (let k = lo; k <= top; k++) bits.push(bitNet(name, k))
+      if (hi < width) return { bits }
+      const note =
+        bits.length === 0
+          ? `part-select target [${hi}:${lo}] is out of range on the ${width}-bit net "${name}" — it drives nothing, exactly as in Verilog`
+          : `part-select target [${hi}:${lo}] is out of range on the ${width}-bit net "${name}" — the bits above [${top}] drive nothing, exactly as in Verilog, and the rest are still written`
+      return { bits, note }
     }
     const index = constInt(inner)
     if (index === undefined) return { bad: 'non-constant bit-select target' }
-    if (index >= width) return { bad: `bit-select target "${name}[${index}]" is out of range` }
+    if (index >= width)
+      return {
+        bits: [],
+        note: `bit-select target "${name}[${index}]" is out of range on the ${width}-bit net "${name}" — it drives nothing, exactly as in Verilog`,
+      }
     return { bits: [bitNet(name, index)] }
   }
   return { bad: 'unrecognized assign target' }
@@ -1224,6 +1294,10 @@ function wrapStores(stmt: ProcStmt, sizeOf: (n: string) => number | undefined): 
       const wd = sizeOf(stmt.lhs)
       return wd === undefined ? stmt : { ...stmt, rhs: { t: 'sized', width: wd, of: stmt.rhs } }
     }
+    case 'nbsel':
+      // The width wall belongs on the SELECTED width, which elaborate already applies — a wall at the
+      // signal's full width here would zero-extend the slice value over bits it must not touch.
+      return stmt
     case 'seq':
       return { t: 'seq', body: stmt.body.map((s) => wrapStores(s, sizeOf)) }
     case 'if': {
@@ -1241,6 +1315,7 @@ function wrapStores(stmt: ProcStmt, sizeOf: (n: string) => number | undefined): 
 function collectAssigned(stmt: ProcStmt, out: Set<string>): void {
   switch (stmt.t) {
     case 'nb':
+    case 'nbsel':
       out.add(stmt.lhs)
       break
     case 'memwrite':
@@ -1393,7 +1468,17 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   mod.portOrder = newOrder
   mod.dir = newDir
 
-  if (mod.assigns.length === 0 && mod.alwaysBlocks.length === 0) return
+  // A purely structural module used to return here, which is exactly why two structural gates on one net were
+  // never compared: the only code that compares drivers lives below. It now returns only when the module has
+  // no driver of any kind to register.
+  if (
+    mod.assigns.length === 0 &&
+    mod.alwaysBlocks.length === 0 &&
+    mod.gates.length === 0 &&
+    mod.rawGates.length === 0 &&
+    mod.refusedDrivers.length === 0
+  )
+    return
 
   // Fresh internal-net names dodge EVERY name that can already denote a net: bit-ports, structural gate
   // terminals, declared bus bases, any identifier used in an assign, AND any identifier inside an always
@@ -1404,6 +1489,8 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   for (const base of mod.widths.keys()) used.add(base)
   for (const a of mod.assigns) for (const t of [...a.lhs, ...a.rhs]) if (t.k === 'id') used.add(t.v)
   for (const blk of mod.alwaysBlocks) for (const t of blk.body) if (t.k === 'id') used.add(t.v)
+  for (const g of mod.rawGates)
+    for (const sl of g.slices) for (const t of sl) if (t.k === 'id') used.add(t.v)
 
   // Each memory word becomes a real D-bit register named with the bracket form mem[k]. Register its width so
   // bitNet/widthOf treat the word like any bus, and reserve the name. A user net that already spells mem[k]
@@ -1474,8 +1561,162 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     stack: new Set(),
   })
 
-  const driven = new Set<string>()
-  for (const g of mod.gates) for (const o of gateOutputs(g)) driven.add(o)
+  // ── THE TRANSITIVE-UNBUILT RULE ────────────────────────────────────────────────────────────────────
+  // A construct this importer skipped still drove something. Every bit it might have driven has NO honest
+  // value here, and (after spreadUnbuilt below) neither has anything that reads one. The front end used to
+  // warn about the construct and publish the design anyway, so those bits read 0 and the logic downstream
+  // computed on that 0 — a normal-looking design decoding to wrong logic with no warning about the ANSWER.
+  const unbuiltNets = new Set<string>()
+  const unbuiltConstructs: string[] = []
+  let wholeModuleUnbuilt = false
+  const noteReason = (reason: string): void => {
+    if (!unbuiltConstructs.includes(reason)) unbuiltConstructs.push(reason)
+  }
+  const noteConstruct = (what: string, where: string): void => {
+    noteReason(`${what}, ${where}`)
+  }
+  const markUnbuilt = (what: string, where: string, bits: string[]): void => {
+    if (bits.length === 0) return
+    noteConstruct(what, where)
+    for (const b of bits) unbuiltNets.add(b)
+  }
+  const markUnbuiltReason = (reason: string, bits: string[]): void => {
+    if (bits.length === 0) return
+    noteReason(reason)
+    for (const b of bits) unbuiltNets.add(b)
+  }
+  /** Every bit of every net a token span NAMES, minus this module's own inputs. The fallback for a target
+   *  that cannot be read as an lvalue (a switch primitive's terminal, a dynamic bit-select, a whole always
+   *  block body): naming too many nets erases real hardware, naming too few publishes a value nothing
+   *  produced, and only the second of those can be silent. */
+  const bitsNamedIn = (span: Tok[]): string[] => {
+    const out: string[] = []
+    for (const t of span) {
+      if (t.k !== 'id') continue
+      const mem = mod.mems.get(t.v)
+      if (mem !== undefined) {
+        for (let k = 0; k < mem.depth; k++)
+          for (let i = 0; i < mem.width; i++) out.push(bitNet(memWord(t.v, k), i))
+        continue
+      }
+      for (let i = 0; i < widthOf(t.v); i++) {
+        const b = bitNet(t.v, i)
+        if (!inputs.has(b)) out.push(b)
+      }
+    }
+    return out
+  }
+  /** The bits a refused driver's target span claims: read as an lvalue where that works, else every net the
+   *  span names. */
+  const targetBits = (span: Tok[]): string[] => {
+    const lb = lhsBits(span, widthOf, bitNet)
+    return 'bits' in lb ? lb.bits : bitsNamedIn(span)
+  }
+  /** A block whose body could not be elaborated still wrote every register it assigns. */
+  const bodyTargetBits = (what: string, where: string, body: Tok[]): void => {
+    const spans = assignmentTargets(body)
+    if (spans === null) {
+      wholeModuleUnbuilt = true
+      noteConstruct(what, where)
+      return
+    }
+    markUnbuilt(what, where, spans.flatMap(targetBits))
+  }
+
+  const ledger = makeDriverLedger(inputs, (bit) => mod.resolution.has(baseNetOf(bit)))
+  const contendedBits = ledger.contendedBits
+  const refusals: Refusal[] = []
+  const reportRefusedBits = (
+    where: string,
+    targets: string[],
+    refused: Map<string, string>,
+  ): void => {
+    refusals.push({ where, targets, refused: new Map(refused) })
+  }
+
+  // ── gate primitives whose terminals are not plain nets ────────────────────────────────────────────────
+  // `and g(t[0], a[0], b[0])` is ordinary Verilog, and the whole instance used to be refused because the
+  // parser cannot resolve `t[0]` without knowing t's width. Widths are known HERE, so each terminal is read
+  // with the same machinery an assign uses: an output terminal as an lvalue (exactly one bit), an input
+  // terminal as a one-bit expression, whose own gates are emitted alongside.
+  for (const raw of mod.rawGates) {
+    const where = `line ${raw.line}`
+    const what = `a "${raw.prim}" gate terminal this importer cannot resolve`
+    const outSlices = N_OUTPUT_PRIMS.has(raw.prim)
+      ? raw.slices.slice(0, -1)
+      : raw.slices.slice(0, 1)
+    const inSlices = N_OUTPUT_PRIMS.has(raw.prim) ? raw.slices.slice(-1) : raw.slices.slice(1)
+    const outNets: string[] = []
+    let bad: string | undefined
+    for (const sl of outSlices) {
+      const lb = lhsBits(sl, widthOf, bitNet)
+      if ('bad' in lb) bad = lb.bad
+      else if (lb.bits.length !== 1) bad = 'a gate output must be exactly one bit'
+      else outNets.push(lb.bits[0] as string)
+    }
+    const inGates: GateInst[] = []
+    const inNets: string[] = []
+    for (const sl of inSlices) {
+      const ast = bindCalls(parseRhs(sl, mod.mems), mod.functions)
+      const why = firstBad(ast) ?? outOfRange(ast, widthOf)
+      if (why !== undefined) {
+        bad = why
+        continue
+      }
+      const bit = synthAt(ast, 1, false, synCtx(inGates))[0] as Bit
+      if (isX(bit)) {
+        bad = 'a gate input reads x in Verilog'
+        continue
+      }
+      const net = isC(bit) ? tie(bit.c) : bit.n
+      if (net === undefined) {
+        bad = 'a constant gate input has no live net to tie it to'
+        continue
+      }
+      inNets.push(net)
+    }
+    if (bad !== undefined || outNets.length === 0 || inNets.length === 0) {
+      warnings.push(
+        `line ${raw.line}: a "${raw.prim}" terminal is not a plain net — ${bad ?? 'the instance has no usable terminals'} — reported, not built`,
+      )
+      markUnbuilt(what, where, outSlices.flatMap(targetBits))
+      const refusedRaw = ledger.claim(where, outSlices.flatMap(targetBits))
+      if (refusedRaw.size > 0) reportRefusedBits(where, outSlices.flatMap(targetBits), refusedRaw)
+      continue
+    }
+    mod.gates.push(...inGates)
+    mod.gates.push({ prim: raw.prim, terminals: [...outNets, ...inNets], line: raw.line })
+  }
+
+  // EVERY producer of a driver goes through ledger.claim, in source-visible order: structural primitives
+  // first, then the drivers we refuse to build (they own their bits exactly like a built one), then the
+  // continuous assigns, the combinational always blocks and the clocked always blocks below. A structural
+  // gate used to be seeded into a plain Set, so two gates on one net collapsed into one entry and nothing
+  // ever compared them — the only driver pairing that was never checked at all.
+  for (const g of mod.gates) {
+    const outs = gateOutputs(g)
+    const where = `${lineOf(g)}: "${g.prim}" gate`
+    const refused = ledger.claim(where, outs)
+    if (refused.size > 0) reportRefusedBits(where, outs, refused)
+  }
+  for (const r of mod.refusedDrivers) {
+    if (r.wholeModule === true) {
+      wholeModuleUnbuilt = true
+      noteConstruct(r.what, r.where)
+      continue
+    }
+    const bits = [...new Set(r.terms.flatMap(targetBits))]
+    if (bits.length === 0) {
+      // The construct was skipped and not one net it touches can be named — there is no smaller honest
+      // answer than "this design is not built".
+      wholeModuleUnbuilt = true
+      noteConstruct(r.what, r.where)
+      continue
+    }
+    markUnbuilt(r.what, r.where, bits)
+    const refused = ledger.claim(r.where, bits)
+    if (refused.size > 0) reportRefusedBits(r.where, bits, refused)
+  }
 
   const built: { targets: string[]; gates: GateInst[] }[] = []
   for (const a of mod.assigns) {
@@ -1485,30 +1726,37 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       warnings.push(
         `line ${a.line}: continuous assign to memory "${a.lhs[0].v}" (unclocked array write) is not supported — write it in an always @(posedge clk) block — reported, not built`,
       )
+      markUnbuilt(
+        `a continuous assign to the memory "${a.lhs[0].v}"`,
+        `line ${a.line}`,
+        bitsNamedIn([a.lhs[0]]),
+      )
       continue
     }
     const lb = lhsBits(a.lhs, widthOf, bitNet)
     if ('bad' in lb) {
       warnings.push(`line ${a.line}: assign target — ${lb.bad} — reported, not built`)
-      continue
-    }
-    const targets = lb.bits
-    const inputTarget = targets.find((tb) => inputs.has(tb))
-    if (inputTarget !== undefined) {
-      warnings.push(`line ${a.line}: assign drives input port "${inputTarget}" — illegal, reported`)
-      continue
-    }
-    const drivenTarget = targets.find((tb) => driven.has(tb))
-    if (drivenTarget !== undefined) {
-      warnings.push(
-        `line ${a.line}: net "${drivenTarget}" is assigned more than once (or already driven by a gate) — reported, not built`,
+      markUnbuilt(
+        'a continuous assign this importer cannot build',
+        `line ${a.line}`,
+        bitsNamedIn(a.lhs),
       )
+      continue
+    }
+    if (lb.note !== undefined) warnings.push(`line ${a.line}: ${lb.note}`)
+    const targets = lb.bits
+    if (targets.length === 0) continue
+    const where = `line ${a.line}: assign to "${a.lhs.map((t) => t.v).join('')}"`
+    const refused = ledger.claim(where, targets, CONTENDED_ASSIGN)
+    if (refused.size === targets.length) {
+      reportRefusedBits(where, targets, refused)
       continue
     }
     const ast = bindCalls(parseRhs(a.rhs, mod.mems), mod.functions)
     const bad = firstBad(ast)
     if (bad !== undefined) {
       warnings.push(`line ${a.line}: assign not synthesized — ${bad}`)
+      markUnbuilt('a continuous assign this importer cannot build', `line ${a.line}`, targets)
       continue
     }
     // An out-of-range constant select reads x in Verilog — not representable in a 0/1 netlist, so report it
@@ -1516,28 +1764,30 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     const oor = outOfRange(ast, widthOf)
     if (oor !== undefined) {
       warnings.push(`line ${a.line}: ${oor} reads x in Verilog — reported, not built`)
+      markUnbuilt('a continuous assign that reads out of range', `line ${a.line}`, targets)
       continue
     }
     const gates: GateInst[] = []
     const rhs = synthAt(ast, targets.length, isSigned(ast, signedOf), synCtx(gates))
-    let ok = true
+    const wired: string[] = []
     for (let i = 0; i < targets.length; i++) {
+      const tb = targets[i] as string
+      if (refused.has(tb)) continue
       const src = rhs[i] as Bit
+      if (isX(src)) {
+        refused.set(tb, STAYS_X)
+        continue
+      }
       const from = isC(src) ? tie(src.c) : src.n
       if (from === undefined) {
-        ok = false
-        break
-      } // a constant bit with no live net to tie it to
-      gates.push({ prim: 'buf', terminals: [targets[i] as string, from] })
+        refused.set(tb, NEEDS_TIE) // a constant bit with no live net to tie it to
+        continue
+      }
+      gates.push({ prim: 'buf', terminals: [tb, from] })
+      wired.push(tb)
     }
-    if (!ok) {
-      warnings.push(
-        `line ${a.line}: assign "${a.lhs.map((t) => t.v).join('')}" needs a constant driver but the module has no input to tie to — reported, not built`,
-      )
-      continue
-    }
-    for (const tb of targets) driven.add(tb)
-    built.push({ targets, gates })
+    if (refused.size > 0) reportRefusedBits(where, targets, refused)
+    if (wired.length > 0) built.push({ targets: wired, gates })
   }
 
   // ── combinational always-blocks (@(*) / @* / @(a or b)) → the assigned registers become COMBINATIONAL
@@ -1554,11 +1804,21 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     const seq = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(true), false)
     if (seq.t === 'bad') {
       warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
+      bodyTargetBits(
+        'a combinational always block this importer cannot build',
+        `line ${blk.line}`,
+        blk.body,
+      )
       continue
     }
     if (collectMemWrites(seq).length > 0) {
       warnings.push(
         `line ${blk.line}: a combinational always block can't write a memory (an array write needs a clock) — reported, not built`,
+      )
+      bodyTargetBits(
+        'a combinational always block that writes a memory',
+        `line ${blk.line}`,
+        blk.body,
       )
       continue
     }
@@ -1569,51 +1829,55 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       if (raw === undefined) continue
       const ast = bindCalls(raw, mod.functions)
       const bad = firstBad(ast)
-      if (bad !== undefined) {
-        warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${bad}`)
-        continue
-      }
       const oor = outOfRange(ast, widthOf)
-      if (oor !== undefined) {
-        warnings.push(`line ${blk.line}: ${oor} reads x in Verilog — reported, not built`)
-        continue
-      }
       const w = widthOf(r)
       const targets = Array.from({ length: w }, (_, i) => bitNet(r, i))
-      const inputTarget = targets.find((tb) => inputs.has(tb))
-      if (inputTarget !== undefined) {
-        warnings.push(
-          `line ${blk.line}: combinational always drives input port "${inputTarget}" — illegal, reported`,
+      const where = `line ${blk.line}: combinational always block driving register "${r}"`
+      // The claim comes BEFORE the reasons we might not build this block: a block whose body we cannot
+      // synthesize still wrote a driver, and a second block writing the same register is a contention, not a
+      // lone driver. Claiming only where we build would leave the unsynthesizable ones owning nothing.
+      const refused = ledger.claim(where, targets, CONTENDED_REGISTER)
+      const unsynth =
+        bad !== undefined
+          ? `register "${r}" not synthesized — ${bad}`
+          : oor !== undefined
+            ? `${oor} reads x in Verilog — reported, not built`
+            : undefined
+      if (unsynth !== undefined) {
+        warnings.push(`line ${blk.line}: ${unsynth}`)
+        markUnbuilt(
+          'a combinational always block this importer cannot build',
+          `line ${blk.line}`,
+          targets,
         )
+        if (refused.size > 0) reportRefusedBits(where, targets, refused)
         continue
       }
-      const conflict = targets.find((tb) => driven.has(tb))
-      if (conflict !== undefined) {
-        warnings.push(
-          `register "${r}" bit "${conflict}" is already driven by a gate or assign — reported, not built`,
-        )
+      if (refused.size === targets.length) {
+        reportRefusedBits(where, targets, refused)
         continue
       }
       const gates: GateInst[] = []
       const rhs = synthAt(ast, w, isSigned(ast, signedOf), synCtx(gates))
-      let ok = true
+      const wired: string[] = []
       for (let i = 0; i < w; i++) {
+        const tb = targets[i] as string
+        if (refused.has(tb)) continue
         const src = rhs[i] as Bit
+        if (isX(src)) {
+          refused.set(tb, STAYS_X)
+          continue
+        }
         const from = isC(src) ? tie(src.c) : src.n
         if (from === undefined) {
-          ok = false
-          break
+          refused.set(tb, NEEDS_TIE)
+          continue
         }
-        gates.push({ prim: 'buf', terminals: [targets[i] as string, from] })
+        gates.push({ prim: 'buf', terminals: [tb, from] })
+        wired.push(tb)
       }
-      if (!ok) {
-        warnings.push(
-          `line ${blk.line}: register "${r}" needs a constant driver but the module has no input to tie to — reported, not built`,
-        )
-        continue
-      }
-      for (const tb of targets) driven.add(tb)
-      built.push({ targets, gates })
+      if (refused.size > 0) reportRefusedBits(where, targets, refused)
+      if (wired.length > 0) built.push({ targets: wired, gates })
     }
   }
 
@@ -1633,15 +1897,25 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   addGraph(tieGates)
   const onCycle = cycleNets(driverInputs)
 
+  // A loop is cut PER GATE, not per assignment: `assign o = {a[3:1], o[0]};` loops on o[0] alone, so o[0]
+  // loses its driver and o[3:1] keep theirs. Filtering by gate output (rather than by target bit) also cuts a
+  // cycle that closes through an INTERMEDIATE net, which dropping the output buffers alone would leave spinning.
   for (const b of built) {
-    const looped = b.targets.find((tb) => onCycle.has(tb))
-    if (looped !== undefined) {
-      warnings.push(
-        `combinational loop through "${looped}" — the assign feeds back on itself; reported, not built`,
-      )
+    const looped = b.targets.filter((tb) => onCycle.has(tb))
+    if (looped.length === 0) {
+      mod.gates.push(...b.gates)
       continue
     }
-    mod.gates.push(...b.gates)
+    reportRefusedBits(
+      'combinational loop',
+      b.targets,
+      new Map(looped.map((tb) => [tb, 'feeds back on itself — reported, not built'])),
+    )
+    // NOT marked unbuilt. A combinational loop's value is x in Verilog, exactly like a contention, and the
+    // x/contention rule (see WHY THE x GUARD AND THE CONTENTION GUARD SAY THE SAME THING) is deliberately
+    // unchanged here: the looped bit loses its driver and reads undriven, while the bits around it keep
+    // theirs. Poisoning it would erase a whole design over one bit Verilog itself calls unknown.
+    mod.gates.push(...retractOutputs(b.gates, onCycle))
   }
 
   // ── clocked always-blocks → one D flip-flop per registered bit + its next-state gates ──────────────
@@ -1662,9 +1936,29 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     if (blk.clk === null) continue // combinational — handled above as continuous drives, not flip-flops
     const parsed = parseProcedural(blk.body, mod.mems, false, widthOf)
     // A task call in a clocked block is reported (expandTaskCalls with comb=false); a block without one passes.
-    const seq = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(false), false)
+    const expanded = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(false), false)
+    // `@(posedge clk or posedge reset)` — split the reset branch off the body, so what is synthesized below is
+    // the ordinary next-state logic and the reset becomes the flip-flop's real asynchronous CLEAR pin.
+    const async = blk.reset === null ? null : splitAsyncReset(blk, expanded, widthOf)
+    if (async !== null && 'bad' in async) {
+      warnings.push(`line ${blk.line}: always block — ${async.bad} — reported, not built`)
+      bodyTargetBits(
+        'a clocked always block this importer cannot build',
+        `line ${blk.line}`,
+        blk.body,
+      )
+      continue
+    }
+    const clkNet = async === null ? blk.clk : async.clk
+    const resetNet = async === null ? undefined : async.reset
+    const seq = async === null ? expanded : async.body
     if (seq.t === 'bad') {
       warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
+      bodyTargetBits(
+        'a clocked always block this importer cannot build',
+        `line ${blk.line}`,
+        blk.body,
+      )
       continue
     }
     // Validate each store address ONCE (a memwrite fans out to `depth` word-registers, so a per-word check
@@ -1677,6 +1971,11 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       if (bad === undefined && oor === undefined && !oob) continue
       const why = bad ?? (oob ? `store address ${v} is out of range` : `${oor} reads x in Verilog`)
       warnings.push(`line ${blk.line}: store to "${mw.name}" — ${why} — reported, not built`)
+      markUnbuilt(
+        `a store to the memory "${mw.name}" this importer cannot build`,
+        `line ${blk.line}`,
+        bitsNamedIn([{ k: 'id', v: mw.name, line: blk.line }]),
+      )
       badMem.add(mw.name)
     }
     const written = new Set<string>()
@@ -1685,17 +1984,25 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       const base = memBaseOf(r)
       if (base !== undefined && badMem.has(base)) continue // faulty store, already reported above
       if (registered.has(r)) {
+        // Two always blocks writing one register is the same contention as two assigns on one net: the
+        // flip-flops the FIRST block built are retracted below, so the register really is not built. The
+        // claim runs through the ledger like every other one — it is what marks the bits contended.
+        ledger.claim(
+          `line ${blk.line}: clocked always block driving register "${r}"`,
+          Array.from({ length: widthOf(r) }, (_, i) => bitNet(r, i)),
+          CONTENDED_REGISTER,
+        )
         if (base !== undefined) {
           if (!reportedMem.has(base)) {
             warnings.push(
-              `memory "${base}" is written by more than one always block — reported, not built`,
+              `memory "${base}" is written by more than one always block — no word it drives is built`,
             )
             reportedMem.add(base)
           }
           continue
         }
         warnings.push(
-          `register "${r}" is written by more than one always block — reported, not built`,
+          `register "${r}" is written by more than one always block — neither block's flip-flops are built, so it reads undriven`,
         )
         continue
       }
@@ -1703,31 +2010,28 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       if (raw === undefined) continue
       const ast = bindCalls(raw, mod.functions)
       const bad = firstBad(ast)
-      if (bad !== undefined) {
-        warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${bad}`)
-        continue
-      }
       const oor = outOfRange(ast, widthOf)
-      if (oor !== undefined) {
-        warnings.push(`line ${blk.line}: ${oor} reads x in Verilog — reported, not built`)
-        continue
-      }
       const w = widthOf(r)
       const qBits = Array.from({ length: w }, (_, i) => bitNet(r, i))
       // Driving an input port (scalar OR any bus bit) is illegal; a bit already sourced by a gate/assign is a
-      // multiple-driver conflict. Both are checked at the BIT level so a bus register is handled correctly.
-      const drivesInput = qBits.find((bn) => inputs.has(bn))
-      if (drivesInput !== undefined) {
-        warnings.push(
-          `line ${blk.line}: always block drives input port "${drivesInput}" — illegal, reported`,
-        )
+      // multiple-driver conflict. Both are checked at the BIT level by the ledger, and a faulted bit costs
+      // only ITSELF its flip-flop — the rest of the register still clocks.
+      const where = `line ${blk.line}: clocked always block driving register "${r}"`
+      const refused = ledger.claim(where, qBits, CONTENDED_REGISTER)
+      const unsynth =
+        bad !== undefined
+          ? `register "${r}" not synthesized — ${bad}`
+          : oor !== undefined
+            ? `${oor} reads x in Verilog — reported, not built`
+            : undefined
+      if (unsynth !== undefined) {
+        warnings.push(`line ${blk.line}: ${unsynth}`)
+        markUnbuilt('a clocked always block this importer cannot build', `line ${blk.line}`, qBits)
+        if (refused.size > 0) reportRefusedBits(where, qBits, refused)
         continue
       }
-      const conflict = qBits.find((bn) => driven.has(bn))
-      if (conflict !== undefined) {
-        warnings.push(
-          `register "${r}" bit "${conflict}" is already driven by a gate or assign — reported, not built`,
-        )
+      if (refused.size === qBits.length) {
+        reportRefusedBits(where, qBits, refused)
         continue
       }
       // Synthesize the next-state logic, then one flop per bit. Buffer a pure hold (D-net === Q-net) so the
@@ -1735,33 +2039,37 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       const dGates: GateInst[] = []
       const D = synthAt(ast, w, isSigned(ast, signedOf), synCtx(dGates))
       const newFlops: FlopInst[] = []
-      let ok = true
       for (let i = 0; i < w; i++) {
-        const qNet = bitNet(r, i)
+        const qNet = qBits[i] as string
+        if (refused.has(qNet)) continue
         const dbit = D[i] as Bit
         let dNet: string
+        if (isX(dbit)) {
+          refused.set(qNet, CLOCKS_IN_X)
+          continue
+        }
         if (isC(dbit)) {
           const t = tie(dbit.c)
           if (t === undefined) {
-            ok = false
-            break
+            refused.set(qNet, NEEDS_TIE)
+            continue
           }
           dNet = t
         } else if (dbit.n === qNet) {
           dNet = fresh()
           dGates.push({ prim: 'buf', terminals: [dNet, qNet] })
         } else dNet = dbit.n
-        newFlops.push({ d: dNet, clk: blk.clk, q: qNet })
+        newFlops.push({
+          d: dNet,
+          clk: clkNet,
+          q: qNet,
+          ...(resetNet === undefined ? {} : { reset: resetNet }),
+        })
       }
-      if (!ok) {
-        warnings.push(
-          `register "${r}" needs a constant value but the module has no input to tie it to — reported, not built`,
-        )
-        continue
-      }
+      if (refused.size > 0) reportRefusedBits(where, qBits, refused)
+      if (newFlops.length === 0) continue
       mod.gates.push(...dGates)
       mod.flops.push(...newFlops)
-      for (let i = 0; i < w; i++) driven.add(bitNet(r, i))
       registered.add(r)
     }
   }
@@ -1782,7 +2090,100 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       )
   }
 
+  // `initial <reg> = <constant>` — the register's contents at power-on. Every flip-flop this importer builds
+  // powers up holding 0 (measured on the real cell, not assumed), so a zero is honoured exactly and anything
+  // else is refused by name rather than quietly ignored. Read as a DRIVER instead, this used to contend with
+  // the always block clocking the same register and cost both of them their drivers.
+  for (const v of mod.powerOnValues) {
+    const bits = Array.from({ length: widthOf(v.name) }, (_, i) => bitNet(v.name, i))
+    if (v.value.value === 0n && registered.has(v.name)) continue
+    const why =
+      v.value.value === 0n
+        ? `nothing clocks it, so there is no flip-flop to hold that value`
+        : `the flip-flops this importer builds power up holding 0, and this asks for ${v.value.value}`
+    warnings.push(`line ${v.line}: initial value on "${v.name}" — ${why} — reported, not built`)
+    markUnbuiltReason(
+      `the power-on value of "${v.name}" (line ${v.line}) — ${why}`,
+      bits.length === 0 ? [bitNet(v.name, 0)] : bits,
+    )
+  }
+
   mod.gates.push(...tieGates) // tie drivers read only inputs → never on a cycle → always safe to keep
+
+  // Retract every driver of a contended bit (see contendedBits). This runs last so it catches all three
+  // kinds at once: a structural gate, a synthesized assign/combinational buffer, and a flip-flop. Only the
+  // contended OUTPUTS go — a multi-output `buf`/`not` keeps the bits nothing else drives.
+  if (contendedBits.size > 0) {
+    mod.gates = retractOutputs(mod.gates, contendedBits)
+    mod.flops = mod.flops.filter((f) => !contendedBits.has(f.q))
+  }
+
+  // A driver on an INPUT port is illegal Verilog. It was reported and then LEFT IN the netlist, where it
+  // beat the value actually applied to the pin — the design read the internal gate, not its own input.
+  if (ledger.inputDrivenBits.size > 0) {
+    mod.gates = retractOutputs(mod.gates, ledger.inputDrivenBits)
+    mod.flops = mod.flops.filter((f) => !ledger.inputDrivenBits.has(f.q))
+  }
+
+  // `wor`/`wand` (and `trior`/`triand`) COMBINE their drivers. Treating a second driver on one as a
+  // contention states the opposite of what the net type means, and erased hardware Verilog resolves.
+  combineResolvedDrivers(mod, fresh)
+
+  // A net reaches the same "no honest value" state WITHOUT any construct being skipped: nothing ever drove
+  // it, or every driver of it was retracted just above (two drivers contending, a driver on an input port, a
+  // combinational loop). Verilog reads all three as x. This netlist reads them as 0, so a reader of one
+  // computes on an invented 0 — the very defect the transitive rule exists to stop, arriving by a door the
+  // skipped-construct ledger cannot see. The finished netlist is the only place the question can be answered
+  // instead of predicted, so it is asked here, after the last retraction.
+  const drivenBits = new Set<string>()
+  for (const g of mod.gates) for (const o of gateOutputs(g)) drivenBits.add(o)
+  for (const f of mod.flops) drivenBits.add(f.q)
+  const undrivenRead = new Set<string>()
+  const readsBit = (bit: string): void => {
+    if (drivenBits.has(bit) || inputs.has(bit)) return
+    undrivenRead.add(bit)
+  }
+  for (const g of mod.gates) for (const i of gateInputs(g)) readsBit(i)
+  for (const f of mod.flops) {
+    readsBit(f.d)
+    readsBit(f.clk)
+    if (f.reset !== undefined) readsBit(f.reset)
+  }
+  // An undriven OUTPUT PORT is deliberately NOT seeded. lower() leaves such a port out of the block's
+  // interface entirely, so there is no pin for anyone to read an invented 0 from — the design that IS
+  // published is complete, and refusing it would erase the bits around it that are real hardware.
+  const undrivenGroups = new Map<string, string[]>()
+  for (const bit of undrivenRead) {
+    // An input port is deliberately absent from this walk: a driver on one is retracted, but the PIN still
+    // drives the net, so the bit is not undriven at all.
+    const why = ledger.contendedBits.has(bit)
+      ? 'more than one driver, so Verilog reads it as x'
+      : onCycle.has(bit)
+        ? 'a combinational loop, so Verilog reads it as x'
+        : 'no driver at all'
+    const list = undrivenGroups.get(why)
+    if (list === undefined) undrivenGroups.set(why, [bit])
+    else list.push(bit)
+  }
+  for (const [why, bits] of undrivenGroups)
+    markUnbuiltReason(
+      `${bits.length === 1 ? 'net' : 'nets'} ${bitList(bits)} — ${why} — and something reads ${bits.length === 1 ? 'it' : 'them'}`,
+      bits,
+    )
+
+  spreadUnbuilt(mod.gates, mod.flops, unbuiltNets)
+  mod.unbuilt = {
+    nets: unbuiltNets,
+    constructs: unbuiltConstructs,
+    wholeModule: wholeModuleUnbuilt,
+  }
+
+  // Every per-bit refusal is reported HERE, once the netlist can no longer change, so each message's claim
+  // about which bits kept their driver is read off the finished netlist rather than predicted.
+  const finallyDriven = new Set<string>()
+  for (const g of mod.gates) for (const o of gateOutputs(g)) finallyDriven.add(o)
+  for (const f of mod.flops) finallyDriven.add(f.q)
+  for (const r of refusals) emitRefusal(warnings, r, finallyDriven)
 }
 
 /** The first out-of-range constant bit/part-select in the tree (Verilog x), or undefined. */
@@ -1841,26 +2242,359 @@ const gateInputs = (g: GateInst): string[] =>
     ? [g.terminals[g.terminals.length - 1] as string]
     : g.terminals.slice(1)
 
+/**
+ * Take `nets` off the OUTPUT side of every gate. A single-output primitive that drives one of them goes away;
+ * a multi-output `buf`/`not` (`buf b(o1, o2, in);` is legal Verilog) keeps the outputs that were NOT named,
+ * because dropping the whole gate would take a live driver off a net that has no second driver at all — the
+ * bug this pass exists to avoid, one level down from the assignment that produced the gate.
+ */
+function retractOutputs(gates: GateInst[], nets: Set<string>): GateInst[] {
+  const kept: GateInst[] = []
+  for (const g of gates) {
+    const outs = gateOutputs(g)
+    const live = outs.filter((o) => !nets.has(o))
+    if (live.length === outs.length) {
+      kept.push(g)
+      continue
+    }
+    if (live.length === 0) continue
+    kept.push({ prim: g.prim, terminals: [...live, ...gateInputs(g)] })
+  }
+  return kept
+}
+
+/** At most eight bit names, so a wide bus reports readably instead of printing 64 net names. */
+function bitList(bits: string[]): string {
+  const shown = bits.slice(0, 8).map((b) => `"${b}"`)
+  return bits.length <= 8 ? shown.join(', ') : `${shown.join(', ')} and ${bits.length - 8} more`
+}
+
+/** A singular-agreeing noun phrase for the refused bits, so one sentence template fits one bit, some bits and
+ *  all of them ("bit "o[0]" is …", "each of bits "o[0]", "o[2]" is …", "every bit (…) is …"). */
+function subjectOf(bits: string[], targets: string[]): string {
+  if (bits.length === 1) return `bit ${bitList(bits)}`
+  if (bits.length === targets.length) return `every bit (${bitList(bits)})`
+  return `each of bits ${bitList(bits)}`
+}
+
+/** One vector driver's refused bits, held until the netlist is final (see emitRefusal). */
+type Refusal = { where: string; targets: string[]; refused: Map<string, string> }
+
+/** Where a structural gate was written, for a message that has to name it. A gate the synthesizer minted has
+ *  no source line of its own. */
+const lineOf = (g: GateInst): string => (g.line === undefined ? 'synthesized' : `line ${g.line}`)
+
+/**
+ * THE ONE PLACE A DRIVER IS REGISTERED.
+ *
+ * Every producer of a driver — a continuous assign, a combinational or clocked always block, a structural
+ * primitive, a sub-module output port (which the flattener turns into a continuous assign), and the REFUSED
+ * form of each — claims its target bits here and nowhere else. A second claim on a bit is therefore detected
+ * whichever producers made the two claims, which is the property that kept failing one pairing at a time:
+ * structural gates used to be seeded into a plain Set (so two gates on one net collapsed silently into one
+ * entry), and a driver the importer refused used to claim nothing at all (so the next driver became the bit's
+ * only owner and published a value the hardware does not have).
+ *
+ * A claim is bookkeeping only. What the caller does with the returned refusals is its own business, and the
+ * RETRACTION of the drivers already built for a contended bit happens once, at the end of synthesis, from
+ * `contendedBits` — so it catches a structural gate, a synthesized buffer and a flip-flop alike.
+ *
+ * Two things make a bit unclaimable, and they are different: driving an INPUT port is illegal in the source,
+ * and nobody owns the bit afterwards; a CONTENTION means someone already owns it, and neither owner may keep
+ * it, because a two-valued netlist has no x to publish. `contendedReason` lets a caller word the second case
+ * in its own terms (an assign says "assigned more than once", a register says "already driven").
+ */
+type DriverLedger = {
+  claim: (where: string, bits: string[], contendedReason?: string) => Map<string, string>
+  /** Bits more than one driver claimed — every driver of one is retracted at the end of synthesis. */
+  contendedBits: Set<string>
+  /** Bits a driver claimed that are module INPUTS. Illegal in the source, and the driver is retracted at the
+   *  end of synthesis: left in, it beat the value applied to the pin and the design read itself. */
+  inputDrivenBits: Set<string>
+  /** Bit → the `where` of the driver that claimed it first. Reported by the caller, not used for control. */
+  firstClaim: Map<string, string>
+}
+
+/** `resolvesDrivers` marks a bit whose net type COMBINES its drivers (`wor`, `wand`, `trior`, `triand`).
+ *  A second claim there is not a contention; it is what the net is for. */
+function makeDriverLedger(
+  inputs: Set<string>,
+  resolvesDrivers: (bit: string) => boolean,
+): DriverLedger {
+  const firstClaim = new Map<string, string>()
+  const contendedBits = new Set<string>()
+  const inputDrivenBits = new Set<string>()
+  const claim = (
+    where: string,
+    bits: string[],
+    contendedReason = CONTENDED_ASSIGN,
+  ): Map<string, string> => {
+    const refused = new Map<string, string>()
+    for (const bit of bits) {
+      if (inputs.has(bit)) {
+        refused.set(bit, DRIVES_INPUT)
+        inputDrivenBits.add(bit)
+        continue
+      }
+      if (!firstClaim.has(bit)) {
+        firstClaim.set(bit, where)
+        continue
+      }
+      if (resolvesDrivers(bit)) continue
+      refused.set(bit, contendedReason)
+      contendedBits.add(bit)
+    }
+    return refused
+  }
+  return { claim, contendedBits, inputDrivenBits, firstClaim }
+}
+
+/** The declared net a bit-net belongs to: `t[3]` → `t`, `t` → `t`. */
+function baseNetOf(bit: string): string {
+  const m = /^(.*)\[\d+\]$/.exec(bit)
+  return m === null ? bit : (m[1] as string)
+}
+
+/**
+ * EVERYTHING DOWNSTREAM OF AN UNBUILT NET IS UNBUILT TOO.
+ *
+ * A gate whose input has no honest value has no honest output, and a flip-flop fed by one holds an invented
+ * value a clock later just as surely — so a register is carried through rather than treated as a boundary.
+ * This is the same transitive walk the Gowin bitstream reader makes from a block memory it had to refuse.
+ *
+ * Stopping at the direct readers would not be a warning about the design: the case this exists for is an
+ * ordinary `assign o = t | b;` where `t` came from a construct that was skipped, and the wrongness shows up
+ * at `o`, one hop away.
+ */
+/**
+ * Split `always @(posedge clk or posedge reset) if (reset) <clear> else <body>` into the clock, the reset, and
+ * the ordinary body. Which of the two edge nets is the RESET is not in the sensitivity list at all — both are
+ * written `posedge` — so it is read off the leading `if`, and the other net is the clock.
+ *
+ * Only the clear-to-zero form is accepted. A reset that loads a 1 needs a PRESET the cell here does not have,
+ * and a register cleared on reset but never assigned otherwise has a next state this does not know; both are
+ * refused by name rather than approximated, because either guess would be a value the source never wrote.
+ */
+function splitAsyncReset(
+  blk: AlwaysBlock,
+  seq: ProcStmt,
+  widthOf: (name: string) => number,
+): { clk: string; reset: string; body: ProcStmt } | { bad: string } | null {
+  if (seq.t === 'bad') return null // already a refusal; the caller reports it with its own reason
+  const only = seq.t === 'seq' && seq.body.length === 1 ? (seq.body[0] as ProcStmt) : seq
+  if (only.t !== 'if' || only.els === undefined)
+    return {
+      bad: 'two posedge signals need the form "if (reset) … else …", which this block does not have',
+    }
+  if (only.cond.t !== 'net')
+    return { bad: 'the reset test must be the reset net on its own (no expression)' }
+  const tested = only.cond.name
+  const pair = [blk.clk, blk.reset]
+  if (tested !== pair[0] && tested !== pair[1])
+    return {
+      bad: `"${tested}" is tested as the reset but is not one of the two posedge signals`,
+    }
+  const clk = tested === blk.clk ? (blk.reset as string) : (blk.clk as string)
+  const cleared = new Map<string, boolean>() // register → every assignment to it is a constant zero
+  const walk = (s: ProcStmt): string | null => {
+    if (s.t === 'seq') {
+      for (const inner of s.body) {
+        const bad = walk(inner)
+        if (bad !== null) return bad
+      }
+      return null
+    }
+    if (s.t === 'nb') {
+      const zero = s.rhs.t === 'const' && s.rhs.bits.every((b) => b === 0)
+      cleared.set(s.lhs, (cleared.get(s.lhs) ?? true) && zero)
+      return zero ? null : `the reset branch loads "${s.lhs}" with something other than 0`
+    }
+    return 'the reset branch does more than assign constants to registers'
+  }
+  const bad = walk(only.conseq)
+  if (bad !== null) return { bad }
+  const assigned = new Set<string>()
+  collectAssigned(only.els, assigned)
+  const orphan = [...cleared.keys()].filter((r) => !assigned.has(r))
+  if (orphan.length > 0)
+    return {
+      bad: `${orphan.map((r) => `"${r}"`).join(', ')} ${orphan.length === 1 ? 'is' : 'are'} cleared on reset but never assigned otherwise, so ${orphan.length === 1 ? 'its' : 'their'} held value is not known here`,
+    }
+  for (const r of cleared.keys()) if (widthOf(r) < 1) return { bad: `register "${r}" has no width` }
+  return { clk, reset: tested, body: only.els }
+}
+
+function spreadUnbuilt(gates: GateInst[], flops: FlopInst[], unbuilt: Set<string>): void {
+  const consumers = new Map<string, string[][]>()
+  const add = (ins: string[], outs: string[]): void => {
+    for (const net of ins) {
+      const list = consumers.get(net)
+      if (list === undefined) consumers.set(net, [outs])
+      else list.push(outs)
+    }
+  }
+  for (const g of gates) add(gateInputs(g), gateOutputs(g))
+  for (const f of flops) add([f.d, f.clk, ...(f.reset === undefined ? [] : [f.reset])], [f.q])
+  const queue = [...unbuilt]
+  while (queue.length > 0) {
+    const net = queue.pop() as string
+    for (const outs of consumers.get(net) ?? [])
+      for (const o of outs)
+        if (!unbuilt.has(o)) {
+          unbuilt.add(o)
+          queue.push(o)
+        }
+  }
+}
+
+/**
+ * Combine the drivers of a `wor`/`wand` net into the OR/AND the net type means, instead of calling the
+ * second driver a conflict. Each driver keeps its gate but writes a private net; a tree of real 2-input
+ * primitives joins those onto the declared net, so the result is ordinary gates like everything else.
+ *
+ * Runs after every driver exists, which is the only moment the full set of them is known.
+ */
+function combineResolvedDrivers(mod: SynthModule, fresh: () => string): void {
+  if (mod.resolution.size === 0) return
+  const driverIndexes = new Map<string, number[]>()
+  mod.gates.forEach((g, i) => {
+    for (const out of gateOutputs(g)) {
+      if (!mod.resolution.has(baseNetOf(out))) continue
+      const list = driverIndexes.get(out)
+      if (list === undefined) driverIndexes.set(out, [i])
+      else list.push(i)
+    }
+  })
+  const joins: GateInst[] = []
+  for (const [net, indexes] of driverIndexes) {
+    if (indexes.length < 2) continue
+    const prim = mod.resolution.get(baseNetOf(net)) === 'and' ? 'and' : 'or'
+    const privates: string[] = []
+    for (const i of indexes) {
+      const g = mod.gates[i] as GateInst
+      const priv = fresh()
+      privates.push(priv)
+      mod.gates[i] = {
+        ...g,
+        terminals: [...gateOutputs(g).map((o) => (o === net ? priv : o)), ...gateInputs(g)],
+      }
+    }
+    let acc = privates[0] as string
+    for (let k = 1; k < privates.length; k++) {
+      const out = k === privates.length - 1 ? net : fresh()
+      joins.push({ prim, terminals: [out, acc, privates[k] as string] })
+      acc = out
+    }
+  }
+  mod.gates.push(...joins)
+}
+
+/**
+ * Report exactly which bits of one vector driver lost their driver, and say plainly whether the rest of the
+ * vector kept its own. `refused` maps a bit-net to the predicate that follows the subject, so bits refused for
+ * DIFFERENT reasons get one sentence each rather than being lumped together.
+ *
+ * Naming one bit while several die reads as a small local problem when it is not, which is why the kept-bits
+ * clause is part of the message rather than left to the reader to infer. `driven` is the FINISHED netlist's
+ * driver set, not the set at the moment the fault was found: a bit that survived this fault and was retracted
+ * by a later one must not be listed as kept, or the message describes something that did not happen.
+ */
+function emitRefusal(warnings: string[], r: Refusal, driven: Set<string>): void {
+  const kept = r.targets.filter((t) => !r.refused.has(t) && driven.has(t))
+  const tail =
+    kept.length > 0
+      ? ` — the other ${kept.length === 1 ? 'bit' : `${kept.length} bits`} (${bitList(kept)}) ${kept.length === 1 ? 'keeps' : 'keep'} this driver`
+      : r.targets.length > 1
+        ? ' — no bit of it is built'
+        : ''
+  for (const why of new Set(r.refused.values())) {
+    const bits = r.targets.filter((t) => r.refused.get(t) === why)
+    warnings.push(`${r.where}: ${subjectOf(bits, r.targets)} ${why}${tail}`)
+  }
+}
+
+/**
+ * WHY THE x GUARD AND THE CONTENTION GUARD SAY THE SAME THING.
+ *
+ * They are two routes to one situation: a bit whose value Verilog calls unknown. An x reaches a bit through
+ * the EXPRESSION (`a & 1'bx`); a contention reaches it through the NET (two drivers). Both end the same way
+ * here — that one bit gets no driver, the warning names it, and an undriven net is left out of the module's
+ * interface rather than published as 0. Neither guard ever invents a value for a bit whose value is unknown,
+ * and neither takes a driver off a bit that HAS one; that is the whole of the agreement.
+ *
+ * What they cannot do is carry an unknown INTO the netlist, because a two-valued netlist has no x to carry.
+ * So logic INSIDE the module that reads an undriven net does read something, and the value it reads is the
+ * logic engine's rule for a gate with a floating input (logic-sim.ts stepLogic: a gate whose input net has no
+ * value is skipped, and an output nothing ever drove is finally set to 0) — not a decision either guard makes.
+ * MEASURED over all 256 (a, b) vectors: the x form `assign t = {a[3:1], 1'bx}; assign o = t | b;` and the
+ * contention form `assign t = a; assign t[0] = b[0]; assign o = t | b;` give BIT-IDENTICAL output here — o[0]
+ * reads 0 on all 256 vectors in both. A test pins that identity, so the two guards cannot drift apart
+ * without a failure.
+ *
+ * KNOWN AND NOT FIXED HERE: those same 256 vectors show Icarus Verilog 14.0 reading o[0] as 1 on 128 of them
+ * (x | 1 is 1), where this engine reads 0. That gap belongs to the floating-input rule above, not to either
+ * guard — the x form and the contention form suffer it equally — and closing it means changing how every
+ * gate in the logic engine treats a floating input, which is a separate measured change.
+ */
+const CONTENDED_ASSIGN =
+  'is assigned more than once (or already driven by a gate) — two drivers on one net read x in Verilog, so NO driver is built for it and it reads undriven'
+const CONTENDED_REGISTER =
+  'is already driven by a gate or assign — two drivers on one net read x in Verilog, so NO driver is built for it and it reads undriven'
+const STAYS_X =
+  'stays x — an x that nothing masks away has no value a two-valued net can carry, so it is reported and left undriven'
+const CLOCKS_IN_X =
+  'clocks in an x — an x that nothing masks away has no value a two-valued flip-flop can hold, so it is reported and left undriven'
+const NEEDS_TIE =
+  'needs a constant driver but the module has no input to tie one to — reported, left undriven'
+/**
+ * An internal driver on an INPUT port is refused and reported, whichever producer wrote it — an assign, an
+ * always block or (since the ledger) a structural primitive. The bit itself is NOT retracted, because its
+ * driver is the parent outside the module, not anything in here.
+ *
+ * KNOWN AND NOT FIXED HERE, MEASURED over all 256 (a, b) vectors of
+ * `buf g0(a0, b0); buf g1(o0, a0);` and of the same design written `assign a0 = b0;`: Icarus Verilog 14.0
+ * resolves the port to x on the 128 vectors where the two disagree, where this engine publishes the parent's
+ * value on all 256 — the same 128 bits in BOTH forms, which is the agreement the ledger buys. Closing it
+ * means dropping an input port from the interface over an illegal internal driver, which changes the module's
+ * shape rather than one bit of it.
+ */
+const DRIVES_INPUT = 'drives an input port — illegal, reported and left unbuilt'
+
 /** Nets on a combinational cycle in a `net → driver-input-nets` graph (path-based; a feed-forward net that
- *  merely READS a looped net is not flagged). */
+ *  merely READS a looped net is not flagged). The depth-first walk carries its own stack: a chain of 12,000
+ *  buffers is an ordinary structural design and native recursion overflows well before that. */
 function cycleNets(edges: Map<string, string[]>): Set<string> {
   const onCycle = new Set<string>()
   const state = new Map<string, 0 | 1 | 2>()
   const path: string[] = []
-  const visit = (node: string): void => {
-    state.set(node, 1)
-    path.push(node)
-    for (const dep of edges.get(node) ?? []) {
+  for (const root of edges.keys()) {
+    if ((state.get(root) ?? 0) !== 0) continue
+    const stack: { node: string; next: number }[] = [{ node: root, next: 0 }]
+    state.set(root, 1)
+    path.push(root)
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1] as { node: string; next: number }
+      const deps = edges.get(top.node) ?? []
+      if (top.next >= deps.length) {
+        state.set(top.node, 2)
+        path.pop()
+        stack.pop()
+        continue
+      }
+      const dep = deps[top.next] as string
+      top.next += 1
       const s = state.get(dep) ?? 0
       if (s === 1) {
         const from = path.lastIndexOf(dep)
         for (let k = from; k < path.length; k++) onCycle.add(path[k] as string)
-      } else if (s === 0) visit(dep)
+        continue
+      }
+      if (s !== 0) continue
+      state.set(dep, 1)
+      path.push(dep)
+      stack.push({ node: dep, next: 0 })
     }
-    state.set(node, 2)
-    path.pop()
   }
-  for (const node of edges.keys()) if ((state.get(node) ?? 0) === 0) visit(node)
   return onCycle
 }
 
@@ -1870,6 +2604,18 @@ type ProcStmt =
   // whole-signal assignment. `blocking` (a combinational-block `=`) means later reads in the same block see
   // THIS value (elaborate forward-substitutes it); nonblocking `<=` reads the pre-block value.
   | { t: 'nb'; lhs: string; rhs: Expr; blocking?: boolean }
+  // a write to PART of a signal — `pc[7:0] <= d`, `r[1] <= b`. Kept as its own node (rather than rewritten to
+  // a whole-signal write at parse time) because two part-writes to DISJOINT slices of one register in the same
+  // block must BOTH take effect; only elaborate knows the running next-state value to build the second on.
+  | {
+      t: 'nbsel'
+      lhs: string
+      hi: number
+      lo: number
+      width: number
+      rhs: Expr
+      blocking?: boolean
+    }
   | { t: 'memwrite'; name: string; idx: Expr; rhs: Expr; depth: number } // m[addr] <= expr
   | { t: 'seq'; body: ProcStmt[] } // begin … end
   | { t: 'if'; cond: Expr; conseq: ProcStmt; els?: ProcStmt }
@@ -1949,7 +2695,7 @@ function parseStmt(
     if (ts.peek()?.v === ';') ts.next()
     return { t: 'taskcall', name: t.v, argSpans, line: t.line }
   }
-  return parseAssignStmt(ts, mems, comb)
+  return parseAssignStmt(ts, mems, comb, widthOf)
 }
 
 /** Read a parenthesized group's inner tokens; cursor must be AT '('; leaves it just past the matching ')'. */
@@ -1971,7 +2717,12 @@ function readParenToks(ts: TokStream): Tok[] {
 
 /** Parse `lhs <= rhs ;` (nonblocking). Whole-signal (`reg <= …`) and memory (`mem[addr] <= …`) targets build;
  *  blocking `=`, bit/part-select and concat targets are reported. */
-function parseAssignStmt(ts: TokStream, mems: MemTable, comb: boolean): ProcStmt {
+function parseAssignStmt(
+  ts: TokStream,
+  mems: MemTable,
+  comb: boolean,
+  widthOf?: (n: string) => number,
+): ProcStmt {
   const toks: Tok[] = []
   while (ts.peek() !== undefined && ts.peek()?.v !== ';') toks.push(ts.next() as Tok)
   if (ts.peek()?.v === ';') ts.next()
@@ -2010,12 +2761,46 @@ function parseAssignStmt(ts: TokStream, mems: MemTable, comb: boolean): ProcStmt
     // doing it here would fire per-word and miss constant-folded addresses.
     return { t: 'memwrite', name: lhs[0].v, idx, rhs, depth: mem.depth }
   }
+  if (lhs.length > 1 && lhs[0]?.k === 'id' && lhs[1]?.v === '[' && widthOf !== undefined)
+    return selectTarget(lhs, rhs, (toks[opIdx] as Tok).v === '=', widthOf)
   if (lhs.length !== 1 || lhs[0]?.k !== 'id')
     return {
       t: 'bad',
-      why: 'only a whole-signal nonblocking target (reg <= …) is supported — a bit/part-select or concat target is a later increment',
+      why: 'only a whole-signal target (reg <= …) or a constant bit/part-select of one is supported — a concatenation target is a later increment',
     }
   return { t: 'nb', lhs: (lhs[0] as Tok).v, rhs, blocking: (toks[opIdx] as Tok).v === '=' }
+}
+
+/**
+ * A write to PART of a register — `pc[7:0] <= d`, `r[1] <= bit` — rewritten as the equivalent whole-signal
+ * write `pc <= {pc[15:8], d}`. The untouched bits explicitly re-read themselves, which is what the hardware
+ * does (the flip-flops outside the select hold), so every existing rule still applies unchanged: the
+ * conditional-hold muxing, the blocking-read substitution, and the combinational-latch loop guard all see an
+ * ordinary whole-signal assignment. The right-hand side is width-walled to the selected width so it truncates
+ * or zero-extends exactly as Verilog specifies.
+ */
+function selectTarget(
+  lhs: Tok[],
+  rhs: Expr,
+  blocking: boolean,
+  widthOf: (n: string) => number,
+): ProcStmt {
+  const name = (lhs[0] as Tok).v
+  if (lhs[lhs.length - 1]?.v !== ']')
+    return { t: 'bad', why: `malformed bit/part-select target on "${name}"` }
+  const sel = parseSelect(new TokStream(lhs.slice(1)), name)
+  if (sel.t === 'bad') return { t: 'bad', why: `target ${name}[…] — ${sel.why}` }
+  if (sel.t !== 'bitsel' && sel.t !== 'partsel')
+    return { t: 'bad', why: `target ${name}[…] is not a constant bit/part-select` }
+  const hi = sel.t === 'bitsel' ? sel.index : sel.hi
+  const lo = sel.t === 'bitsel' ? sel.index : sel.lo
+  const width = widthOf(name)
+  if (lo < 0 || hi >= width)
+    return {
+      t: 'bad',
+      why: `target ${name}[${hi}:${lo}] is outside the ${width}-bit signal "${name}"`,
+    }
+  return { t: 'nbsel', lhs: name, hi, lo, width, rhs, blocking }
 }
 
 /** Forward-substitute a blocking read: replace each read of a signal already assigned in this block with the
@@ -2187,6 +2972,38 @@ function elaborate(
     case 'nb': {
       const e = new Map(env)
       e.set(stmt.lhs, store(stmt.lhs, stmt.blocking ? substBlocking(stmt.rhs, env) : stmt.rhs))
+      written.add(stmt.lhs)
+      return e
+    }
+    case 'nbsel': {
+      // next = (running value with the selected bits cleared) | (the new value shifted into place). Both the
+      // mask and the shift distance are constants, so the mask/shift themselves fold to nothing (`bit & 0` is
+      // 0, `bit | 0` is the bit). MEASURED: one part-write costs exactly what the hand-written whole-signal
+      // form `p <= {p[15:8], d}` costs (96 inner cells either way). A SECOND part-write to the same register
+      // in the same block re-synthesizes the running value it builds on and the mask then discards half of
+      // it, so two disjoint 8-bit writes to one 16-bit register cost 224 cells where a hand-written single
+      // write costs 96. Correct, and dearer — pruning those dead cells is not done.
+      const e = new Map(env)
+      const prior: Expr = env.get(stmt.lhs) ?? { t: 'net', name: stmt.lhs }
+      const keep: ConstBit[] = []
+      for (let i = 0; i < stmt.width; i++) keep.push(i >= stmt.lo && i <= stmt.hi ? 0 : 1)
+      const placed: Expr = {
+        t: 'bin',
+        op: '<<',
+        a: {
+          t: 'sized',
+          width: stmt.hi - stmt.lo + 1,
+          of: stmt.blocking === true ? substBlocking(stmt.rhs, env) : stmt.rhs,
+        },
+        b: bitsOf(BigInt(stmt.lo), 32),
+      }
+      const next: Expr = {
+        t: 'bin',
+        op: '|',
+        a: { t: 'bin', op: '&', a: prior, b: { t: 'const', bits: keep } },
+        b: placed,
+      }
+      e.set(stmt.lhs, store(stmt.lhs, { t: 'sized', width: stmt.width, of: next }))
       written.add(stmt.lhs)
       return e
     }

@@ -23,6 +23,7 @@ import {
   AND_BLOCK,
   BUFFER_BLOCK,
   D_FLIPFLOP_BLOCK,
+  D_FLIPFLOP_CLEAR_BLOCK,
   INVERTER_BLOCK,
   NAND2_BLOCK,
   NOR2_BLOCK,
@@ -32,6 +33,7 @@ import {
 } from './builtin-blocks.ts'
 import { POWER_PORT_IDS } from './logic-sim.ts'
 import { type ConstVal, evalConst, MAX_WIDTH, splitOnColon } from './verilog-const.ts'
+import { chooseTopModule, flattenHierarchy } from './verilog-hierarchy.ts'
 import { synthesizeBehavioral } from './verilog-synth.ts'
 
 export type ImportResult = {
@@ -88,6 +90,24 @@ const OTHER_GATE_SWITCH = new Set([
   'pulldown',
 ])
 const RESOLVED_NETS = ['tri', 'tri0', 'tri1', 'wand', 'wor', 'triand', 'trior', 'trireg', 'uwire']
+/** Every net-declaration keyword. All of them declare a NET (so a `= expr` initializer is a continuous
+ *  drive, and a range sizes a bus); they differ only in how several drivers on one net resolve. */
+const NET_TYPES = new Set(['wire', ...RESOLVED_NETS, 'supply0', 'supply1'])
+/** The net types that COMBINE their drivers instead of contending. Resolving several drivers is the whole
+ *  point of these, so reporting them as a multiple-driver conflict states the opposite of what they mean. */
+const NET_RESOLUTION: Record<string, 'or' | 'and'> = {
+  wor: 'or',
+  trior: 'or',
+  wand: 'and',
+  triand: 'and',
+}
+/** Net types whose extra behaviour is a VALUE this two-valued netlist has no way to produce: `tri0`/`tri1`
+ *  pull to a level when nothing drives them, and `trireg` holds the last value driven onto it. */
+const UNMODELED_NETS: Record<string, string> = {
+  tri0: 'pulls to 0 when nothing drives it',
+  tri1: 'pulls to 1 when nothing drives it',
+  trireg: 'stores its last driven value on the net itself',
+}
 const BEHAVIORAL = [
   'assign',
   'always',
@@ -101,6 +121,11 @@ const BEHAVIORAL = [
   'task',
   'specify',
 ]
+/** Declarations that introduce something which is NOT a net: a generate loop index, a procedural variable,
+ *  a named event, a timing constant. None of them can be a gate terminal, so skipping the declaration itself
+ *  drives nothing — an `integer` written by an always block is still handled by that block. Without this they
+ *  parsed as failed module instantiations, which now (rightly) makes a design unbuildable. */
+const NON_NET_DECLS = ['genvar', 'integer', 'real', 'realtime', 'time', 'event', 'specparam']
 const STRENGTH0 = new Set(['supply0', 'strong0', 'pull0', 'weak0', 'highz0'])
 const STRENGTH1 = new Set(['supply1', 'strong1', 'pull1', 'weak1', 'highz1'])
 /** Every reserved word the lexer must classify as a keyword (not a net name). Case-sensitive, all lowercase. */
@@ -120,6 +145,9 @@ const KEYWORDS = new Set([
   'signed',
   'scalared',
   'vectored',
+  'supply0',
+  'supply1',
+  ...NON_NET_DECLS,
   ...RESOLVED_NETS,
   ...BEHAVIORAL,
   ...Object.keys(N_INPUT),
@@ -128,7 +156,10 @@ const KEYWORDS = new Set([
 ])
 
 type Kind = 'id' | 'num' | 'kw' | 'p' | 'op' | 'dir' | 'sys' | 'str' | 'unk'
-export type Tok = { k: Kind; v: string; line: number }
+/** `escaped` marks an identifier written `\name ` — the lexer drops the backslash, so without this flag an
+ *  escaped `\posedge ` would be indistinguishable from the syntax word `posedge`, which the parsers key on by
+ *  value. Only the hierarchy flattener needs the distinction (it must rename the net and leave the word). */
+export type Tok = { k: Kind; v: string; line: number; escaped?: true }
 
 const isIdStart = (c: string): boolean => /[A-Za-z_]/.test(c)
 const isIdPart = (c: string): boolean => /[A-Za-z0-9_$]/.test(c)
@@ -229,7 +260,7 @@ function lex(src: string): { tokens: Tok[]; warnings: string[] } {
     if (c === '\\') {
       let j = i + 1
       while (j < n && !isSpace(src[j] as string)) j += 1
-      push('id', src.slice(i + 1, j))
+      tokens.push({ k: 'id', v: src.slice(i + 1, j), line, escaped: true })
       i = j
       continue
     }
@@ -314,15 +345,50 @@ const OPS2 = new Set(['==', '!=', '<=', '>=', '<<', '>>', '&&', '||', '~&', '~|'
 const OPS1 = new Set(['&', '|', '^', '~', '!', '?', '+', '-', '*', '/', '%', '<', '>', '='])
 
 // ── structural parser ─────────────────────────────────────────────────────────
-export type GateInst = { prim: string; terminals: string[] }
+/** `line` is the source line of a gate written in the source; a gate the SYNTHESIZER mints has none. It is
+ *  carried so a contention between two structural gates can name where each was written. */
+export type GateInst = { prim: string; terminals: string[]; line?: number | undefined }
+/** A gate primitive whose terminals are not all plain nets — `and g(t[0], a[0], b[0])`, `buf g(y, 1'b1)`,
+ *  `xor g(y, {a[0]}, b)`. Ordinary Verilog, but the widths that turn `t[0]` into a bit-net live in the
+ *  synthesizer, so the raw token spans travel there and are resolved with the machinery an `assign` uses. */
+export type RawGate = { prim: string; slices: Tok[][]; line: number }
+/**
+ * A driver the source WROTE that this importer will not build. It still owns the net bits it targets: a later
+ * driver on those bits is a contention in the real hardware, not a lone driver, and publishing the later one
+ * would invent a value. `terms` holds the target token spans (one per output terminal / connection), resolved
+ * to bit-nets by the synthesizer, which is the only place that knows every net's width.
+ *
+ * `what` names the construct in plain English, because those bits are also UNBUILT: nothing downstream of
+ * them may be published (see the transitive-unbuilt rule in verilog-synth.ts), and the refusal has to say
+ * which construct caused it. `wholeModule` marks the case where the skipped construct could drive nets this
+ * importer cannot even name — then the whole design is unbuilt, since there is no smaller honest answer.
+ */
+export type RefusedDriver = {
+  where: string
+  what: string
+  terms: Tok[][]
+  wholeModule?: true
+}
 /** A continuous assignment `assign <lhs> = <rhs>;` captured as token spans; the synthesizer (verilog-synth)
  *  parses the rhs into gates. */
 export type Assign = { lhs: Tok[]; rhs: Tok[]; line: number }
+/** A register's POWER-ON contents, written `initial <reg> = <constant>;`. Not a driver: it says what the
+ *  flip-flop holds before the first clock edge. */
+export type PowerOnValue = { name: string; value: ConstVal; line: number }
 /** An always block captured as token spans; the synthesizer elaborates the body. `clk` is the clock net for a
  *  `@(posedge clk)` block (→ flip-flops) or null for a combinational `@(*)`/`@*`/`@(a or b)` block (→ gates). */
-export type AlwaysBlock = { clk: string | null; body: Tok[]; line: number }
-/** A synthesized flip-flop: its D-input net, clock net, and Q-output net (one per registered bit). */
-export type FlopInst = { d: string; clk: string; q: string }
+export type AlwaysBlock = {
+  clk: string | null
+  /** The second `posedge` net of `@(posedge clk or posedge reset)`. Which of the two is the RESET is decided
+   *  by the body (the one the leading `if` tests), so both are carried here and the synthesizer picks. */
+  reset: string | null
+  body: Tok[]
+  line: number
+}
+/** A synthesized flip-flop: its D-input net, clock net, and Q-output net (one per registered bit). `reset` is
+ *  the asynchronous active-high CLEAR net when the block was written `@(posedge clk or posedge reset)`; the
+ *  flop is then lowered as a real D_FLIPFLOP_CLEAR_BLOCK instead of a plain one. */
+export type FlopInst = { d: string; clk: string; q: string; reset?: string }
 /** A declared memory `reg [width-1:0] m [0:depth-1]` — `depth` words, each `width` bits. The synthesizer
  *  turns each word into real flip-flops and `m[addr]` into a decode/mux, exactly like the gate Data RAM. */
 export type MemInfo = { width: number; depth: number }
@@ -347,13 +413,45 @@ export type TaskDef = {
   localWidths: Map<string, number>
   body: Tok[]
 }
-type ParsedModule = {
+/** One port connection on a module instance: `.port(expr)` (named) or just `expr` (positional, `port` null).
+ *  An empty `expr` is a deliberately unconnected port — legal Verilog, reported by the flattener. */
+export type PortConn = { port: string | null; expr: Tok[] }
+/** A `child u1(...)` sub-module instantiation, captured before any module table exists — whether `moduleName`
+ *  names a module in this source is decided later, by the flattener. `unsupported` is a plain-English reason
+ *  the instance cannot be built at all (a parameter override we cannot apply, an instance array); it is
+ *  reported and the instance is skipped rather than built with the wrong parameters. */
+export type ModuleInst = {
+  moduleName: string
+  instName: string
+  conns: PortConn[]
+  named: boolean
+  line: number
+  unsupported: string | null
+}
+/**
+ * What this importer could not build, after the transitive walk in verilog-synth.ts. `nets` holds every
+ * bit-net for which no honest value exists — the ones a skipped construct might have driven, plus everything
+ * downstream of them; `constructs` names the skipped constructs in plain English; `wholeModule` marks a skip
+ * whose targets could not be identified at all, which makes the entire design unbuilt.
+ */
+export type UnbuiltReport = { nets: Set<string>; constructs: string[]; wholeModule: boolean }
+
+export type ParsedModule = {
   name: string
   portOrder: string[]
+  /** Every header port POSITION, in source order, with `null` where a port could not be represented. A
+   *  positional instantiation counts from the left, so the gaps have to keep their places or every later
+   *  connection lands on the wrong port. `portOrder` holds only the usable ones. */
+  portPositions: (string | null)[]
   dir: Map<string, 'input' | 'output' | 'inout'>
   gates: GateInst[]
+  /** Gate primitives whose terminals still need width information to resolve (see RawGate). */
+  rawGates: RawGate[]
   assigns: Assign[]
   alwaysBlocks: AlwaysBlock[]
+  /** Drivers written in the source that this importer refuses to build. They claim their bits like any other
+   *  driver, so a second driver on the same bit is still seen as the contention it is. */
+  refusedDrivers: RefusedDriver[]
   /** Filled by the synthesizer: one flip-flop per registered bit; lower() places each as a D_FLIPFLOP_BLOCK. */
   flops: FlopInst[]
   /** Net → bit width for declared buses (`[N:0] a` → 4). Absent ⇒ a 1-bit scalar. */
@@ -366,6 +464,27 @@ type ParsedModule = {
   tasks: Map<string, TaskDef>
   /** Names of `signed` nets/ports (drive sign-extension + signed comparisons/shifts/divide). */
   signed: Set<string>
+  /** Nets declared `wor`/`wand`/`trior`/`triand`: several drivers COMBINE with this function instead of
+   *  contending. Reporting those as a multiple-driver conflict says the opposite of what the net means. */
+  resolution: Map<string, 'or' | 'and'>
+  /** `initial <reg> = <constant>` power-on values. The synthesizer checks each against what the flip-flop it
+   *  builds actually powers up holding, and refuses the ones it cannot honour. */
+  powerOnValues: PowerOnValue[]
+  /** Sub-module instantiations, inlined into this module by the flattener before synthesis. */
+  instances: ModuleInst[]
+  /** Header ports this parser could not represent and left OUT of `portOrder` — an `inout`, a port whose
+   *  range it could not read, a null port position, a port expression. Each one shifts every later port's
+   *  POSITION, so a positional instantiation of such a module can no longer be aligned and the flattener
+   *  refuses it. A named instantiation is unaffected: it binds by name, and a connection to a dropped port
+   *  is reported on its own. */
+  droppedPorts: string[]
+  /** Every identifier inside a span this importer swallowed WITHOUT parsing its statements — a `generate`
+   *  body, or a statement whose leading word could not be read as an instantiation (a bare `for` generate).
+   *  Those are the only two places a module instantiation can hide, and a hidden instantiation makes the
+   *  instantiated module look top-level, which hands back the wrong module as the design (chooseTopModule). */
+  namesInsideUnparsedSpans: Set<string>
+  /** Filled by the synthesizer. Empty until then. */
+  unbuilt: UnbuiltReport
 }
 
 /** A `[ msb : lsb ]` range's bit width. Both bounds are folded as constant expressions (a parameter has
@@ -578,8 +697,9 @@ function collidingParamNames(span: Tok[], params: Map<string, ConstVal>): Set<st
   return collide
 }
 
-/** Elaborate parameters within the FIRST module only (params are module-scoped; a same-named parameter in a
- *  later module must not rewrite this one's nets), returning the token stream with every use substituted. */
+/** Elaborate the parameters of the module in `toks` (callers pass ONE module span; params are module-scoped,
+ *  so a same-named parameter in another module never rewrites this one's nets), returning the token stream
+ *  with every use substituted. */
 function elaborateParams(toks: Tok[], warnings: string[]): Tok[] {
   const start = toks.findIndex((t) => t.k === 'kw' && t.v === 'module')
   if (start === -1) return toks
@@ -646,6 +766,127 @@ function skipStatement(c: Cursor): void {
   }
 }
 
+/** The words that may legally precede a `(` inside a statement without being an instantiation or a call.
+ *  Our lexer leaves them as plain identifiers, so `for (` would otherwise read as an instance of a module
+ *  named `for` and make an ordinary loop look like something that could drive anything. */
+const CONTROL_WORDS = new Set([
+  'for',
+  'if',
+  'while',
+  'repeat',
+  'forever',
+  'case',
+  'casex',
+  'casez',
+  'wait',
+  'disable',
+])
+
+/** Collect a construct we don't model, returning its whole token span (skipStatement decides where it ends). */
+function collectStatement(c: Cursor): Tok[] {
+  const start = c.i
+  skipStatement(c)
+  return c.toks.slice(start, c.i)
+}
+
+/**
+ * Read an `initial` block that does nothing but load registers with constants — `initial phase = 1'b0;`, or a
+ * begin…end of several such loads. Returns null for every other `initial` (a delay, a `force`, a $task, a
+ * non-constant value), which then takes the ordinary not-built path.
+ *
+ * This is the ONE reading of `initial` that describes hardware rather than simulation: the power-on contents
+ * of a register. Anything else an `initial` block does happens at time zero in a simulator and has no image
+ * in a netlist at all.
+ */
+function initialPowerOnValues(span: Tok[]): PowerOnValue[] | null {
+  let i = 1 // past `initial`
+  let end = span.length
+  if (span[i]?.k === 'kw' && span[i]?.v === 'begin') {
+    if (span[end - 1]?.k !== 'kw' || span[end - 1]?.v !== 'end') return null
+    i += 1
+    end -= 1
+  }
+  const out: PowerOnValue[] = []
+  while (i < end) {
+    const name = span[i]
+    if (name === undefined || name.k !== 'id') return null
+    if (span[i + 1]?.v !== '=') return null
+    let j = i + 2
+    while (j < end && span[j]?.v !== ';') j += 1
+    const value = evalConst(span.slice(i + 2, j))
+    if (value === undefined) return null
+    out.push({ name: name.v, value, line: name.line })
+    i = j + 1
+  }
+  return out.length === 0 ? null : out
+}
+
+/** Collect a `generate … endgenerate` region, which holds SEVERAL statements and so cannot end at the first
+ *  `;` or `end` the way one statement does. The `endgenerate` is consumed; a region missing it stops at
+ *  `endmodule`. */
+function collectGenerate(c: Cursor): Tok[] {
+  const start = c.i
+  while (!c.atEnd() && !c.is('endgenerate') && !c.is('endmodule')) c.next()
+  const span = c.toks.slice(start, c.i)
+  if (c.is('endgenerate')) c.next()
+  return span
+}
+
+/**
+ * The nets a SKIPPED construct could have driven, read straight off its tokens: every assignment target in
+ * the span (`t`, `t[i]`, `t[3:0]`, `{x,y}`, on either `=` or `<=`), which covers a generate body, an
+ * `initial`, a `force` and a procedural block alike.
+ *
+ * Returns null when the span holds something whose targets cannot be identified this way — a module or
+ * primitive instantiation, or a call — because a driver reached through a port connection leaves no `=`
+ * behind. The caller then declares the WHOLE module unbuilt, which is the only honest answer available when
+ * we cannot say what a construct we did not build was driving.
+ */
+export function assignmentTargets(span: Tok[]): Tok[][] | null {
+  const terms: Tok[][] = []
+  for (let i = 0; i < span.length; i++) {
+    const t = span[i] as Tok
+    if (t.k === 'id' && span[i + 1]?.v === '(' && !CONTROL_WORDS.has(t.v)) return null
+    if (
+      t.k === 'kw' &&
+      (N_INPUT[t.v] !== undefined || N_OUTPUT[t.v] !== undefined || OTHER_GATE_SWITCH.has(t.v))
+    )
+      return null
+    if (t.v === '{') {
+      const close = matchBracket(span, i)
+      if (close === -1) return null
+      if (isAssignOp(span[close + 1])) terms.push(span.slice(i, close + 1))
+      i = close
+      continue
+    }
+    if (t.k !== 'id') continue
+    let j = i + 1
+    while (span[j]?.v === '[') {
+      const close = matchBracket(span, j)
+      if (close === -1) return null
+      j = close + 1
+    }
+    if (isAssignOp(span[j])) terms.push(span.slice(i, j))
+  }
+  return terms
+}
+
+const isAssignOp = (t: Tok | undefined): boolean => t?.v === '=' || t?.v === '<='
+
+/** The index of the `)`/`]`/`}` closing the bracket at `open`, or -1 if it is never closed. */
+function matchBracket(span: Tok[], open: number): number {
+  let depth = 0
+  for (let i = open; i < span.length; i++) {
+    const v = (span[i] as Tok).v
+    if (v === '(' || v === '[' || v === '{') depth += 1
+    else if (v === ')' || v === ']' || v === '}') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
 /** Read a `(`-delimited group, returning depth-0 comma-separated slices (each a token list). Cursor must be
  *  AT the opening `(`; leaves it just past the matching `)`. An empty `()` returns []. */
 function readGroup(c: Cursor): Tok[][] {
@@ -698,9 +939,12 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
 
   const dir = new Map<string, 'input' | 'output' | 'inout'>()
   const portOrder: string[] = []
+  const portPositions: (string | null)[] = []
   const widths = new Map<string, number>()
   const mems = new Map<string, MemInfo>()
   const signed = new Set<string>()
+  const resolution = new Map<string, 'or' | 'and'>()
+  const droppedPorts: string[] = []
   // A `#( … )` parameter-port list: its defaults were already folded + substituted by elaborateParams, so
   // just consume the group here. Without this the cursor would sit on `#`, the port `(` would never be read,
   // and a parameterized module would silently lose its ENTIRE port list.
@@ -708,14 +952,20 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     c.next()
     if (c.is('(')) readGroup(c)
   }
-  if (c.is('(')) parseHeader(readGroup(c), portOrder, dir, widths, signed, warnings)
+  if (c.is('('))
+    parseHeader(readGroup(c), portOrder, portPositions, dir, widths, signed, droppedPorts, warnings)
   if (c.is(';')) c.next()
 
   const gates: GateInst[] = []
+  const rawGates: RawGate[] = []
+  const refusedDrivers: RefusedDriver[] = []
+  const powerOnValues: PowerOnValue[] = []
   const assigns: Assign[] = []
   const alwaysBlocks: AlwaysBlock[] = []
   const functions = new Map<string, FuncDef>()
   const tasks = new Map<string, TaskDef>()
+  const instances: ModuleInst[] = []
+  const namesInsideUnparsedSpans = new Set<string>()
   while (!c.atEnd() && !c.is('endmodule')) {
     const t = c.peek() as Tok
     if (t.k === 'dir') {
@@ -723,27 +973,27 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       continue
     }
     if (t.k === 'kw' && (t.v === 'input' || t.v === 'output' || t.v === 'inout')) {
-      parsePortDecl(c, dir, widths, signed, warnings)
+      parsePortDecl(c, dir, widths, signed, assigns, refusedDrivers, warnings)
       continue
     }
-    if (t.k === 'kw' && (t.v === 'wire' || t.v === 'reg')) {
+    if (t.k === 'kw' && (t.v === 'reg' || NET_TYPES.has(t.v))) {
       // `reg [n:0] x;` captures a width like `wire`; `reg [d:0] m [0:w-1];` captures a memory
-      parseNetDecl(c, widths, mems, signed, warnings)
+      parseNetDecl(c, widths, mems, signed, assigns, resolution, refusedDrivers, warnings)
       continue
     }
     if (t.k === 'kw' && t.v === 'assign') {
-      assigns.push(...parseAssigns(c))
+      assigns.push(...parseAssigns(c, warnings))
       continue
     }
     if (t.k === 'kw' && t.v === 'always') {
       // A posedge-clocked always is CAPTURED for sequential synthesis; anything else (async reset, negedge,
       // combinational @*, multiple edges) falls through to the behavioral report below.
-      const block = parseAlways(c, warnings)
+      const block = parseAlways(c, refusedDrivers, warnings)
       if (block !== null) alwaysBlocks.push(block)
       continue
     }
     if (t.k === 'kw' && (N_INPUT[t.v] !== undefined || N_OUTPUT[t.v] !== undefined)) {
-      parseGateStatement(c, gates, warnings)
+      parseGateStatement(c, gates, rawGates, refusedDrivers, warnings)
       continue
     }
     if (t.k === 'kw' && (t.v === 'parameter' || t.v === 'localparam')) {
@@ -764,32 +1014,53 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       warnings.push(
         `line ${t.line}: primitive "${t.v}" has no ChipBlocks gate — reported, not built`,
       )
+      parseSwitchStatement(c, refusedDrivers)
+      continue
+    }
+    if (t.k === 'kw' && NON_NET_DECLS.includes(t.v)) {
       c.next()
       skipStatement(c)
       continue
     }
-    if (t.k === 'kw' && RESOLVED_NETS.includes(t.v)) {
-      warnings.push(
-        `line ${t.line}: net type "${t.v}" carries resolution a ChipBlocks wire can't model — reported`,
-      )
+    if (t.k === 'kw' && t.v === 'specify') {
+      // Timing specification only — it declares delays, never a driver, so skipping it changes no value.
       c.next()
-      skipStatement(c)
+      skipToEnd(c, 'endspecify')
       continue
     }
     if (t.k === 'kw' && BEHAVIORAL.includes(t.v)) {
+      let span: Tok[]
+      if (t.v === 'generate') {
+        c.next()
+        span = collectGenerate(c)
+        for (const tok of span) if (tok.k === 'id') namesInsideUnparsedSpans.add(tok.v)
+      } else span = collectStatement(c)
+      // `initial r = <constant>;` is not a driver competing with the rest of the design — it is the value the
+      // register holds at power-on. Read as a driver it CONTENDS with the always block that clocks the same
+      // register, and both lose theirs; read for what it is, it is either satisfied by the flip-flop this
+      // importer builds or refused by name. The synthesizer decides which, because only it knows which
+      // registers are clocked.
+      const powerOn = t.v === 'initial' ? initialPowerOnValues(span) : null
+      if (powerOn !== null) {
+        powerOnValues.push(...powerOn)
+        continue
+      }
+      const targets = t.v === 'defparam' ? null : assignmentTargets(span)
+      // `defparam` overrides a parameter somewhere else in the design. It drives nothing itself, but every
+      // width and constant computed from that parameter is wrong without it, and there is no net to name.
       warnings.push(
-        `line ${t.line}: "${t.v}" is a behavioral/non-structural construct — reported, not built`,
+        `line ${t.line}: "${t.v}" is a construct this importer does not build — reported, not built`,
       )
-      c.next()
-      skipStatement(c)
+      refusedDrivers.push({
+        where: `line ${t.line}`,
+        what: `a "${t.v}" construct`,
+        terms: targets ?? [],
+        ...(targets === null ? { wholeModule: true as const } : {}),
+      })
       continue
     }
     if (t.k === 'id') {
-      warnings.push(
-        `line ${t.line}: instance "${t.v}" is a module/UDP, not a gate primitive — reported, not built`,
-      )
-      c.next()
-      skipStatement(c)
+      parseInstance(c, instances, refusedDrivers, namesInsideUnparsedSpans, warnings)
       continue
     }
     c.next() // stray token — advance so the loop can never spin
@@ -797,17 +1068,141 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   return {
     name: nameTok.v,
     portOrder,
+    portPositions,
     dir,
     gates,
+    rawGates,
     assigns,
     alwaysBlocks,
+    refusedDrivers,
+    powerOnValues,
     flops: [],
     widths,
     mems,
     functions,
     tasks,
     signed,
+    resolution,
+    instances,
+    droppedPorts,
+    namesInsideUnparsedSpans,
+    unbuilt: { nets: new Set<string>(), constructs: [], wholeModule: false },
   }
+}
+
+/**
+ * Parse a sub-module instantiation `child #(…) u1 (…), u2 (…);` into one ModuleInst per instance name.
+ * Whether `child` names a module in this source is NOT decided here — the flattener owns that, so a UDP or a
+ * synthesis-tool cell (yosys' `$_NAND_`) still reports the honest "no such module" rather than a parse error.
+ * A `#(…)` override or an instance-array range is recorded as `unsupported`: building the instance anyway
+ * would use the module's own parameter defaults, i.e. the wrong widths, with nothing said.
+ */
+function parseInstance(
+  c: Cursor,
+  instances: ModuleInst[],
+  refusedDrivers: RefusedDriver[],
+  namesInsideUnparsedSpans: Set<string>,
+  warnings: string[],
+): void {
+  const start = c.i
+  const modTok = c.next() as Tok
+  const line = modTok.line
+  let unsupported: string | null = null
+  if (c.is('#')) {
+    c.next()
+    if (c.is('(')) readGroup(c)
+    unsupported = 'a parameter override (#(…)) cannot be applied to an already-elaborated module'
+  }
+  let parsedAny = false
+  while (!c.atEnd()) {
+    const nameTok = c.peek()
+    if (nameTok === undefined || nameTok.k !== 'id') break
+    c.next()
+    let arrayed = false
+    while (c.is('[')) {
+      readBracketGroup(c)
+      arrayed = true
+    }
+    if (!c.is('(')) break
+    const slices = readGroup(c)
+    const parsed = parseConnections(slices, modTok.v, nameTok.v, warnings)
+    instances.push({
+      moduleName: modTok.v,
+      instName: nameTok.v,
+      conns: parsed.conns,
+      named: parsed.named,
+      line,
+      unsupported: arrayed
+        ? 'an instance array (one name covering several copies) is not built'
+        : unsupported,
+    })
+    parsedAny = true
+    if (!c.is(',')) break
+    c.next()
+  }
+  if (!parsedAny) {
+    warnings.push(
+      `line ${line}: instance "${modTok.v}" is not a gate primitive and its instantiation could not be parsed — reported, not built`,
+    )
+    // Not one connection was read, so there is no net to name as unbuilt — and an instantiation drives
+    // through its ports. The only honest answer is that the whole design is unbuilt.
+    refusedDrivers.push({
+      where: `line ${line}`,
+      what: `an unreadable instantiation of "${modTok.v}"`,
+      terms: [],
+      wholeModule: true,
+    })
+  }
+  if (c.is(';')) c.next()
+  else skipStatement(c)
+  // A bare `for (…) begin … end` generate loop arrives here as an "instance" of a module called `for`, and
+  // skipStatement then swallows the whole body — instantiations and all — without parsing one statement of
+  // it. What it held is unknown, so every name in it counts as possibly-instantiated.
+  if (!parsedAny)
+    for (const t of c.toks.slice(start, c.i)) if (t.k === 'id') namesInsideUnparsedSpans.add(t.v)
+}
+
+/** Consume a balanced `[ … ]` group; the cursor must be AT the `[` and is left just past its `]`. */
+function readBracketGroup(c: Cursor): void {
+  let depth = 0
+  while (!c.atEnd()) {
+    const t = c.next() as Tok
+    if (t.v === '[') depth += 1
+    else if (t.v === ']') {
+      depth -= 1
+      if (depth === 0) return
+    }
+  }
+}
+
+/** Split an instance's connection list into named (`.port(expr)`) or positional (`expr`) connections. A
+ *  connection with no expression is a deliberately unconnected port — kept, so the flattener can say which
+ *  port floats rather than silently shifting the positional order. */
+function parseConnections(
+  slices: Tok[][],
+  moduleName: string,
+  instName: string,
+  warnings: string[],
+): { conns: PortConn[]; named: boolean } {
+  const named = slices.some((s) => s[0]?.v === '.')
+  const conns: PortConn[] = []
+  for (const s of slices) {
+    if (!named) {
+      conns.push({ port: null, expr: s })
+      continue
+    }
+    const portTok = s[1]
+    if (s[0]?.v !== '.' || portTok === undefined || portTok.k !== 'id') {
+      warnings.push(
+        `line ${s[0]?.line ?? 0}: instance "${instName}" of "${moduleName}" mixes named and positional port connections — the positional one is reported, not connected`,
+      )
+      continue
+    }
+    const open = s.findIndex((t) => t.v === '(')
+    const expr = open === -1 ? [] : s.slice(open + 1, s.length - 1)
+    conns.push({ port: portTok.v, expr })
+  }
+  return { conns, named }
 }
 
 /** Parse a synthesizable `function … endfunction` into a FuncDef. Both header forms are handled: ANSI
@@ -1061,20 +1456,32 @@ function parseTaskPorts(
 /** Parse an always block. `@(posedge clk)` → a clocked block (clk set); `@*` / `@(*)` / `@(a or b …)` with no
  *  edge → a combinational block (clk null). Returns null (with a warning) for the forms neither path builds:
  *  negedge, or a mixed edge/level sensitivity. */
-function parseAlways(c: Cursor, warnings: string[]): AlwaysBlock | null {
+function parseAlways(
+  c: Cursor,
+  refusedDrivers: RefusedDriver[],
+  warnings: string[],
+): AlwaysBlock | null {
   const line = c.peek()?.line ?? 0
   c.next() // 'always'
   const report = (why: string): null => {
     warnings.push(`line ${line}: always block — ${why} — reported, not built`)
-    skipStatement(c)
+    // The block still WROTE every register it assigns. Claiming those targets is what stops the rest of the
+    // design from reading them as 0 as though the block had never existed.
+    const targets = assignmentTargets(collectStatement(c))
+    refusedDrivers.push({
+      where: `line ${line}`,
+      what: 'an always block this importer cannot build',
+      terms: targets ?? [],
+      ...(targets === null ? { wholeModule: true as const } : {}),
+    })
     return null
   }
-  const capture = (clk: string | null): AlwaysBlock => {
+  const capture = (clk: string | null, reset: string | null = null): AlwaysBlock => {
     // The body is ONE complete procedural statement (begin…end / if-else / case…endcase aware), so stopping
     // at the first ';' can't truncate a multi-statement block.
     const body: Tok[] = []
     readStatementSpan(c, body)
-    return { clk, body, line }
+    return { clk, reset, body, line }
   }
   if (!c.is('@')) return report('only @(…) / @* sensitivity-list always blocks are synthesized')
   c.next() // '@'
@@ -1089,15 +1496,34 @@ function parseAlways(c: Cursor, warnings: string[]): AlwaysBlock | null {
     return report('negedge clocks are not supported (the flip-flop is positive-edge)')
   const posedgeIdx = flat.findIndex((t) => t.v === 'posedge')
   if (posedgeIdx === -1) return capture(null) // no edge → combinational (@(*) or @(a or b …))
-  // Clocked: exactly `posedge <id>` — no `or`/comma (a second slice or an `or` means a mixed/async list).
-  if (sens.length > 1 || flat.some((t) => t.v === 'or'))
-    return report(
-      'an edge mixed with other sensitivity signals (e.g. an async reset) is not supported',
-    )
-  const clkTok = flat[posedgeIdx + 1]
-  if (clkTok === undefined || clkTok.k !== 'id')
-    return report('the clock must be a simple net after posedge')
-  return capture(clkTok.v)
+  // Split the list on `or` AND on the comma the parser already used to slice it: `posedge clk or posedge rst`
+  // and `posedge clk, posedge rst` are the same list written two ways.
+  const terms: Tok[][] = []
+  for (const slice of sens) {
+    let run: Tok[] = []
+    for (const t of slice) {
+      if (t.k === 'kw' && t.v === 'or') {
+        terms.push(run)
+        run = []
+        continue
+      }
+      run.push(t)
+    }
+    terms.push(run)
+  }
+  const edgeNets: string[] = []
+  for (const term of terms) {
+    // Every term must be `posedge <net>`: one level-sensitive signal among the edges means the block is not a
+    // flip-flop at all, and building it as one would invent an edge the source never asked for.
+    if (term.length !== 2 || term[0]?.v !== 'posedge' || term[1]?.k !== 'id')
+      return report(
+        'an edge mixed with other sensitivity signals (e.g. a level-sensitive signal) is not supported',
+      )
+    edgeNets.push((term[1] as Tok).v)
+  }
+  if (edgeNets.length === 1) return capture(edgeNets[0] as string)
+  if (edgeNets.length === 2) return capture(edgeNets[0] as string, edgeNets[1] as string)
+  return report('more than two posedge signals in one always block is not supported')
 }
 
 /** Append one complete procedural statement's tokens to `out`: a begin…end block, an if/else (both branches),
@@ -1169,8 +1595,29 @@ function readStatementSpan(c: Cursor, out: Tok[]): void {
 
 /** Parse `assign <lhs> = <rhs> {, <lhs> = <rhs>} ;` into one Assign per comma-separated assignment. lhs and
  *  rhs are captured as raw token spans; the synthesizer (verilog-synth.ts) parses + sizes + lowers them. */
-function parseAssigns(c: Cursor): Assign[] {
+function parseAssigns(c: Cursor, warnings: string[]): Assign[] {
   c.next() // 'assign'
+  // A drive strength and/or a delay may sit between `assign` and the target. Both were being swept into the
+  // lhs, so `assign #1 t = a;` reported "assign target must be a net" — naming the wrong thing entirely, since
+  // the target IS a net and the delay is what this importer does not model. A delay changes WHEN a net
+  // settles, never what it settles to, and this netlist has no timing at all (a gate delay is already
+  // reported and the gate still built), so the assignment is built and the delay reported.
+  if (c.is('(') && looksLikeStrength(c)) {
+    const g = readGroup(c)
+    if (!isDefaultStrength(g))
+      warnings.push(
+        'drive strength on a continuous assignment is unmodeled (ChipBlocks gates have fixed drive) — reported',
+      )
+  }
+  if (c.is('#')) {
+    const line = c.peek()?.line ?? 0
+    c.next()
+    if (c.is('(')) readGroup(c)
+    else c.next()
+    warnings.push(
+      `line ${line}: the delay on this continuous assignment is unmodeled — the assignment itself is built, and it settles to the same value`,
+    )
+  }
   const out: Assign[] = []
   for (;;) {
     const line = c.peek()?.line ?? 0
@@ -1203,11 +1650,21 @@ function parseAssigns(c: Cursor): Assign[] {
 function parseHeader(
   slices: Tok[][],
   portOrder: string[],
+  portPositions: (string | null)[],
   dir: Map<string, 'input' | 'output' | 'inout'>,
   widths: Map<string, number>,
   signed: Set<string>,
+  droppedPorts: string[],
   warnings: string[],
 ): void {
+  const keep = (name: string): void => {
+    portOrder.push(name)
+    portPositions.push(name)
+  }
+  const drop = (label: string): void => {
+    droppedPorts.push(label)
+    portPositions.push(null)
+  }
   const ansi = slices.some(
     (s) => s[0] !== undefined && ['input', 'output', 'inout'].includes(s[0].v),
   )
@@ -1220,15 +1677,18 @@ function parseHeader(
   for (const s of slices) {
     if (s.length === 0) {
       warnings.push('null port position (empty port) is not representable — skipped')
+      drop('<null port position>')
       continue
     }
     if (!ansi) {
       const id = s.find((t) => t.k === 'id')
-      if (id !== undefined) portOrder.push(id.v)
-      else
+      if (id !== undefined) keep(id.v)
+      else {
         warnings.push(
           'port expression (concat/bit-select) in the header is not representable — skipped',
         )
+        drop('<port expression>')
+      }
       continue
     }
     for (let i = 0; i < s.length; i++) {
@@ -1249,14 +1709,22 @@ function parseHeader(
       } else if (t.k === 'id') {
         if (width === 'bad') {
           warnings.push(`vector/bus port "${t.v}" has an unsupported range — skipped`)
+          drop(t.v)
           continue
         }
-        if (d === undefined) continue
+        if (d === undefined) {
+          warnings.push(
+            `port "${t.v}" appears in the header before any direction keyword — skipped`,
+          )
+          drop(t.v)
+          continue
+        }
         if (d === 'inout') {
           warnings.push(`inout port "${t.v}" (bidirectional) is not representable — skipped`)
+          drop(t.v)
           continue
         }
-        portOrder.push(t.v)
+        keep(t.v)
         dir.set(t.v, d)
         if (typeof width === 'number' && width > 1) widths.set(t.v, width)
         if (sgn) signed.add(t.v)
@@ -1270,18 +1738,36 @@ function parsePortDecl(
   dir: Map<string, 'input' | 'output' | 'inout'>,
   widths: Map<string, number>,
   signed: Set<string>,
+  assigns: Assign[],
+  refusedDrivers: RefusedDriver[],
   warnings: string[],
 ): void {
   const d = (c.next() as Tok).v as 'input' | 'output' | 'inout'
   let width: number | 'bad' | undefined // the pending `[N:0]` range for the following ids
   let sgn = false
+  let lastId: Tok | undefined
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
     if (t.v === '=') {
+      // A net-declaration assignment written on the PORT declaration. Not built — Icarus Verilog 14.0
+      // rejects the form outright ("'o2' is not a valid l-value for a procedural assignment"), so there is
+      // no oracle to pin a build against, and this project does not ship behaviour it cannot measure. The
+      // port is claimed instead, so nothing downstream reads it as 0.
       warnings.push(
         `line ${t.line}: port-declaration continuous assignment (${d} … = …) is behavioral/non-structural — reported, not built`,
       )
-      while (!c.atEnd() && !c.is(';')) c.next()
+      c.next()
+      readDeclInitializer(c)
+      if (lastId !== undefined)
+        refusedDrivers.push({
+          where: `line ${t.line}`,
+          what: 'a continuous assignment written on a port declaration',
+          terms: [[lastId]],
+        })
+      if (c.is(',')) {
+        c.next()
+        continue
+      }
       break
     }
     if (t.k === 'kw' && t.v === 'signed') {
@@ -1297,6 +1783,7 @@ function parsePortDecl(
     }
     c.next()
     if (t.k !== 'id') continue
+    lastId = t
     if (width === 'bad') {
       warnings.push(`vector/bus port "${t.v}" has an unsupported range — skipped`)
       continue
@@ -1317,18 +1804,64 @@ function parseNetDecl(
   widths: Map<string, number>,
   mems: Map<string, MemInfo>,
   signed: Set<string>,
+  assigns: Assign[],
+  resolution: Map<string, 'or' | 'and'>,
+  refusedDrivers: RefusedDriver[],
   warnings: string[],
 ): void {
-  c.next() // 'wire' or 'reg'
+  const kind = (c.peek() as Tok).v
+  const isNet = kind !== 'reg'
+  const resolve = NET_RESOLUTION[kind]
+  const unmodeled = UNMODELED_NETS[kind]
+  const supply = kind === 'supply0' ? 0 : kind === 'supply1' ? 1 : undefined
+  c.next() // the net-type or `reg` keyword
   let width: number | 'bad' | undefined
   let sgn = false
+  let lastId: Tok | undefined
+  /** A declared name gets its net type's extra meaning here: a resolution function, a constant supply drive,
+   *  or an honest "this importer has no value for it". */
+  const applyNetType = (t: Tok, w: number): void => {
+    if (resolve !== undefined) resolution.set(t.v, resolve)
+    if (supply !== undefined) {
+      const all = supply === 0 ? 0n : (1n << BigInt(w)) - 1n
+      assigns.push({ lhs: [t], rhs: [{ k: 'num', v: `${w}'d${all}`, line: t.line }], line: t.line })
+    }
+    if (unmodeled === undefined) return
+    warnings.push(
+      `line ${t.line}: net "${t.v}" is declared "${kind}", which ${unmodeled} — this importer has no value for that — reported, not built`,
+    )
+    refusedDrivers.push({
+      where: `line ${t.line}`,
+      what: `a "${kind}" net declaration`,
+      terms: [[t]],
+    })
+  }
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
     if (t.v === '=') {
-      warnings.push(
-        `line ${t.line}: net-declaration continuous assignment (wire … = …) is behavioral/non-structural — reported, not built`,
-      )
-      while (!c.atEnd() && !c.is(';')) c.next()
+      c.next()
+      const rhs = readDeclInitializer(c)
+      // On a NET this is exactly `assign name = expr;` (IEEE 1364 §6.1.2) — build it. On a `reg` the same
+      // syntax is an initial VALUE, not a permanent drive; building it as one would wrongly hold the register
+      // for ever, so it stays reported.
+      if (isNet && lastId !== undefined) assigns.push({ lhs: [lastId], rhs, line: t.line })
+      else {
+        warnings.push(
+          `line ${t.line}: an initial value on a "reg" declaration is not a continuous drive and is not modeled — reported, not built`,
+        )
+        // The register really does hold that value from time zero, and nothing here produces it, so every
+        // reader of it is reading a value this importer does not have.
+        if (lastId !== undefined)
+          refusedDrivers.push({
+            where: `line ${t.line}`,
+            what: 'an initial value on a "reg" declaration',
+            terms: [[lastId]],
+          })
+      }
+      if (c.is(',')) {
+        c.next()
+        continue
+      }
       break
     }
     if (t.k === 'kw' && t.v === 'signed') {
@@ -1344,18 +1877,25 @@ function parseNetDecl(
     }
     c.next()
     if (t.k !== 'id') continue
+    lastId = t
     // A SECOND range after the id makes this a MEMORY (`reg [D-1:0] m [0:W-1]`): the first range gives the
     // word width, this one the depth. Register it as an array (not a plain bus) so mem[addr] can read/write it.
     if (c.is('[')) {
       const dr = readDepthRange(c)
+      const unbuiltMemory = (why: string): void => {
+        warnings.push(`line ${t.line}: memory "${t.v}" ${why} — reported, not built`)
+        refusedDrivers.push({
+          where: `line ${t.line}`,
+          what: `the memory "${t.v}"`,
+          terms: [[t]],
+        })
+      }
       if ('bad' in dr) {
-        warnings.push(
-          `line ${t.line}: memory "${t.v}" array range — ${dr.bad} — reported, not built`,
-        )
+        unbuiltMemory(`array range — ${dr.bad}`)
         continue
       }
       if (width === 'bad') {
-        warnings.push(`line ${t.line}: memory "${t.v}" has an unsupported word range — reported`)
+        unbuiltMemory('has an unsupported word range')
         continue
       }
       mems.set(t.v, { width: typeof width === 'number' ? width : 1, depth: dr.depth })
@@ -1364,12 +1904,41 @@ function parseNetDecl(
     }
     if (typeof width === 'number' && width > 1) widths.set(t.v, width)
     if (sgn) signed.add(t.v)
+    applyNetType(t, typeof width === 'number' ? width : 1)
   }
   if (c.is(';')) c.next()
 }
 
+/** Read the right-hand side of a declaration initializer: everything up to the `,` that starts the NEXT
+ *  declared name, or the closing `;`. Nesting-aware, so a comma inside `{…}` / `(…)` / `[…]` stays in the
+ *  expression. The cursor is left ON that `,` or `;`. */
+function readDeclInitializer(c: Cursor): Tok[] {
+  const rhs: Tok[] = []
+  let depth = 0
+  while (!c.atEnd()) {
+    const t = c.peek() as Tok
+    if (depth === 0 && (t.v === ';' || t.v === ',')) break
+    c.next()
+    if (t.k === 'p' && (t.v === '(' || t.v === '[' || t.v === '{')) depth += 1
+    else if (t.k === 'p' && (t.v === ')' || t.v === ']' || t.v === '}')) depth -= 1
+    rhs.push(t)
+  }
+  return rhs
+}
+
+/** The terminal positions a primitive DRIVES: `buf`/`not` drive every terminal but the last (IEEE 1364-2005
+ *  §7.3), every other n-input primitive drives only the first. */
+const drivenSlices = (prim: string, slices: Tok[][]): Tok[][] =>
+  N_OUTPUT[prim] !== undefined ? slices.slice(0, -1) : slices.slice(0, 1)
+
 /** Parse one gate statement: `gatetype [strength] [delay] inst {, inst} ;` — possibly several instances. */
-function parseGateStatement(c: Cursor, gates: GateInst[], warnings: string[]): void {
+function parseGateStatement(
+  c: Cursor,
+  gates: GateInst[],
+  rawGates: RawGate[],
+  refusedDrivers: RefusedDriver[],
+  warnings: string[],
+): void {
   const prim = (c.next() as Tok).v
   if (c.is('(') && looksLikeStrength(c)) {
     const g = readGroup(c)
@@ -1385,13 +1954,13 @@ function parseGateStatement(c: Cursor, gates: GateInst[], warnings: string[]): v
     else c.next()
   }
   for (;;) {
+    let arrayed = false
     if (c.peek()?.k === 'id' && c.peek(1)?.v === '(')
       c.next() // optional instance name
     else if (c.peek()?.k === 'id' && c.peek(1)?.v === '[') {
-      warnings.push(`instance array on "${prim}" is unmodeled — reported`)
       c.next()
-      skipStatement(c)
-      return
+      while (c.is('[')) readBracketGroup(c)
+      arrayed = true
     }
     if (!c.is('(')) {
       skipStatement(c)
@@ -1405,12 +1974,30 @@ function parseGateStatement(c: Cursor, gates: GateInst[], warnings: string[]): v
       if (s.length === 1 && s[0]?.k === 'id') terminals.push((s[0] as Tok).v)
       else clean = false
     }
-    if (!clean || terminals.length < 2) {
+    if (arrayed) {
+      // One name covering several copies, each wired to a different slice of the connected buses. Nothing is
+      // built — but every terminal it drives is claimed, so the rest of the design cannot read those bits as
+      // if the array had never been written.
       warnings.push(
-        `line ${line}: a "${prim}" terminal is not a plain net (constant/expression/concat) — instance reported, not built`,
+        `line ${line}: an instance array on "${prim}" (one name covering several copies) is not built — reported`,
       )
+      if (slices.length >= 2)
+        refusedDrivers.push({
+          where: `line ${line}`,
+          what: `an instance array of the "${prim}" primitive`,
+          terms: drivenSlices(prim, slices),
+        })
+    } else if (clean && terminals.length >= 2) {
+      gates.push({ prim, terminals, line })
+    } else if (slices.length >= 2) {
+      // A terminal that is a bit-select, a constant or an expression (`and g(t[0], a[0], b[0])`) is ordinary
+      // Verilog. It is carried to the synthesizer, which is the only place that knows every net's width, and
+      // resolved there with the same machinery an `assign` uses — see resolveRawGates.
+      rawGates.push({ prim, slices, line })
     } else {
-      gates.push({ prim, terminals })
+      warnings.push(
+        `line ${line}: a "${prim}" instance has fewer than two terminals — reported, not built`,
+      )
     }
     if (c.is(',')) {
       c.next()
@@ -1422,6 +2009,39 @@ function parseGateStatement(c: Cursor, gates: GateInst[], warnings: string[]): v
     }
     return
   }
+}
+
+/**
+ * Read a switch/tristate primitive statement (`bufif1 g(y, a, en);`, `nmos`, `tran`, `pullup`, …) purely to
+ * learn which nets it touches. None of the eighteen has a faithful ChipBlocks image, so nothing is built —
+ * but EVERY terminal is claimed as unbuilt, not just the first. `tran`/`tranif` conduct both ways and
+ * `pullup`/`pulldown` drive their only terminal, so there is no side of these that is safely a pure input.
+ */
+function parseSwitchStatement(c: Cursor, refusedDrivers: RefusedDriver[]): void {
+  const prim = (c.next() as Tok).v
+  if (c.is('(') && looksLikeStrength(c)) readGroup(c)
+  if (c.is('#')) {
+    c.next()
+    if (c.is('(')) readGroup(c)
+    else c.next()
+  }
+  for (;;) {
+    if (c.peek()?.k === 'id') c.next() // optional instance name
+    while (c.is('[')) readBracketGroup(c) // an instance array — same terminals, more copies
+    if (!c.is('(')) break
+    const line = c.peek()?.line ?? 0
+    const slices = readGroup(c)
+    if (slices.length > 0)
+      refusedDrivers.push({
+        where: `line ${line}`,
+        what: `a "${prim}" switch/tristate primitive`,
+        terms: slices,
+      })
+    if (!c.is(',')) break
+    c.next()
+  }
+  if (c.is(';')) c.next()
+  else skipStatement(c)
 }
 
 /** Is the group at the cursor a drive-strength pair? (one 0-side + one 1-side reserved strength keyword.) */
@@ -1506,7 +2126,8 @@ function lower(mod: ParsedModule, warnings: string[]): BlockData | null {
   let freshNet = 0
   const usedNets = new Set<string>()
   for (const g of mod.gates) for (const t of g.terminals) usedNets.add(t)
-  for (const f of mod.flops) for (const t of [f.d, f.clk, f.q]) usedNets.add(t)
+  for (const f of mod.flops)
+    for (const t of [f.d, f.clk, f.q, ...(f.reset === undefined ? [] : [f.reset])]) usedNets.add(t)
   for (const p of mod.portOrder) usedNets.add(p)
   const newNet = (): string => {
     let name = `w_${freshNet++}`
@@ -1538,9 +2159,18 @@ function lower(mod: ParsedModule, warnings: string[]): BlockData | null {
   // closes only through net naming and resolves temporally across clocks (never a combinational loop). v_dd/gnd
   // are re-chained with the gates below; qbar is left unconnected (no design reads it).
   for (const f of mod.flops) {
-    add(D_FLIPFLOP_BLOCK, [
+    if (f.reset === undefined) {
+      add(D_FLIPFLOP_BLOCK, [
+        { pin: 'd', net: f.d, isOut: false },
+        { pin: 'clk', net: f.clk, isOut: false },
+        { pin: 'q', net: f.q, isOut: true },
+      ])
+      continue
+    }
+    add(D_FLIPFLOP_CLEAR_BLOCK, [
       { pin: 'd', net: f.d, isOut: false },
       { pin: 'clk', net: f.clk, isOut: false },
+      { pin: 'clr', net: f.reset, isOut: false },
       { pin: 'q', net: f.q, isOut: true },
     ])
   }
@@ -1730,23 +2360,78 @@ function place(nodes: BlockInnerNode[], endpoints: Map<string, Pin[]>): void {
  */
 export function importVerilog(text: string): ImportResult {
   const { tokens, warnings } = lex(text)
-  const moduleCount = tokens.filter((t) => t.k === 'kw' && t.v === 'module').length
-  if (moduleCount > 1)
-    warnings.push(
-      `${moduleCount} modules found; only the first is imported (hierarchy is a later step)`,
-    )
-  // Fold + substitute parameters/localparams into literals before parsing, so buses like `[W-1:0]` size
-  // correctly and no parameter plumbing threads through the structural + expression parsers.
-  const elaborated = elaborateParams(tokens, warnings)
-  const mod = parseModule(elaborated, warnings)
-  if (mod === null) {
+  const modules = new Map<string, ParsedModule>()
+  const order: string[] = []
+  for (const span of splitModuleSpans(tokens)) {
+    // Fold + substitute parameters/localparams into literals before parsing, so buses like `[W-1:0]` size
+    // correctly and no parameter plumbing threads through the structural + expression parsers. Parameters are
+    // module-scoped, so this runs per module span — a `W` in one module never rewrites another's nets.
+    const mod = parseModule(elaborateParams(span, warnings), warnings)
+    if (mod === null) continue
+    if (modules.has(mod.name)) {
+      warnings.push(
+        `module "${mod.name}" is declared more than once — the later one is not imported`,
+      )
+      continue
+    }
+    modules.set(mod.name, mod)
+    order.push(mod.name)
+  }
+  if (order.length === 0) {
     warnings.push('no module declaration found')
     return { block: null, warnings, moduleName: null }
   }
+  const topName = chooseTopModule(modules, order, warnings)
+  // Inline every sub-module instance so the synthesizer below sees one flat module, exactly as if the design
+  // had been written that way by hand.
+  const mod = flattenHierarchy(modules, topName, warnings)
   // Synthesize behavioral RTL — continuous assignments into gates and clocked always-blocks into flip-flops
   // + next-state gates (both appended to mod) — then lower everything.
   synthesizeBehavioral(mod, warnings)
+  const refusal = unbuiltRefusal(mod)
+  if (refusal !== null) {
+    warnings.push(refusal)
+    return { block: null, warnings, moduleName: mod.name }
+  }
   const block = lower(mod, warnings)
   if (block === null) warnings.push(`module "${mod.name}" has no gate primitives to build`)
   return { block, warnings, moduleName: mod.name }
+}
+
+/**
+ * The publish decision. A design may be published only when what remains is genuinely complete: every net a
+ * skipped construct might have driven is unbuilt, so is everything that reads one (verilog-synth.ts →
+ * spreadUnbuilt), and if that reaches an output port there is no honest design to hand over. Refusing and
+ * saying which construct caused it is always acceptable; publishing a design whose output reads 0 because a
+ * construct was skipped is the worst answer available, and it is what this replaces.
+ */
+function unbuiltRefusal(mod: ParsedModule): string | null {
+  const named = mod.unbuilt.constructs.slice(0, 3).join('; ')
+  const more =
+    mod.unbuilt.constructs.length > 3 ? ` (and ${mod.unbuilt.constructs.length - 3} more)` : ''
+  if (mod.unbuilt.wholeModule)
+    return `module "${mod.name}" is NOT built: ${named}${more} — this importer cannot build it and cannot tell which nets it drove, so nothing about this design can be published without inventing values`
+  const lost = mod.portOrder.filter((p) => mod.dir.get(p) === 'output' && mod.unbuilt.nets.has(p))
+  if (lost.length === 0) return null
+  return `module "${mod.name}" is NOT built: ${named}${more} — this importer cannot build ${mod.unbuilt.constructs.length === 1 ? 'it' : 'them'}, and output ${lost.length === 1 ? `"${lost[0]}" is` : `${lost.length} bits (${lost.slice(0, 8).join(', ')}) are`} worked out from what ${mod.unbuilt.constructs.length === 1 ? 'it' : 'they'} would have driven. Publishing would mean inventing those values, so no design is published`
+}
+
+/** Split the token stream into one span per `module … endmodule`. Whatever precedes a module (compiler
+ *  directives) is kept at the head of its span, so it is still reported exactly where it was. */
+function splitModuleSpans(tokens: Tok[]): Tok[][] {
+  const spans: Tok[][] = []
+  let start = 0
+  let inModule = false
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i] as Tok
+    if (t.k !== 'kw') continue
+    if (t.v === 'module') inModule = true
+    else if (t.v === 'endmodule' && inModule) {
+      spans.push(tokens.slice(start, i + 1))
+      start = i + 1
+      inModule = false
+    }
+  }
+  if (inModule) spans.push(tokens.slice(start))
+  return spans
 }

@@ -175,11 +175,11 @@ describe('Verilog import — honesty (unsupported constructs are reported, never
     expect(block).not.toBeNull()
   })
 
-  test('a non-primitive module/UDP instance is reported, not synthesized', () => {
+  test('an instance of a module this source does not define (a library cell/UDP) is reported, not synthesized', () => {
     const { warnings } = importVerilog(
       'module m(a,y); input a; output y; my_cell u1(.i(a), .o(y)); endmodule',
     )
-    expect(has(warnings, 'module/udp')).toBe(true)
+    expect(has(warnings, 'no module "my_cell" is defined in this source')).toBe(true)
   })
 
   test('the 18 non-mapped gate/switch primitives are reported', () => {
@@ -314,14 +314,25 @@ describe('Verilog import — regressions from the adversarial review', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  test('a net-declaration or port-declaration continuous assignment is reported (like assign)', () => {
+  test('a net-declaration continuous assignment is now BUILT — it is exactly `assign` (IEEE 1364 §6.1.2)', () => {
+    const { block, warnings } = importVerilog(
+      'module m(a,b,o); input a,b; output o; wire w = a & b; buf g(o,w); endmodule',
+    )
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
+    expect(block).not.toBeNull()
+  })
+
+  test('an initial value on a REG declaration is not a continuous drive and is reported', () => {
     expect(
       has(
-        importVerilog('module m(a,b,o); input a,b; output o; wire w = a & b; buf g(o,w); endmodule')
+        importVerilog("module m(a,b,o); input a,b; output o; reg r = 1'b0; buf g(o,a); endmodule")
           .warnings,
-        'continuous assignment',
+        'initial value on a "reg" declaration',
       ),
     ).toBe(true)
+  })
+
+  test('a port-declaration continuous assignment is reported (like assign)', () => {
     expect(
       has(
         importVerilog('module m(a,b,o); input a,b; output o; output o2 = a & b; endmodule')
@@ -344,5 +355,47 @@ describe('Verilog import — regressions from the adversarial review', () => {
       result = importVerilog(lines.join('\n'))
     }).not.toThrow()
     expect((result?.block as BlockData).nodes.length).toBe(N)
+  })
+})
+
+/**
+ * A `wire [3:0] w = <expr>, w2 = <expr>;` declaration carries a continuous drive per declarator (IEEE 1364
+ * §6.1.2). The initializer runs to the NEXT top-level comma — and a concatenation contains commas of its
+ * own, so the reader has to track bracket depth. Icarus Verilog 14.0 was run on this source and returns the
+ * values below for all four input combinations.
+ */
+describe('Verilog import — a declaration initializer holding a concatenation', () => {
+  test('a comma INSIDE {…} does not end the initializer, and the next declarator still parses', () => {
+    const { block, warnings } = importVerilog(`
+module m(input a, input b, output [3:0] p, output [3:0] q);
+   wire [3:0] w1 = {a, b, a, b}, w2 = {b, a, b, a};
+   assign p = w1;
+   assign q = w2;
+endmodule`)
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt, 'should characterize as combinational').not.toBeNull()
+    if (tt === null) return
+    const read = (row: { out: boolean[] }, name: string) => {
+      let value = 0
+      for (let bit = 0; bit < 4; bit++) {
+        const index = tt.outputs.indexOf(`${name}[${bit}]`)
+        expect(index, `${name}[${bit}] should be an output`).toBeGreaterThanOrEqual(0)
+        if (row.out[index] === true) value |= 1 << bit
+      }
+      return value
+    }
+    // {a,b,a,b} is MSB-first, so a=1,b=0 gives 1010 = 10 on p and 0101 = 5 on q.
+    const expected: Record<string, [number, number]> = {
+      'a=false,b=false': [0, 0],
+      'a=false,b=true': [5, 10],
+      'a=true,b=false': [10, 5],
+      'a=true,b=true': [15, 15],
+    }
+    expect(tt.inputs).toEqual(['a', 'b'])
+    for (const row of tt.rows) {
+      const key = `a=${row.in[0]},b=${row.in[1]}`
+      expect([read(row, 'p'), read(row, 'q')], key).toEqual(expected[key])
+    }
   })
 })

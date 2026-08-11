@@ -2483,6 +2483,161 @@ export const D_FLIPFLOP_BLOCK: BlockData = {
 }
 
 /**
+ * D LATCH WITH ASYNCHRONOUS CLEAR — the D Latch above with a CLR input that forces Q to 0 the moment it
+ * goes high, without waiting for the enable or any clock. This is the 7474 arrangement: the clear reaches
+ * BOTH the input NAND and the cross-coupled NAND that drives Qbar, which is what makes the 0 stick rather
+ * than being fought by the D path.
+ *
+ * With CLR low the two NAND3s degenerate to exactly the D Latch's NAND2s (NAND3(x, y, 1) = NAND2(x, y)), so
+ * this cell is that cell whenever it is not being cleared. Each NAND3 is a real AND followed by a real NAND,
+ * because the gate palette's NAND is two-input.
+ */
+export const D_LATCH_CLEAR_BLOCK: BlockData = {
+  name: 'D Latch with Clear',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'clrinv', definition: 'block', x: 40, y: 560, block: INVERTER_BLOCK },
+    { id: 'and1', definition: 'block', x: 40, y: 30, block: AND_BLOCK },
+    { id: 'n1', definition: 'block', x: 360, y: 30, block: NAND2_BLOCK },
+    { id: 'n2', definition: 'block', x: 360, y: 300, block: NAND2_BLOCK },
+    { id: 'nq', definition: 'block', x: 680, y: 30, block: NAND2_BLOCK },
+    { id: 'and2', definition: 'block', x: 680, y: 300, block: AND_BLOCK },
+    { id: 'nqbar', definition: 'block', x: 1000, y: 300, block: NAND2_BLOCK },
+  ],
+  edges: [
+    // n1 = NAND3(D, E, CLRbar) — the AND takes D and E, the NAND adds CLRbar
+    { id: 'and1_n1', source: 'and1', sourceHandle: 'out', target: 'n1', targetHandle: 'a' },
+    { id: 'clrb_n1', source: 'clrinv', sourceHandle: 'out', target: 'n1', targetHandle: 'b' },
+    // ENABLE reaches the input AND and the second NAND (n2 = NAND(n1, E))
+    { id: 'e_share', source: 'and1', sourceHandle: 'b', target: 'n2', targetHandle: 'b' },
+    { id: 'n1_n2', source: 'n1', sourceHandle: 'out', target: 'n2', targetHandle: 'a' },
+    // the cross-coupled SR-latch NANDs, with the clear folded into the Qbar side
+    { id: 'n1_nq', source: 'n1', sourceHandle: 'out', target: 'nq', targetHandle: 'a' },
+    { id: 'n2_and2', source: 'n2', sourceHandle: 'out', target: 'and2', targetHandle: 'a' },
+    { id: 'q_and2', source: 'nq', sourceHandle: 'out', target: 'and2', targetHandle: 'b' },
+    { id: 'and2_nqbar', source: 'and2', sourceHandle: 'out', target: 'nqbar', targetHandle: 'a' },
+    { id: 'clrb_nqbar', source: 'clrinv', sourceHandle: 'out', target: 'nqbar', targetHandle: 'b' },
+    { id: 'qbar_fb', source: 'nqbar', sourceHandle: 'out', target: 'nq', targetHandle: 'b' },
+    // shared rails
+    { id: 'vdd1', source: 'clrinv', sourceHandle: 'v_dd', target: 'and1', targetHandle: 'v_dd' },
+    { id: 'vdd2', source: 'and1', sourceHandle: 'v_dd', target: 'n1', targetHandle: 'v_dd' },
+    { id: 'vdd3', source: 'n1', sourceHandle: 'v_dd', target: 'n2', targetHandle: 'v_dd' },
+    { id: 'vdd4', source: 'n2', sourceHandle: 'v_dd', target: 'nq', targetHandle: 'v_dd' },
+    { id: 'vdd5', source: 'nq', sourceHandle: 'v_dd', target: 'and2', targetHandle: 'v_dd' },
+    { id: 'vdd6', source: 'and2', sourceHandle: 'v_dd', target: 'nqbar', targetHandle: 'v_dd' },
+    { id: 'gnd1', source: 'clrinv', sourceHandle: 'gnd', target: 'and1', targetHandle: 'gnd' },
+    { id: 'gnd2', source: 'and1', sourceHandle: 'gnd', target: 'n1', targetHandle: 'gnd' },
+    { id: 'gnd3', source: 'n1', sourceHandle: 'gnd', target: 'n2', targetHandle: 'gnd' },
+    { id: 'gnd4', source: 'n2', sourceHandle: 'gnd', target: 'nq', targetHandle: 'gnd' },
+    { id: 'gnd5', source: 'nq', sourceHandle: 'gnd', target: 'and2', targetHandle: 'gnd' },
+    { id: 'gnd6', source: 'and2', sourceHandle: 'gnd', target: 'nqbar', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'd', label: 'D', side: 'left', offset: 14, inner: { nodeId: 'and1', handleId: 'a' } },
+    { id: 'e', label: 'E', side: 'left', offset: 36, inner: { nodeId: 'and1', handleId: 'b' } },
+    {
+      id: 'clr',
+      label: 'CLR',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'clrinv', handleId: 'in' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 80,
+      inner: { nodeId: 'clrinv', handleId: 'gnd' },
+    },
+    { id: 'q', label: 'Q', side: 'right', offset: 14, inner: { nodeId: 'nq', handleId: 'out' } },
+    {
+      id: 'qbar',
+      label: 'Qbar',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'nqbar', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 58,
+      inner: { nodeId: 'clrinv', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
+ * D FLIP-FLOP WITH ASYNCHRONOUS CLEAR — the master-slave flip-flop above, built from two clear-able latches
+ * that share one CLR line. Raising CLR clears both halves, so Q goes to 0 immediately AND STAYS there when
+ * CLR is released, with no clock edge anywhere in the story. That is what an asynchronous reset means, and
+ * it is why the clear has to reach the storage nodes rather than being gated onto D or onto Q: gating either
+ * one would restore the old bit the moment CLR fell if no edge had arrived in between.
+ *
+ * This is what `always @(posedge clk or posedge reset)` describes, and it is built from the same real NAND
+ * and AND cells as every other block here.
+ */
+export const D_FLIPFLOP_CLEAR_BLOCK: BlockData = {
+  name: 'D Flip-Flop with Clear',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'inv', definition: 'block', x: 40, y: 30, block: INVERTER_BLOCK },
+    { id: 'master', definition: 'block', x: 320, y: 30, block: D_LATCH_CLEAR_BLOCK },
+    { id: 'slave', definition: 'block', x: 760, y: 30, block: D_LATCH_CLEAR_BLOCK },
+  ],
+  edges: [
+    { id: 'clk_slave', source: 'inv', sourceHandle: 'in', target: 'slave', targetHandle: 'e' },
+    { id: 'notclk', source: 'inv', sourceHandle: 'out', target: 'master', targetHandle: 'e' },
+    { id: 'm_to_s', source: 'master', sourceHandle: 'q', target: 'slave', targetHandle: 'd' },
+    // one clear line through both halves
+    {
+      id: 'clr_share',
+      source: 'master',
+      sourceHandle: 'clr',
+      target: 'slave',
+      targetHandle: 'clr',
+    },
+    { id: 'vdd1', source: 'inv', sourceHandle: 'v_dd', target: 'master', targetHandle: 'v_dd' },
+    { id: 'vdd2', source: 'master', sourceHandle: 'v_dd', target: 'slave', targetHandle: 'v_dd' },
+    { id: 'gnd1', source: 'inv', sourceHandle: 'gnd', target: 'master', targetHandle: 'gnd' },
+    { id: 'gnd2', source: 'master', sourceHandle: 'gnd', target: 'slave', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'd', label: 'D', side: 'left', offset: 14, inner: { nodeId: 'master', handleId: 'd' } },
+    { id: 'clk', label: 'CLK', side: 'left', offset: 36, inner: { nodeId: 'inv', handleId: 'in' } },
+    {
+      id: 'clr',
+      label: 'CLR',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'master', handleId: 'clr' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 80,
+      inner: { nodeId: 'inv', handleId: 'gnd' },
+    },
+    { id: 'q', label: 'Q', side: 'right', offset: 14, inner: { nodeId: 'slave', handleId: 'q' } },
+    {
+      id: 'qbar',
+      label: 'Qbar',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'slave', handleId: 'qbar' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 58,
+      inner: { nodeId: 'inv', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
  * N-BIT REGISTER — N D flip-flops sharing ONE clock. On the rising clock edge every bit latches
  * its D input at once, so the register stores a whole word in a single tick and holds it until the
  * next edge. This is the storage a CPU's datapath is built from. Inputs D0..D(N-1), one CLK, a

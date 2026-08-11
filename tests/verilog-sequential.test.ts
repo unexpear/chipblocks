@@ -191,14 +191,17 @@ describe('sequential synthesis — a clocked always block builds real flip-flops
 describe('sequential synthesis — honest reporting of what cannot be built', () => {
   const warnOf = (verilog: string): string[] => importVerilog(verilog).warnings
 
-  test('an asynchronous reset (posedge clk or posedge rst) is reported cleanly, no bogus leftovers', () => {
+  test('an asynchronous reset (posedge clk or posedge rst) BUILDS, with no bogus leftovers', () => {
+    // This block used to be reported as unbuildable. It describes a flip-flop with an asynchronous clear,
+    // which is real hardware and is now built as one (see verilog-unbuilt-nets.test.ts for the behaviour
+    // proof against a clear raised between clock edges).
     const warnings = warnOf(
       `module ff(input clk, input rst, input d, output reg q);
          always @(posedge clk or posedge rst) if (rst) q <= 0; else q <= d;
        endmodule`,
     )
-    expect(warnings.some((x) => /always block/.test(x) && /sensitivity|async/i.test(x))).toBe(true)
-    // the else-branch must be swallowed with the reported block — not misread as an "else" instance
+    expect(warnings).toEqual([])
+    // the else-branch must be part of the block — never misread as an "else" instance
     expect(warnings.some((x) => /module\/udp|instance "else"/i.test(x))).toBe(false)
   })
 
@@ -237,7 +240,11 @@ describe('sequential synthesis — honest reporting of what cannot be built', ()
     const warnings = warnOf(
       'module m(input clk, input [3:0] a, input [3:0] b); always @(posedge clk) a <= b; endmodule',
     )
-    expect(warnings.some((x) => /drives input port/i.test(x))).toBe(true)
+    // "at the bit level" is the point: the report has to NAME the bits, not just the register.
+    const named = warnings.filter((x) => /drives an input port/i.test(x))
+    expect(named.length, `warnings: ${warnings.join(' | ')}`).toBe(1)
+    for (const bit of ['a[0]', 'a[1]', 'a[2]', 'a[3]'])
+      expect(named[0], `warnings: ${warnings.join(' | ')}`).toContain(bit)
   })
 
   test('a register written by two always blocks is reported as a multiple-driver conflict', () => {
@@ -248,5 +255,111 @@ describe('sequential synthesis — honest reporting of what cannot be built', ()
        endmodule`,
     )
     expect(warnings.some((x) => /more than one always block/i.test(x))).toBe(true)
+  })
+})
+
+/**
+ * PART-SELECT TARGETS — `pc[7:0] <= d`, `r[1] <= bit`. A register is not always written whole: the 8080's own
+ * 16-bit register file loads its low and high bytes separately. Each part-write becomes the equivalent
+ * whole-signal next state (`prior & keep | value << lo`), so two writes to DISJOINT slices of one register in
+ * the same block BOTH take effect — the trap a naive rewrite falls into, where the later write clobbers the
+ * earlier one. Checked against Icarus Verilog outside this file, vector for vector.
+ */
+describe('RTL synthesis — a write to PART of a register', () => {
+  const clockOnce = (
+    block: BlockData,
+    ins: Record<string, boolean>,
+    state: Map<string, boolean>,
+  ) => {
+    solve(block, { ...ins, clk: false }, state)
+    return solve(block, { ...ins, clk: true }, state)
+  }
+  const read = (r: ReturnType<typeof solve>, name: string, width: number): number => {
+    let v = 0
+    for (let b = 0; b < width; b++) if (r.value('M', `${name}[${b}]`) === true) v |= 1 << b
+    return v
+  }
+  const drive = (name: string, value: number, width: number): Record<string, boolean> =>
+    Object.fromEntries(
+      Array.from({ length: width }, (_, b) => [`${name}[${b}]`, ((value >> b) & 1) === 1]),
+    )
+
+  const REG = `
+module m(input clk, input rst, input wl, input wh, input [7:0] d, output [15:0] q);
+   reg [15:0] p;
+   always @(posedge clk) begin
+      if (rst) p <= 16'h0000;
+      else begin
+         if (wl) p[7:0] <= d;
+         if (wh) p[15:8] <= d;
+      end
+   end
+   assign q = p;
+endmodule`
+
+  test('a low-byte write leaves the high byte alone', () => {
+    const block = build(REG)
+    const state = new Map<string, boolean>()
+    clockOnce(block, { rst: true, wl: false, wh: false, ...drive('d', 0, 8) }, state)
+    clockOnce(block, { rst: false, wl: false, wh: true, ...drive('d', 0xab, 8) }, state)
+    const r = clockOnce(block, { rst: false, wl: true, wh: false, ...drive('d', 0xcd, 8) }, state)
+    expect(read(r, 'q', 16)).toBe(0xabcd)
+  })
+
+  test('TWO part-writes to disjoint slices in ONE block both take effect', () => {
+    const block = build(REG)
+    const state = new Map<string, boolean>()
+    clockOnce(block, { rst: true, wl: false, wh: false, ...drive('d', 0, 8) }, state)
+    const r = clockOnce(block, { rst: false, wl: true, wh: true, ...drive('d', 0x5a, 8) }, state)
+    expect(read(r, 'q', 16)).toBe(0x5a5a)
+  })
+
+  test('a single-bit target writes exactly that bit', () => {
+    const block = build(`
+module m(input clk, input rst, input b1, input b3, output [3:0] q);
+   reg [3:0] r;
+   always @(posedge clk) begin
+      if (rst) r <= 4'b0000;
+      else begin
+         r[1] <= b1;
+         r[3] <= b3;
+      end
+   end
+   assign q = r;
+endmodule`)
+    const state = new Map<string, boolean>()
+    clockOnce(block, { rst: true, b1: false, b3: false }, state)
+    const r = clockOnce(block, { rst: false, b1: true, b3: true }, state)
+    expect(read(r, 'q', 4)).toBe(0b1010)
+  })
+
+  test('a part-write costs what the hand-written whole-signal form costs', () => {
+    const selected = build(
+      'module m(input clk, input wl, input [7:0] d, output [15:0] q); reg [15:0] p; always @(posedge clk) if (wl) p[7:0] <= d; assign q = p; endmodule',
+    )
+    const byHand = build(
+      'module m(input clk, input wl, input [7:0] d, output [15:0] q); reg [15:0] p; always @(posedge clk) if (wl) p <= {p[15:8], d}; assign q = p; endmodule',
+    )
+    expect(selected.nodes.length).toBe(byHand.nodes.length)
+  })
+
+  test('a part-select target outside the signal is reported, not wrapped', () => {
+    const { warnings } = importVerilog(
+      'module m(input clk, input d, output [3:0] q); reg [3:0] r; always @(posedge clk) r[7] <= d; assign q = r; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.includes('outside the 4-bit signal')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+  })
+
+  test('a NON-constant bit-select target is reported (it would need a decoder)', () => {
+    const { warnings } = importVerilog(
+      'module m(input clk, input [1:0] i, input d, output [3:0] q); reg [3:0] r; always @(posedge clk) r[i] <= d; assign q = r; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.toLowerCase().includes('non-constant bit-select')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
   })
 })

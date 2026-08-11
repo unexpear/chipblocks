@@ -1,0 +1,479 @@
+/**
+ * VERILOG HIERARCHY — a design written as several modules is inlined into ONE module before synthesis.
+ *
+ * Our compiler was good at a single self-contained module; every real CPU published as Verilog is written the
+ * other way (a top module wiring up sub-modules). This pass closes that gap WITHOUT touching the synthesizer:
+ * each instance's sub-module is copied into its parent with every identifier prefixed by the instance name,
+ * and its ports joined to the enclosing nets. What comes out is an ordinary ParsedModule, so gates, assigns,
+ * always-blocks, memories, functions and tasks all keep the exact meaning they already had.
+ *
+ * Two ways a port is joined, and the difference is real:
+ *   - the enclosing expression is a plain net of the SAME width AND THE SAME SIGNEDNESS → the port is RENAMED
+ *     to that net. No gate is added, so a hierarchical design costs exactly what the same design written flat
+ *     costs.
+ *   - anything else (a bit-select, a concatenation, a constant, a different width, a different signedness) →
+ *     the port keeps its own prefixed net and a continuous assignment joins the two, which the existing
+ *     synthesizer lowers with the same width/resize rules any `assign` gets. That costs one buffer per bit,
+ *     and it is the honest price of a connection that is not just a rename.
+ *
+ * Signedness is why the rename cannot be unconditional. `signed` is a property of the DECLARATION that reads a
+ * net, not of the wire, and IEEE 1364-2005 §12.3.3 lets the two ends of a port disagree — `sub u(.a(n))` with
+ * `input signed [3:0] a` inside and `wire [3:0] n` outside is legal, and each module's own arithmetic uses its
+ * own declaration. A rename fuses them into ONE name with ONE signedness, so whichever side declared `signed`
+ * would silently change the other side's `>>>`, comparisons, extension and divide. Splitting them into two
+ * same-width nets joined by an assignment keeps each declaration's meaning; the copy is bit-for-bit because
+ * the widths are equal, so no extension happens at the join itself.
+ *
+ * Nothing is invented. An instance of a module this source does not define, a parameter override we cannot
+ * apply, an instance array, a recursive instantiation and an unconnected input are each REPORTED and left
+ * unbuilt rather than guessed at.
+ */
+
+import type { Assign, FuncDef, ModuleInst, ParsedModule, TaskDef, Tok } from './verilog-import.ts'
+
+/**
+ * The Verilog-2005 reserved words. Our lexer deliberately classifies only SOME of them as keywords — `if`,
+ * `else`, `case`, `posedge` and friends arrive as `id` tokens and the downstream parsers key on their VALUE.
+ * So prefixing every `id` token would rewrite `if` to `u1.if` and turn a real if-statement into a task call.
+ * A reserved word can never be a plain identifier, so leaving these alone is always safe.
+ *
+ * Measured, not remembered: every word here was fed to Icarus Verilog 14.0 as `module m; wire <word>; endmodule`
+ * and all 124 were rejected. The list is deliberately WIDER than the set our own parsers key on by token value
+ * (`if`, `else`, `case`, `endcase`, `posedge`, `negedge`, `for`, `while`, `repeat`, `forever`, `default`,
+ * `automatic`, `integer`, `real`, `realtime`, `time` and the words the lexer does mark as keywords): a word
+ * this list MISSES is a silent mis-parse, while a word it holds spuriously costs nothing, because a reserved
+ * word can never be a plain identifier in the first place. No count is quoted here — the earlier one was off
+ * by more than one, and the invariant that matters is coverage, not a total.
+ */
+const RESERVED_WORDS = new Set(
+  `always and assign automatic begin buf bufif0 bufif1 case casex casez cell cmos config deassign default
+   defparam design disable edge else end endcase endconfig endfunction endgenerate endmodule endprimitive
+   endspecify endtable endtask event for force forever fork function generate genvar highz0 highz1 if ifnone
+   incdir include initial inout input instance integer join large liblist library localparam macromodule medium
+   module nand negedge nmos nor noshowcancelled not notif0 notif1 or output parameter pmos posedge primitive
+   pull0 pull1 pulldown pullup pulsestyle_ondetect pulsestyle_onevent rcmos real realtime reg release repeat
+   rnmos rpmos rtran rtranif0 rtranif1 scalared showcancelled signed small specify specparam strong0 strong1
+   supply0 supply1 table task time tran tranif0 tranif1 tri tri0 tri1 triand trior trireg unsigned use uwire
+   vectored wait wand weak0 weak1 while wire wor xnor xor`
+    .split(/\s+/)
+    .filter((word) => word.length > 0),
+)
+
+/** Every identifier that appears anywhere in the design — used to pick a prefix separator that cannot
+ *  collide with a user name. A plain Verilog identifier can never contain `.`, but an ESCAPED one
+ *  (`\core.di `) can, so the separator is checked against the real source rather than assumed. */
+function collectIdentifiers(modules: Map<string, ParsedModule>): Set<string> {
+  const all = new Set<string>()
+  const addToks = (toks: Tok[]): void => {
+    for (const t of toks) if (t.k === 'id') all.add(t.v)
+  }
+  for (const mod of modules.values()) {
+    all.add(mod.name)
+    for (const p of mod.portOrder) all.add(p)
+    for (const g of mod.gates) for (const t of g.terminals) all.add(t)
+    for (const a of mod.assigns) {
+      addToks(a.lhs)
+      addToks(a.rhs)
+    }
+    for (const b of mod.alwaysBlocks) addToks(b.body)
+    for (const k of mod.widths.keys()) all.add(k)
+    for (const k of mod.mems.keys()) all.add(k)
+    for (const inst of mod.instances) all.add(inst.instName)
+    for (const rd of mod.refusedDrivers) for (const t of rd.terms) addToks(t)
+    for (const fn of mod.functions.values()) addToks(fn.body)
+    for (const tk of mod.tasks.values()) addToks(tk.body)
+  }
+  return all
+}
+
+function pickSeparator(identifiers: Set<string>): string {
+  let sep = '.'
+  let k = 0
+  while ([...identifiers].some((name) => name.includes(sep))) sep = `.h${k++}.`
+  return sep
+}
+
+/** The module nothing else instantiates. With exactly one such root that is unambiguously the top; with none
+ *  (a cycle) or several (independent designs in one file) one is chosen and WHICH one is said out loud rather
+ *  than left to chance.
+ *
+ *  A span this importer swallowed without parsing — a `generate` body, or a bare `for` generate loop that read
+ *  as an unparseable instantiation — is the one place a module instantiation can hide. Nobody read those
+ *  lines, so a module instantiated only in there still looks top-level, and choosing it publishes a DIFFERENT
+ *  module than the source describes: same port names, wrong logic, and not one word about the answer being
+ *  wrong. A module named inside such a span is therefore not a CERTAIN root. When that leaves exactly one
+ *  certain root, that root is the top — and the design then refuses on its own unbuilt nets, which is the
+ *  honest outcome the caller was owed in the first place. */
+export function chooseTopModule(
+  modules: Map<string, ParsedModule>,
+  order: string[],
+  warnings: string[],
+): string {
+  const instantiated = new Set<string>()
+  for (const mod of modules.values())
+    for (const inst of mod.instances)
+      if (modules.has(inst.moduleName)) instantiated.add(inst.moduleName)
+  // `modules.has` only keeps the set small — every name it drops is one no root could match anyway.
+  const maybeInstantiated = new Set<string>()
+  for (const mod of modules.values())
+    for (const name of mod.namesInsideUnparsedSpans)
+      if (modules.has(name) && name !== mod.name) maybeInstantiated.add(name)
+  const roots = order.filter((name) => !instantiated.has(name))
+  const hiddenRoots = roots.filter((name) => maybeInstantiated.has(name))
+  // Prefer a root no unparsed span mentions, then any root — never `order[0]`, which can be a module this
+  // very function has just worked out IS instantiated by another one.
+  const candidates = roots.filter((name) => !maybeInstantiated.has(name))
+  const chosen = (candidates[0] ?? roots[0] ?? order[0]) as string
+  if (roots.length === 1) return roots[0] as string
+  const hiddenNote =
+    hiddenRoots.length === 0
+      ? ''
+      : ` (${hiddenRoots.map((h) => `"${h}"`).join(', ')} ${hiddenRoots.length === 1 ? 'is' : 'are'} named inside a construct this importer did not build, so an instantiation of ${hiddenRoots.length === 1 ? 'it' : 'them'} would not have been seen)`
+  if (order.length > 1)
+    warnings.push(
+      roots.length === 0
+        ? `every module in this source is instantiated by another (a recursive design) — importing the first, "${chosen}"`
+        : `${order.length} modules found and ${roots.length} of them look top-level (${roots.join(', ')})${hiddenNote} — importing "${chosen}"`,
+    )
+  return chosen
+}
+
+function cloneToks(toks: Tok[]): Tok[] {
+  return toks.map((t) => ({ ...t }))
+}
+
+function emptyLike(mod: ParsedModule): ParsedModule {
+  return {
+    name: mod.name,
+    portOrder: [...mod.portOrder],
+    dir: new Map(mod.dir),
+    gates: mod.gates.map((g) => ({ prim: g.prim, terminals: [...g.terminals], line: g.line })),
+    rawGates: mod.rawGates.map((g) => ({
+      prim: g.prim,
+      slices: g.slices.map(cloneToks),
+      line: g.line,
+    })),
+    refusedDrivers: mod.refusedDrivers.map((r) => ({
+      ...r,
+      terms: r.terms.map(cloneToks),
+    })),
+    assigns: mod.assigns.map((a) => ({
+      lhs: cloneToks(a.lhs),
+      rhs: cloneToks(a.rhs),
+      line: a.line,
+    })),
+    powerOnValues: mod.powerOnValues.map((v) => ({ ...v })),
+    namesInsideUnparsedSpans: new Set(mod.namesInsideUnparsedSpans),
+    alwaysBlocks: mod.alwaysBlocks.map((b) => ({
+      clk: b.clk,
+      reset: b.reset,
+      body: cloneToks(b.body),
+      line: b.line,
+    })),
+    flops: [],
+    widths: new Map(mod.widths),
+    mems: new Map(mod.mems),
+    functions: new Map(mod.functions),
+    tasks: new Map(mod.tasks),
+    signed: new Set(mod.signed),
+    resolution: new Map(mod.resolution),
+    instances: [],
+    droppedPorts: [...mod.droppedPorts],
+    portPositions: [...mod.portPositions],
+    unbuilt: { nets: new Set<string>(), constructs: [], wholeModule: false },
+  }
+}
+
+type Rename = (name: string) => string
+
+/** A token names something the sub-module owns when it is an identifier that is not a syntax word — or IS a
+ *  syntax word but was written escaped (`\posedge `), which makes it a real net despite spelling one. */
+const namesAnObject = (t: Tok): boolean =>
+  t.k === 'id' && (t.escaped === true || !RESERVED_WORDS.has(t.v))
+
+function renameToks(toks: Tok[], rename: Rename): Tok[] {
+  return toks.map((t) => (namesAnObject(t) ? { ...t, v: rename(t.v), line: t.line } : t))
+}
+
+function renameFunction(fn: FuncDef, rename: Rename): FuncDef {
+  const localWidths = new Map<string, number>()
+  for (const [name, width] of fn.localWidths) localWidths.set(rename(name), width)
+  return {
+    name: rename(fn.name),
+    retWidth: fn.retWidth,
+    inputs: fn.inputs.map((i) => ({ name: rename(i.name), width: i.width })),
+    localWidths,
+    body: renameToks(fn.body, rename),
+  }
+}
+
+function renameTask(task: TaskDef, rename: Rename): TaskDef {
+  const localWidths = new Map<string, number>()
+  for (const [name, width] of task.localWidths) localWidths.set(rename(name), width)
+  return {
+    name: rename(task.name),
+    args: task.args.map((a) => ({ name: rename(a.name), width: a.width, dir: a.dir })),
+    localWidths,
+    body: renameToks(task.body, rename),
+  }
+}
+
+/** Map each of the child's declared ports to the enclosing expression it is wired to, `undefined` where the
+ *  instance leaves it unconnected. Named and positional forms both land here. */
+function resolveConnections(
+  inst: ModuleInst,
+  child: ParsedModule,
+  warnings: string[],
+  unrepresentable: Tok[][] = [],
+): Map<string, Tok[]> {
+  const bound = new Map<string, Tok[]>()
+  const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
+  if (!inst.named) {
+    // Positions are counted against portPositions, which keeps a place for every port the parser could not
+    // represent. Counting against portOrder instead closed the gap, so every connection past a dropped port
+    // landed on the port after it — and the whole instance had to be refused to avoid that. It no longer does.
+    if (inst.conns.length > child.portPositions.length)
+      warnings.push(
+        `${where} passes ${inst.conns.length} positional connections but the module declares ${child.portPositions.length} ports — the extra ones are reported, not connected`,
+      )
+    inst.conns.forEach((conn, i) => {
+      const port = child.portPositions[i]
+      if (conn.expr.length === 0 || port === undefined) return
+      if (port === null) {
+        warnings.push(
+          `${where} connects position ${i + 1} to a port this importer cannot represent (${child.droppedPorts.join(', ')}) — reported, not connected`,
+        )
+        unrepresentable.push(conn.expr)
+        return
+      }
+      bound.set(port, conn.expr)
+    })
+    return bound
+  }
+  const declared = new Set(child.portOrder)
+  for (const conn of inst.conns) {
+    const port = conn.port as string
+    if (!declared.has(port)) {
+      warnings.push(
+        `${where} connects ".${port}", which "${inst.moduleName}" does not declare as a usable port (an inout port is dropped earlier for the same reason) — reported, not connected`,
+      )
+      if (conn.expr.length > 0) unrepresentable.push(conn.expr)
+      continue
+    }
+    if (bound.has(port)) {
+      warnings.push(`${where} connects ".${port}" twice — the second is reported, not connected`)
+      continue
+    }
+    if (conn.expr.length > 0) bound.set(port, conn.expr)
+  }
+  return bound
+}
+
+/**
+ * An instance we refuse to build still WROTE a driver for every net its output ports connect to, so those
+ * nets are claimed exactly as a built instance would claim them and a second driver on them is still a
+ * contention. Nothing is claimed when the connections cannot be aligned to ports (a positional list against a
+ * module with a port this importer could not represent) — a guess there would take a driver off the wrong net.
+ * The connection warnings are swallowed: the instance has already been reported as not built.
+ */
+function claimRefusedInstance(
+  parent: ParsedModule,
+  inst: ModuleInst,
+  declared: ParsedModule,
+  what: string,
+): void {
+  const terms: Tok[][] = []
+  const bound = resolveConnections(inst, declared, [], terms)
+  const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
+  for (const [port, expr] of bound)
+    if (declared.dir.get(port) !== 'input') terms.push(cloneToks(expr))
+  if (terms.length > 0) parent.refusedDrivers.push({ where, what, terms })
+}
+
+/** An instance of a module this source does not define (a library cell, a UDP). Which of its ports are
+ *  outputs is unknowable — the module is not here — so EVERY net it connects to is claimed unbuilt. A
+ *  connection list we could not read at all leaves nothing to name, and the whole design goes unbuilt. */
+function claimUnknownInstance(parent: ParsedModule, inst: ModuleInst, what: string): void {
+  const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
+  const terms = inst.conns.filter((c) => c.expr.length > 0).map((c) => cloneToks(c.expr))
+  parent.refusedDrivers.push(
+    terms.length > 0 ? { where, what, terms } : { where, what, terms: [], wholeModule: true },
+  )
+}
+
+/** Copy one instance's (already flattened) sub-module into `parent`, prefixing every identifier it owns and
+ *  joining its ports to the enclosing nets. */
+function inlineInstance(
+  parent: ParsedModule,
+  inst: ModuleInst,
+  child: ParsedModule,
+  separator: string,
+  warnings: string[],
+): void {
+  const prefix = `${inst.instName}${separator}`
+  const alias = new Map<string, string>()
+  // `rename` is only ever applied to a name the module OWNS (a net, port, memory, function or task), never to
+  // a raw token span, so a reserved word arriving here can only have come from an escaped identifier and is
+  // prefixed like any other name. Token spans go through renameToks, which leaves syntax words alone.
+  const rename: Rename = (name) => alias.get(name) ?? `${prefix}${name}`
+  const unrepresentable: Tok[][] = []
+  const bound = resolveConnections(inst, child, warnings, unrepresentable)
+  const joins: Assign[] = []
+  const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
+  // A connection to a port the parser could not represent (an inout, a port with a range we cannot read) may
+  // be driven from inside the child. The rest of the instance still builds; that one net does not.
+  if (unrepresentable.length > 0)
+    parent.refusedDrivers.push({
+      where,
+      what: `a connection to a port of "${inst.moduleName}" this importer cannot represent`,
+      terms: unrepresentable.map(cloneToks),
+    })
+
+  for (const port of child.portOrder) {
+    const portWidth = child.widths.get(port) ?? 1
+    const isOutput = child.dir.get(port) === 'output'
+    const expr = bound.get(port)
+    if (expr === undefined) {
+      if (!isOutput) {
+        warnings.push(
+          `${where} leaves input port "${port}" unconnected — an unconnected input is z in Verilog and this importer has no value for it — reported, not built`,
+        )
+        parent.refusedDrivers.push({
+          where,
+          what: `an unconnected input port "${port}" on this instance`,
+          terms: [[{ k: 'id', v: `${prefix}${port}`, line: inst.line }]],
+        })
+      }
+      continue
+    }
+    const only = expr.length === 1 ? (expr[0] as Tok) : undefined
+    if (
+      only !== undefined &&
+      only.k === 'id' &&
+      !parent.mems.has(only.v) &&
+      (parent.widths.get(only.v) ?? 1) === portWidth &&
+      parent.signed.has(only.v) === child.signed.has(port)
+    ) {
+      alias.set(port, only.v)
+      continue
+    }
+    // The port's own net needs no width or signedness registered here: it is a name the child OWNS, so the
+    // wholesale copies of child.widths and child.signed below already carry both under exactly this name
+    // (rename leaves an unaliased port at `${prefix}${port}`). Setting them twice was dead code no test
+    // could ever distinguish.
+    const portNet: Tok = { k: 'id', v: `${prefix}${port}`, line: inst.line }
+    joins.push(
+      isOutput
+        ? { lhs: cloneToks(expr), rhs: [portNet], line: inst.line }
+        : { lhs: [portNet], rhs: cloneToks(expr), line: inst.line },
+    )
+  }
+
+  for (const g of child.gates)
+    parent.gates.push({ prim: g.prim, terminals: g.terminals.map(rename), line: g.line })
+  for (const g of child.rawGates)
+    parent.rawGates.push({
+      prim: g.prim,
+      slices: g.slices.map((sl) => renameToks(sl, rename)),
+      line: g.line,
+    })
+  // A driver the child refused still owns the child's bits; after the copy those bits are the parent's
+  // prefixed nets, so the claim has to be renamed exactly like every other token span.
+  for (const r of child.refusedDrivers)
+    parent.refusedDrivers.push({
+      ...r,
+      where: `${inst.instName}: ${r.where}`,
+      terms: r.terms.map((t) => renameToks(t, rename)),
+    })
+  for (const a of child.assigns)
+    parent.assigns.push({
+      lhs: renameToks(a.lhs, rename),
+      rhs: renameToks(a.rhs, rename),
+      line: a.line,
+    })
+  for (const v of child.powerOnValues)
+    parent.powerOnValues.push({ name: rename(v.name), value: v.value, line: v.line })
+  for (const b of child.alwaysBlocks)
+    parent.alwaysBlocks.push({
+      clk: b.clk === null ? null : rename(b.clk),
+      reset: b.reset === null ? null : rename(b.reset),
+      body: renameToks(b.body, rename),
+      line: b.line,
+    })
+  for (const [name, width] of child.widths) parent.widths.set(rename(name), width)
+  for (const [name, info] of child.mems) parent.mems.set(rename(name), info)
+  // Carries the child's own signed nets (and any port left unconnected, which has no join above). A port that
+  // WAS aliased renames to the enclosing net, and the alias only happened when the two agreed about `signed`,
+  // so this can never flip a parent net's signedness out from under the parent's own arithmetic.
+  for (const name of child.signed) parent.signed.add(rename(name))
+  for (const [name, how] of child.resolution) parent.resolution.set(rename(name), how)
+  for (const fn of child.functions.values())
+    parent.functions.set(rename(fn.name), renameFunction(fn, rename))
+  for (const task of child.tasks.values())
+    parent.tasks.set(rename(task.name), renameTask(task, rename))
+  parent.assigns.push(...joins)
+}
+
+/**
+ * Inline every sub-module instance below `topName` and return one flat ParsedModule. Each module is flattened
+ * ONCE and the result reused per instance, so the same module used many times costs one flatten and N copies.
+ */
+export function flattenHierarchy(
+  modules: Map<string, ParsedModule>,
+  topName: string,
+  warnings: string[],
+): ParsedModule {
+  const separator = pickSeparator(collectIdentifiers(modules))
+  const done = new Map<string, ParsedModule>()
+  const onStack = new Set<string>()
+
+  const flatten = (name: string): ParsedModule => {
+    const cached = done.get(name)
+    if (cached !== undefined) return cached
+    const mod = modules.get(name) as ParsedModule
+    onStack.add(name)
+    const out = emptyLike(mod)
+    const usedNames = new Set<string>()
+    for (const inst of mod.instances) {
+      const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
+      const known = modules.get(inst.moduleName)
+      if (inst.unsupported !== null) {
+        warnings.push(`${where} — ${inst.unsupported} — reported, not built`)
+        const what = `an instance of "${inst.moduleName}" this importer cannot build`
+        if (known === undefined) claimUnknownInstance(out, inst, what)
+        else claimRefusedInstance(out, inst, known, what)
+        continue
+      }
+      if (known === undefined) {
+        warnings.push(
+          `${where} — no module "${inst.moduleName}" is defined in this source (a library cell or UDP) — reported, not built`,
+        )
+        claimUnknownInstance(
+          out,
+          inst,
+          `an instance of "${inst.moduleName}", a module this source does not define`,
+        )
+        continue
+      }
+      if (onStack.has(inst.moduleName)) {
+        warnings.push(
+          `${where} — a module cannot instantiate itself, directly or through another module — reported, not built`,
+        )
+        claimRefusedInstance(out, inst, known, `a recursive instance of "${inst.moduleName}"`)
+        continue
+      }
+      if (usedNames.has(inst.instName)) {
+        warnings.push(`${where} — a second instance shares this name — reported, not built`)
+        claimRefusedInstance(out, inst, known, `a duplicate instance name "${inst.instName}"`)
+        continue
+      }
+      usedNames.add(inst.instName)
+      inlineInstance(out, inst, flatten(inst.moduleName), separator, warnings)
+    }
+    onStack.delete(name)
+    done.set(name, out)
+    return out
+  }
+
+  return flatten(topName)
+}
