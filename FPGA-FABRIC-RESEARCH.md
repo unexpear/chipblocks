@@ -148,6 +148,31 @@ The `generic → real fabric → bitstream` order is sound and each stage stands
 4. **Bitstream parse (Stage 3a) — the headline payoff.** "Load a `.bin` and watch it run." Depends on Stage 2 only (**not** the Stage-1 mapper), so it's ~Stage-2 difficulty; decode documented LUT-init + `.buffer`/`.routing` bits, rebuild the netlist, simulate, and *count/report* undecodable bits.
 5. **Bitstream emit (Stage 3b) — hardest, optional, data-gated.** Design → bit-exact image. Precondition: resolve every `?`/special-block bit (which the open ecosystem itself hasn't fully done for UltraPlus) — or wrap `icepack`/`nextpnr` and prove first on HX1K/HX8K. Treat the image like the manufacturing ZIP: engine-owned, bit-exact, never guessed.
 
+### Build progress (2026-07-25) — where the staging above actually stands
+
+Built as library engines (`src/renderer/fpga-*.ts`), each increment adversarially verified before commit,
+every real-device value cross-checked against Project IceStorm's `icebox.py`:
+
+- **Stage 1 (Appendix A, the mini-VPR): COMPLETE** — `coverToLuts` (gates→LUT map), `packLuts`, the VPR-grade
+  SA placer (`fpga-place.ts`), the PathFinder router (`fpga-router.ts`), the place↔route loop (`fpga-flow.ts`),
+  0/1 sim (`fpga-sim.ts`), on the RRG substrate (`fpga-rrg.ts`).
+- **Stage 2a (real iCE40 core): built for LOGIC + routing** — parse the real chipdb (`fpga-icebox.ts`), build
+  the routing-resource graph from it and route on it (`fpga-icebox-rrg.ts`), the LOGIC cell's LUT4 + flip-flop
+  ⇄ real CRAM bits (`fpga-icebox-logic.ts`), assemble logic ⊕ routing into one bitstream
+  (`fpga-icebox-bitstream.ts`), synthesize a placed netlist end-to-end (`fpga-icebox-synth.ts`), and
+  **auto-place onto real cells** (`fpga-icebox-autoplace.ts`) — so a mapped netlist becomes a real iCE40
+  bitstream with nothing hand-placed. Not yet done in 2a: IO cells, basic BRAM, delay/`icetime`.
+- **Stage 3a (bitstream parse): partly built** — `fpga-icebox-parse.ts` reads a bitstream back into its
+  design (placed cells + ON routing pips), the inverse of the encode flow. **Still open:** rebuild the
+  logical connectivity (trace ON-pip paths cell-out → cell-in) + feed the logic engine to SIMULATE it (the
+  "watch it run" payoff), and parse a whole `.bin` FILE (frame format, CRC, IO/PLL/BRAM/default bits — today
+  we read the CRAM-bit representation, not the file).
+- **Stage 2b (UltraPlus specials) and Stage 3b (bit-exact loadable emit): unstarted.** Also open: an
+  HPWL-quality SA placer on real cells (auto-place is routability-only today).
+
+Wiring these engines into the app's hardware-coding front-end (HDL / drawn gates → real iCE40 bitstream,
+in-app) is tracked in [TOOLCHAIN-ROADMAP.md](TOOLCHAIN-ROADMAP.md) → "Real-silicon target — iCE40 FPGA".
+
 ---
 
 ## Sources (first pass, 2026-07-24 — 26 fetched, 25/25 claims verified, 0 refuted)
