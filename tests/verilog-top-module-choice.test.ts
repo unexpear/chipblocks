@@ -55,11 +55,16 @@ const PORTS = `  input [3:0] a;
 `
 
 describe('the design is not swapped for a module a skipped construct was hiding', () => {
-  // Icarus Verilog 14.0 on this source, all 256 vectors: o = (a ^ b) | b. Publishing m2 instead gives
+  // Icarus Verilog 14.0 on both sources below, all 256 vectors: o = (a ^ b) | b. Publishing m2 instead gives
   // o = a ^ b, which differs on every bit where a and b are both 1 — 256 of the 1,024 output bits.
+  //
+  // The generate-IF here is one this importer CANNOT elaborate: `$clog2` is a real constant function that
+  // Icarus folds and this evaluator does not parse, so the region is left exactly as written and m2 goes back
+  // inside a span nobody parsed. That is the shape this whole file exists to catch, and it has to keep being
+  // testable with a construct the importer genuinely skips as more of them become elaboratable.
   const hiddenInsideGenerate = `${XOR_HELPER}module m(a, b, o);
 ${PORTS}  wire [3:0] t;
-  generate if (1) begin: gg
+  generate if ($clog2(8) == 3) begin: gg
     m2 u (a, b, t);
   end endgenerate
   assign o = t | b;
@@ -78,11 +83,54 @@ endmodule
     expect(outputFor(hiddenInsideGenerate, 0b0011, 0b0001)).toBeNull()
   })
 
-  test('a bare "for" generate loop hides an instance the same way, and is caught the same way', () => {
+  test('a generate IF this importer CAN elaborate makes the instance real, and the top right', () => {
+    // The other direction, and the one that has to move as the front end grows: the condition folds, the
+    // region becomes ordinary module items before the root is chosen, m2 is instantiated for real, and m is
+    // the only root left. The value is the check that matters — a design that quietly published m2 instead
+    // would read 2 where this reads 3.
+    const source = `${XOR_HELPER}module m(a, b, o);
+${PORTS}  wire [3:0] t;
+  generate if (1) begin: gg
+    m2 u (a, b, t);
+  end endgenerate
+  assign o = t | b;
+endmodule
+`
+    const result = importVerilog(source)
+    expect(result.moduleName).toBe('m')
+    expect(result.block).not.toBeNull()
+    for (let a = 0; a < 16; a++)
+      for (let b = 0; b < 16; b++) expect(outputFor(source, a, b)).toBe((a ^ b) | b)
+  })
+
+  test('a bare "for" generate loop is ELABORATED, so its instance is real and the top is right', () => {
+    // The loop is unrolled before the module is parsed, so `m2 u (a, b, t)` is an ordinary instantiation by
+    // the time the root is chosen — m2 is instantiated, m is the only root, and the design BUILDS. The value
+    // is the check that matters: Icarus Verilog 14.0 on this source gives o = (a ^ b) | b for all 256
+    // vectors, so a design that quietly published m2 instead would read 2 here where this reads 3.
     const source = `${XOR_HELPER}module m(a, b, o);
 ${PORTS}  wire [3:0] t;
   genvar gi;
   for (gi = 0; gi < 1; gi = gi + 1) begin: gg
+    m2 u (a, b, t);
+  end
+  assign o = t | b;
+endmodule
+`
+    const result = importVerilog(source)
+    expect(result.moduleName).toBe('m')
+    expect(result.block).not.toBeNull()
+    for (let a = 0; a < 16; a++)
+      for (let b = 0; b < 16; b++) expect(outputFor(source, a, b)).toBe((a ^ b) | b)
+  })
+
+  test('a bare "for" this importer CANNOT unroll still hides its instance, and is still caught', () => {
+    // The bound is a net, so there is no elaboration-time iteration count and the loop is left exactly as it
+    // was — which puts m2 back inside a span nobody parsed. The doubt has to come back with it.
+    const source = `${XOR_HELPER}module m(a, b, o);
+${PORTS}  wire [3:0] t;
+  genvar gi;
+  for (gi = 0; gi < a; gi = gi + 1) begin: gg
     m2 u (a, b, t);
   end
   assign o = t | b;
@@ -99,7 +147,7 @@ ${PORTS}  assign o = a & b;
 endmodule
 module m(a, b, o);
 ${PORTS}  wire [3:0] t;
-  generate if (1) begin: gg
+  generate if ($clog2(8) == 3) begin: gg
     m2 u (a, b, t);
   end endgenerate
   assign o = t | b;
@@ -112,8 +160,27 @@ endmodule
   })
 
   test('a module NAMED in a skipped generate loses only its claim to be the top, not its own import', () => {
-    // `other` is used as a NET name inside m's generate. That is not an instantiation, but the importer
-    // cannot tell — and treating it as one still lands on the right module here, so the doubt is free.
+    // `other` is used as a NET name inside m's generate-IF, which this importer still does not build. That is
+    // not an instantiation, but the importer cannot tell — and treating it as one still lands on the right
+    // module here, so the doubt is free.
+    const source = `module other(a, b, o);
+${PORTS}  assign o = a & b;
+endmodule
+module m(a, b, o);
+${PORTS}  wire [3:0] other;
+  generate if ($clog2(8) == 3) begin: gg
+    assign other = a;
+  end endgenerate
+  assign o = other | b;
+endmodule
+`
+    expect(importVerilog(source).moduleName).toBe('m')
+  })
+
+  test('once the generate IS elaborated the doubt lifts, and the ambiguity is said out loud', () => {
+    // The same file with a `for` this importer can unroll: nothing is left unparsed, so `other` is an
+    // ordinary net and BOTH modules genuinely look top-level. Which one is imported is then the pre-existing
+    // several-roots case — and the importer has to say so rather than pick in silence.
     const source = `module other(a, b, o);
 ${PORTS}  assign o = a & b;
 endmodule
@@ -126,7 +193,10 @@ ${PORTS}  wire [3:0] other;
   assign o = other | b;
 endmodule
 `
-    expect(importVerilog(source).moduleName).toBe('m')
+    const result = importVerilog(source)
+    expect(['other', 'm']).toContain(result.moduleName)
+    expect(result.warnings.some((w) => w.includes(`importing "${result.moduleName}"`))).toBe(true)
+    expect(result.warnings.some((w) => w.includes('would not have been seen'))).toBe(false)
   })
 
   test('a module that only mentions ITSELF inside a skipped generate is still a candidate', () => {

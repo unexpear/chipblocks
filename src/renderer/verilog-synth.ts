@@ -28,9 +28,14 @@ import {
   constInt,
   evalConst,
   extendTo,
+  type LoopCounter,
+  loopAdvance,
+  loopContinues,
+  loopCounter,
   MAX_REPL,
   plainDecimal,
   splitOnColon,
+  substituteCounter,
 } from './verilog-const.ts'
 import type {
   AlwaysBlock,
@@ -3286,9 +3291,6 @@ type ProcParse = {
  *  app. Past it the loop is REFUSED, never truncated: unrolling the first N iterations of a longer loop builds
  *  a design that computes a different function with nothing said. */
 const MAX_UNROLLED_ITERATIONS = 4096
-/** A loop counter wider than this is not counted: each iteration folds the condition bit-by-bit at the
- *  counter's declared width, so an unbounded width is unbounded work per step. */
-const MAX_COUNTER_WIDTH = 64
 
 /** Parse a clocked always body (its inner statements, no wrapping begin/end) into one procedural statement. */
 function parseProcedural(
@@ -3383,71 +3385,6 @@ function takeStatementToks(ts: TokStream): Tok[] {
   return ts.ts.slice(start, ts.i)
 }
 
-/**
- * Replace every read of the loop counter with a sized literal token. The span is then RE-PARSED, so `a[i]`
- * becomes an ordinary constant bit-select and meets the existing constant-select and out-of-range rules
- * unchanged — the unroller never resolves an index into a net itself.
- *
- * A select OF THE COUNTER (`i[1:0]`, the ordinary way to narrow a loop variable down to a bus) is the one
- * thing that cannot be left to the re-parse: a select of a bare literal is not Verilog. Those bits are folded
- * here, unsigned (IEEE 1364-2005 §5.5.1 makes every part-select unsigned), and a select reaching past the
- * counter's declared width reads x in Verilog, so it is refused rather than zero-filled.
- */
-function substituteCounter(toks: Tok[], counter: LoopCounter): Tok[] | { bad: string } {
-  const out: Tok[] = []
-  for (let i = 0; i < toks.length; i++) {
-    const t = toks[i] as Tok
-    if (t.k !== 'id' || t.v !== counter.name) {
-      out.push(t)
-      continue
-    }
-    if ((toks[i + 1] as Tok | undefined)?.v !== '[') {
-      out.push({ k: 'num', v: counter.literal(), line: t.line })
-      continue
-    }
-    const close = closingBracket(toks, i + 1)
-    if (close === -1)
-      return { bad: `a select of the loop variable "${counter.name}" is missing "]"` }
-    const sel = counterSelect(toks.slice(i + 2, close), counter)
-    if ('bad' in sel) return sel
-    out.push({ k: 'num', v: sel.literal, line: t.line })
-    i = close
-  }
-  return out
-}
-
-/** The index of the `]` closing the `[` at `open`, or -1 if it is never closed. */
-function closingBracket(toks: Tok[], open: number): number {
-  let depth = 0
-  for (let i = open; i < toks.length; i++) {
-    const v = (toks[i] as Tok).v
-    if (v === '[' || v === '(' || v === '{') depth += 1
-    else if (v === ']' || v === ')' || v === '}') {
-      depth -= 1
-      if (depth === 0) return i
-    }
-  }
-  return -1
-}
-
-/** The literal for `i[hi:lo]` / `i[k]` on a counter holding a known value. */
-function counterSelect(inner: Tok[], counter: LoopCounter): { literal: string } | { bad: string } {
-  const parts = splitOnColon(inner)
-  const hi = parts === undefined ? constInt(inner) : constInt(parts[0])
-  const lo = parts === undefined ? hi : constInt(parts[1])
-  if (hi === undefined || lo === undefined)
-    return {
-      bad: `a select of the loop variable "${counter.name}" that is not a constant bit/part-select is a later increment`,
-    }
-  if (lo > hi || hi >= counter.width)
-    return {
-      bad: `${counter.name}[${hi}:${lo}] is outside the ${counter.width}-bit loop variable "${counter.name}", which reads x in Verilog`,
-    }
-  const width = hi - lo + 1
-  const value = (counter.value >> BigInt(lo)) & ((1n << BigInt(width)) - 1n)
-  return { literal: `${width}'h${value.toString(16)}` }
-}
-
 /** Every `for ( <name> = …` header target in a token span — the names a loop unrolls away, which therefore
  *  end up with no driver of their own. */
 function collectLoopCounters(body: Tok[], out: Set<string>): void {
@@ -3456,29 +3393,6 @@ function collectLoopCounters(body: Tok[], out: Set<string>): void {
     const name = body[i + 2] as Tok
     if (name.k === 'id' && (body[i + 3] as Tok).v === '=') out.add(name.v)
   }
-}
-
-/** Split a for header's inner tokens at its two top-level ';' into init / condition / step. */
-function splitForHeader(inner: Tok[]): [Tok[], Tok[], Tok[]] | undefined {
-  const cuts: number[] = []
-  let depth = 0
-  for (let i = 0; i < inner.length; i++) {
-    const v = (inner[i] as Tok).v
-    if (v === '(' || v === '[' || v === '{') depth += 1
-    else if (v === ')' || v === ']' || v === '}') depth -= 1
-    else if (v === ';' && depth === 0) cuts.push(i)
-  }
-  if (cuts.length !== 2) return undefined
-  const [a, b] = cuts as [number, number]
-  return [inner.slice(0, a), inner.slice(a + 1, b), inner.slice(b + 1)]
-}
-
-/** A header assignment `i = <expr>` → its target name and right-hand tokens. A bit-select target, a
- *  nonblocking `<=`, or anything that is not a bare identifier gives undefined (and is then reported). */
-function splitCounterAssign(toks: Tok[]): { name: string; rhs: Tok[] } | undefined {
-  const name = toks[0]
-  if (name === undefined || name.k !== 'id' || toks[1]?.v !== '=') return undefined
-  return { name: name.v, rhs: toks.slice(2) }
 }
 
 /**
@@ -3513,7 +3427,15 @@ function unrollLoop(ts: TokStream, p: ProcParse, kind: 'for' | 'repeat'): ProcSt
       }
     return unrollRepeat(bodyToks, p, count)
   }
-  const counter = forCounter(header, p, widthOf)
+  // Without the declared signedness the counter cannot be modelled: `integer` is SIGNED 32-bit, and
+  // `for (i = 3; i >= 0; i = i - 1)` runs four times signed and never ends unsigned.
+  const signedOf = p.signedOf
+  if (signedOf === undefined)
+    return {
+      t: 'bad',
+      why: 'a for loop needs the declared signedness of its loop variable to unroll',
+    }
+  const counter = loopCounter(header, (toks) => foldSpan(toks, p, widthOf), widthOf, signedOf)
   if ('bad' in counter) return { t: 'bad', why: counter.bad }
   return unrollFor(bodyToks, p, widthOf, counter)
 }
@@ -3555,23 +3477,11 @@ function unrollFor(
   counter: LoopCounter,
 ): ProcStmt {
   const body: ProcStmt[] = []
-  const visited = new Set<bigint>()
+  const fold = (toks: Tok[]): ConstVal | undefined => foldSpan(toks, p, widthOf)
   for (;;) {
-    const cond = substituteCounter(counter.cond, counter)
-    if ('bad' in cond) return { t: 'bad', why: cond.bad }
-    const keepGoing = foldSpan(cond, p, widthOf)
-    if (keepGoing === undefined)
-      return {
-        t: 'bad',
-        why: `the condition of the for loop over "${counter.name}" is not an elaboration-time constant`,
-      }
-    if (keepGoing.value === 0n) break
-    if (visited.has(counter.value))
-      return {
-        t: 'bad',
-        why: `the for loop over "${counter.name}" returns to a counter value it already had, so at its declared ${counter.width}-bit width it never ends`,
-      }
-    visited.add(counter.value)
+    const another = loopContinues(counter, fold)
+    if ('bad' in another) return { t: 'bad', why: another.bad }
+    if (!another.go) break
     const spent = spendIteration(p)
     if (spent !== undefined) return spent
     const iteration = substituteCounter(bodyToks, counter)
@@ -3579,77 +3489,10 @@ function unrollFor(
     const one = parseStmt(new TokStream(iteration), p)
     if (one.t === 'bad') return one
     body.push(one)
-    const step = substituteCounter(counter.step, counter)
-    if ('bad' in step) return { t: 'bad', why: step.bad }
-    const stepped = foldSpan(step, p, widthOf)
-    if (stepped === undefined)
-      return {
-        t: 'bad',
-        why: `the step of the for loop over "${counter.name}" is not an elaboration-time constant`,
-      }
-    counter.value = extendTo(stepped, counter.width, stepped.signed)
+    const advanced = loopAdvance(counter, fold)
+    if (advanced !== undefined) return { t: 'bad', why: advanced.bad }
   }
   return seqOf(body)
-}
-
-type LoopCounter = {
-  name: string
-  width: number
-  value: bigint
-  cond: Tok[]
-  step: Tok[]
-  /** the current value as a sized literal carrying the counter's DECLARED signedness */
-  literal: () => string
-}
-
-/** The loop counter a `for` header describes, modelled at its declared width and signedness, or the reason it
- *  cannot be modelled. */
-function forCounter(
-  header: Tok[],
-  p: ProcParse,
-  widthOf: (n: string) => number,
-): LoopCounter | { bad: string } {
-  // Without the declared signedness the counter cannot be modelled: `integer` is SIGNED 32-bit, and
-  // `for (i = 3; i >= 0; i = i - 1)` runs four times signed and never ends unsigned.
-  const signedOf = p.signedOf
-  if (signedOf === undefined)
-    return { bad: 'a for loop needs the declared signedness of its loop variable to unroll' }
-  const parts = splitForHeader(header)
-  if (parts === undefined) return { bad: 'a for header must read (init; condition; step)' }
-  const [initToks, cond, stepToks] = parts
-  const init = splitCounterAssign(initToks)
-  if (init === undefined)
-    return { bad: 'a for loop must start by assigning a loop variable — for (i = 0; …' }
-  const step = splitCounterAssign(stepToks)
-  if (step === undefined || step.name !== init.name)
-    return { bad: `a for loop's step must assign its own loop variable "${init.name}"` }
-  const width = widthOf(init.name)
-  // An UNDECLARED loop variable reads as one bit here, and Icarus Verilog 14.0 rejects that source outright
-  // ("register ``i'' unknown in m"). A genuinely 1-bit counter can only ever hold 0 and 1, so nothing that
-  // counts is lost by naming this case instead of unrolling one or two iterations of it.
-  if (width < 2)
-    return {
-      bad: `the loop variable "${init.name}" reads as a single bit — an undeclared loop variable, or one declared as a 1-bit reg, cannot count a loop`,
-    }
-  if (width > MAX_COUNTER_WIDTH)
-    return {
-      bad: `loop variable "${init.name}" is ${width} bits, wider than this importer counts`,
-    }
-  const start = foldSpan(init.rhs, p, widthOf)
-  if (start === undefined)
-    return { bad: `the start value of the for loop over "${init.name}" is not a constant` }
-  const signed = signedOf(init.name)
-  const counter: LoopCounter = {
-    name: init.name,
-    width,
-    // Assigning the start into the counter is an assignment (§5.6): a SIGNED start sign-extends into the
-    // counter's declared width, so `for (i = 4'she; …)` starts an `integer` at −2 and not at +14.
-    value: extendTo(start, width, start.signed),
-    cond,
-    step: step.rhs,
-    literal: () => `${width}'${signed ? 's' : ''}h${counter.value.toString(16)}`,
-  }
-  return counter
 }
 
 /** Fold a token span to its exact constant value AND its type, or undefined if it is not an elaboration

@@ -103,7 +103,7 @@ function collectIdentifiers(modules: Map<string, ParsedModule>): Set<string> {
   return all
 }
 
-function pickSeparator(identifiers: Set<string>): string {
+export function pickSeparator(identifiers: Set<string>): string {
   let sep = '.'
   let k = 0
   while ([...identifiers].some((name) => name.includes(sep))) sep = `.h${k++}.`
@@ -202,7 +202,7 @@ type Rename = (name: string) => string
 
 /** A token names something the sub-module owns when it is an identifier that is not a syntax word — or IS a
  *  syntax word but was written escaped (`\posedge `), which makes it a real net despite spelling one. */
-const namesAnObject = (t: Tok): boolean =>
+export const namesAnObject = (t: Tok): boolean =>
   t.k === 'id' && (t.escaped === true || !RESERVED_WORDS.has(t.v))
 
 function renameToks(toks: Tok[], rename: Rename): Tok[] {

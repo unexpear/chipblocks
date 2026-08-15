@@ -40,6 +40,7 @@ import {
   MAX_WIDTH,
   splitOnColon,
 } from './verilog-const.ts'
+import { elaborateGenerate } from './verilog-generate.ts'
 import { chooseTopModule, flattenHierarchy } from './verilog-hierarchy.ts'
 import { synthesizeBehavioral } from './verilog-synth.ts'
 
@@ -99,7 +100,7 @@ const OTHER_GATE_SWITCH = new Set([
 const RESOLVED_NETS = ['tri', 'tri0', 'tri1', 'wand', 'wor', 'triand', 'trior', 'trireg', 'uwire']
 /** Every net-declaration keyword. All of them declare a NET (so a `= expr` initializer is a continuous
  *  drive, and a range sizes a bus); they differ only in how several drivers on one net resolve. */
-const NET_TYPES = new Set(['wire', ...RESOLVED_NETS, 'supply0', 'supply1'])
+export const NET_TYPES = new Set(['wire', ...RESOLVED_NETS, 'supply0', 'supply1'])
 /** The net types that COMBINE their drivers instead of contending. Resolving several drivers is the whole
  *  point of these, so reporting them as a multiple-driver conflict states the opposite of what they mean. */
 const NET_RESOLUTION: Record<string, 'or' | 'and'> = {
@@ -139,7 +140,14 @@ const BEHAVIORAL = [
  *  a named event, a timing constant. None of them can be a gate terminal, so skipping the declaration itself
  *  drives nothing — an `integer` written by an always block is still handled by that block. Without this they
  *  parsed as failed module instantiations, which now (rightly) makes a design unbuildable. */
-const NON_NET_DECLS = ['genvar', 'integer', 'real', 'realtime', 'time', 'event', 'specparam']
+export const NON_NET_DECLS = ['genvar', 'integer', 'real', 'realtime', 'time', 'event', 'specparam']
+/** The 26 gate and switch primitives, as one set — the words that start a primitive INSTANTIATION rather
+ *  than a declaration or an instantiation of a module. */
+export const GATE_WORDS = new Set([
+  ...Object.keys(N_INPUT),
+  ...Object.keys(N_OUTPUT),
+  ...OTHER_GATE_SWITCH,
+])
 const STRENGTH0 = new Set(['supply0', 'strong0', 'pull0', 'weak0', 'highz0'])
 const STRENGTH1 = new Set(['supply1', 'strong1', 'pull1', 'weak1', 'highz1'])
 /** The drive levels IEEE 1364-2005 §7.9 resolves two drivers of one net by, weakest first. `highz` is not the
@@ -182,9 +190,7 @@ const KEYWORDS = new Set([
   ...NON_NET_DECLS,
   ...RESOLVED_NETS,
   ...BEHAVIORAL,
-  ...Object.keys(N_INPUT),
-  ...Object.keys(N_OUTPUT),
-  ...OTHER_GATE_SWITCH,
+  ...GATE_WORDS,
 ])
 
 type Kind = 'id' | 'num' | 'kw' | 'p' | 'op' | 'dir' | 'sys' | 'str' | 'unk'
@@ -1996,7 +2002,7 @@ function readStatementSpan(c: Cursor, out: Tok[]): void {
   while (c.i < end) out.push(c.next() as Tok)
 }
 
-const CASE_WORDS = new Set(['case', 'casex', 'casez'])
+export const CASE_WORDS = new Set(['case', 'casex', 'casez'])
 
 /** The index just past the closing word that matches the opener at `start`, counting nested openers. */
 function nestedSpanEnd(
@@ -2034,10 +2040,23 @@ function groupSpanEnd(toks: Tok[], open: number): number {
  *
  * The loop unroller in verilog-synth.ts re-parses a loop BODY once per iteration and needs exactly this span,
  * so the two must agree about where a statement ends — hence one implementation, used from both sides.
+ *
+ * A leading `always`/`initial` is a MODULE ITEM rather than a procedural statement, and only the generate
+ * elaborator (verilog-generate.ts) ever asks for one — an always block cannot nest inside another, so the
+ * procedural callers never reach this case. It skips the `@( … )` / `@*` header and then takes the body's
+ * own span; without it a `always @(posedge clk) begin … end` would stop at the first ';' inside the block.
  */
 export function statementSpanEnd(toks: Tok[], start: number): number {
   const t = toks[start]
   if (t === undefined) return start
+  if (t.v === 'always' || t.v === 'initial') {
+    let i = start + 1
+    if ((toks[i] as Tok | undefined)?.v === '@') {
+      i += 1
+      i = (toks[i] as Tok | undefined)?.v === '(' ? groupSpanEnd(toks, i) : i + 1
+    }
+    return statementSpanEnd(toks, i)
+  }
   if (t.v === 'begin')
     return nestedSpanEnd(
       toks,
@@ -2954,7 +2973,9 @@ export function importVerilog(text: string): ImportResult {
     // module-scoped, so this runs per module span — a `W` in one module never rewrites another's nets.
     const reports: string[] = []
     const elaborated = elaborateModule(span, reports)
-    const mod = parseModule(elaborated.toks, reports)
+    // Generate regions are elaborated AFTER the parameters are folded (so `if (W > 8)` and `i < N` arrive as
+    // literals) and BEFORE the module is parsed, so every stage below sees a module that never had one.
+    const mod = parseModule(elaborateGenerate(elaborated.toks, reports), reports)
     warnings.push(...reports)
     if (mod === null) continue
     if (modules.has(mod.name)) {
@@ -3004,7 +3025,7 @@ export function importVerilog(text: string): ImportResult {
         return {
           failed: `a parameter override this importer could not apply to ${elaborated.unapplied.map((n) => `"${n}"`).join(', ')}`,
         }
-      const out = parseModule(elaborated.toks, reports)
+      const out = parseModule(elaborateGenerate(elaborated.toks, reports), reports)
       if (out === null)
         return { failed: 'a module that could not be read again with these parameters' }
       const known = defaultReports.get(name) as Set<string>
