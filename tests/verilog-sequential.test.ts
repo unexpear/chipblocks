@@ -205,14 +205,27 @@ describe('sequential synthesis — honest reporting of what cannot be built', ()
     expect(warnings.some((x) => /module\/udp|instance "else"/i.test(x))).toBe(false)
   })
 
-  test('a procedural for-loop in a clocked block is reported whole (no spilled instance warnings)', () => {
-    const warnings = warnOf(
+  test('a procedural for-loop is read as ONE statement, never as a module instance', () => {
+    // `for (` used to look like an instantiation to the structural parser. The loop itself now UNROLLS and
+    // builds (see verilog-loops.test.ts for the Icarus-checked behaviour); what is kept here is that neither
+    // the building form nor the refusing one ever spills a bogus module/instance warning.
+    expect(
+      warnOf(
+        `module m(input clk, input [3:0] d, output reg [3:0] q);
+           integer i;
+           always @(posedge clk) for (i = 0; i < 4; i = i + 1) q[i] <= d[i];
+         endmodule`,
+      ),
+    ).toEqual([])
+    // Undeclared, the same loop variable reads as a single bit and the loop is refused BY NAME — Icarus
+    // Verilog 14.0 rejects that source outright ("register ``i'' unknown in m").
+    const undeclared = warnOf(
       `module m(input clk, input [3:0] d, output reg [3:0] q);
          always @(posedge clk) for (i = 0; i < 4; i = i + 1) q[i] <= d[i];
        endmodule`,
     )
-    expect(warnings.some((x) => /procedural loop/i.test(x))).toBe(true)
-    expect(warnings.some((x) => /module\/udp|instance/i.test(x))).toBe(false)
+    expect(undeclared.some((x) => /reads as a single bit/.test(x))).toBe(true)
+    expect(undeclared.some((x) => /module\/udp|instance/i.test(x))).toBe(false)
   })
 
   test('a blocking assignment in a clocked block is reported', () => {

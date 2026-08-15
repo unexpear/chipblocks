@@ -387,15 +387,18 @@ describe('Verilog hierarchy — what cannot be built is REPORTED, never guessed'
     expect(has(warnings, 'no module "my_cell" is defined in this source')).toBe(true)
   })
 
-  test('a parameter override on an instance is reported, not applied with the wrong widths', () => {
-    const { warnings } = importVerilog(`
+  test('a parameter override on an instance is APPLIED, not built at the module default', () => {
+    // Icarus Verilog 14.0 on this exact source, swept over all 16 values of `a`, gives y = ~a on four bits
+    // (0101 -> 1010). Built at the module's own default W=1 it would be a one-bit design with a[1..3] and
+    // y[1..3] missing from the interface entirely.
+    const block = build(`
 module inner #(parameter W = 1) (input [W-1:0] a, output [W-1:0] y);
    assign y = ~a;
 endmodule
 module top(input [3:0] a, output [3:0] y);
    inner #(.W(4)) u(.a(a), .y(y));
 endmodule`)
-    expect(has(warnings, 'parameter override')).toBe(true)
+    expect(evaluate(block, { a: { value: 0b0101, width: 4 } }, { y: 4 })).toEqual({ y: 0b1010 })
   })
 
   test('an instance ARRAY is reported, not silently built as one copy', () => {
@@ -938,17 +941,17 @@ endmodule`)
   })
 
   test('an INSTANCE we refuse to build still claims the nets its output ports drive', () => {
-    // A `#(…)` parameter override cannot be applied to an already-elaborated module, so this instance is
-    // reported and not built. iverilog builds it: o is x on every bit wherever ~a and b differ. Leaving the
-    // instance unclaimed made the parent's `assign o = b` the sole driver of all four bits.
+    // An instance ARRAY (one name covering several copies) is not built, so this instance is reported and not
+    // built. iverilog builds it: o is x on every bit wherever ~a and b differ. Leaving the instance unclaimed
+    // made the parent's `assign o = b` the sole driver of all four bits.
     const { ids, warnings } = importOf(`
-module sub #(parameter W = 4) (x, y);
+module sub(x, y);
    input [3:0] x;
    output [3:0] y;
    assign y = ~x;
 endmodule
 module top(input [3:0] a, input [3:0] b, output [3:0] o);
-   sub #(.W(4)) u(.x(a), .y(o));
+   sub u[1:0](.x(a), .y(o));
    assign o = b;
 endmodule`)
     expect(
@@ -964,14 +967,14 @@ endmodule`)
     // module output, which is what keeps the design publishable at all — an unbuilt OUTPUT PORT refuses the
     // whole module, and that rule has its own test below.
     const { block, ids, warnings } = importOf(`
-module sub #(parameter W = 4) (x, y);
+module sub(x, y);
    input [3:0] x;
    output [3:0] y;
    assign y = ~x;
 endmodule
 module top(input [3:0] a, input [3:0] b, output [3:0] t);
    wire [3:0] o;
-   sub #(.W(4)) u(.x(t), .y(o));
+   sub u[1:0](.x(t), .y(o));
    assign t = a;
    assign o[3:2] = b[3:2];
 endmodule`)
@@ -993,13 +996,13 @@ endmodule`)
     // instance would have driven, so publishing would put invented values on the block's own interface.
     // Refusing whole is the point of the rule; this pins that it fires and names the bits it is refusing for.
     const { block, warnings } = importVerilog(`
-module sub #(parameter W = 4) (x, y);
+module sub(x, y);
    input [3:0] x;
    output [3:0] y;
    assign y = ~x;
 endmodule
 module top(input [3:0] a, input [3:0] b, output [3:0] o, output [3:0] t);
-   sub #(.W(4)) u(.x(t), .y(o));
+   sub u[1:0](.x(t), .y(o));
    assign t = a;
    assign o[3:2] = b[3:2];
 endmodule`)
@@ -1019,20 +1022,20 @@ describe('Verilog hierarchy — a refused instance claims the net it really alig
     // come from the same position-keeping that builds such a list — otherwise the claim lands on a net the
     // instance never drove, and takes a legitimate driver off it.
     //
-    // The parameter override is what makes this reachable: it refuses the instance FIRST, which is the path
-    // that claims. The parent drives ONLY `q`, and that is what makes this discriminate: position 3 is the
-    // child's output `y`, so `q` is the contended net. Counting against the surviving ports (a, y) would put
-    // the output on `z` instead, and `q` would keep b's driver with no contention reported at all.
+    // The instance array is what makes this reachable: it refuses the instance FIRST, which is the path that
+    // claims. The parent drives ONLY `q`, and that is what makes this discriminate: position 3 is the child's
+    // output `y`, so `q` is the contended net. Counting against the surviving ports (a, y) would put the
+    // output on `z` instead, and `q` would keep b's driver with no contention reported at all.
     const { block, warnings } = importVerilog(`
-module ch #(parameter W = 1) (input a, inout w, output y);
+module ch(input a, inout w, output y);
    assign y = ~a;
 endmodule
 module top(input p, input b, output q, output z);
-   ch #(.W(1)) u(p, z, q);
+   ch u[1:0](p, z, q);
    assign q = b;
 endmodule`)
     expect(
-      warnings.some((w) => w.includes('parameter override')),
+      warnings.some((w) => w.includes('instance array')),
       `warnings: ${warnings.join(' | ')}`,
     ).toBe(true)
     expect(

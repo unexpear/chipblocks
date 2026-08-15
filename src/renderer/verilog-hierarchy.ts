@@ -24,12 +24,29 @@
  * same-width nets joined by an assignment keeps each declaration's meaning; the copy is bit-for-bit because
  * the widths are equal, so no extension happens at the join itself.
  *
+ * A `#( … )` parameter override is applied by ELABORATING THE CHILD AGAIN at the overridden values, which is
+ * what the LRM describes and the only way to get it right: the child's own widths, localparams and nested
+ * overrides all fold from the new values, top-down. Each distinct value set is one separate copy of the
+ * module, so `sub #(.W(4)) u4` and `sub #(.W(2)) u2` in one parent are two different modules that both build.
+ *
  * Nothing is invented. An instance of a module this source does not define, a parameter override we cannot
  * apply, an instance array, a recursive instantiation and an unconnected input are each REPORTED and left
  * unbuilt rather than guessed at.
  */
 
-import type { Assign, FuncDef, ModuleInst, ParsedModule, TaskDef, Tok } from './verilog-import.ts'
+import type { ConstVal } from './verilog-const.ts'
+import { evalConst } from './verilog-const.ts'
+import type {
+  Assign,
+  FuncDef,
+  ModuleInst,
+  ModuleParams,
+  ParamDecl,
+  ParamOverride,
+  ParsedModule,
+  TaskDef,
+  Tok,
+} from './verilog-import.ts'
 
 /**
  * The Verilog-2005 reserved words. Our lexer deliberately classifies only SOME of them as keywords — `if`,
@@ -147,20 +164,16 @@ function emptyLike(mod: ParsedModule): ParsedModule {
     name: mod.name,
     portOrder: [...mod.portOrder],
     dir: new Map(mod.dir),
-    gates: mod.gates.map((g) => ({ prim: g.prim, terminals: [...g.terminals], line: g.line })),
-    rawGates: mod.rawGates.map((g) => ({
-      prim: g.prim,
-      slices: g.slices.map(cloneToks),
-      line: g.line,
-    })),
+    gates: mod.gates.map((g) => ({ ...g, terminals: [...g.terminals] })),
+    rawGates: mod.rawGates.map((g) => ({ ...g, slices: g.slices.map(cloneToks) })),
     refusedDrivers: mod.refusedDrivers.map((r) => ({
       ...r,
       terms: r.terms.map(cloneToks),
     })),
     assigns: mod.assigns.map((a) => ({
+      ...a,
       lhs: cloneToks(a.lhs),
       rhs: cloneToks(a.rhs),
-      line: a.line,
     })),
     powerOnValues: mod.powerOnValues.map((v) => ({ ...v })),
     namesInsideUnparsedSpans: new Set(mod.namesInsideUnparsedSpans),
@@ -179,6 +192,7 @@ function emptyLike(mod: ParsedModule): ParsedModule {
     resolution: new Map(mod.resolution),
     instances: [],
     droppedPorts: [...mod.droppedPorts],
+    unrepresentablePorts: [...mod.unrepresentablePorts],
     portPositions: [...mod.portPositions],
     unbuilt: { nets: new Set<string>(), constructs: [], wholeModule: false },
   }
@@ -195,6 +209,9 @@ function renameToks(toks: Tok[], rename: Rename): Tok[] {
   return toks.map((t) => (namesAnObject(t) ? { ...t, v: rename(t.v), line: t.line } : t))
 }
 
+const renameNames = (names: Set<string>, rename: Rename): Set<string> =>
+  new Set([...names].map(rename))
+
 function renameFunction(fn: FuncDef, rename: Rename): FuncDef {
   const localWidths = new Map<string, number>()
   for (const [name, width] of fn.localWidths) localWidths.set(rename(name), width)
@@ -203,6 +220,7 @@ function renameFunction(fn: FuncDef, rename: Rename): FuncDef {
     retWidth: fn.retWidth,
     inputs: fn.inputs.map((i) => ({ name: rename(i.name), width: i.width })),
     localWidths,
+    integerLocals: renameNames(fn.integerLocals, rename),
     body: renameToks(fn.body, rename),
   }
 }
@@ -214,6 +232,7 @@ function renameTask(task: TaskDef, rename: Rename): TaskDef {
     name: rename(task.name),
     args: task.args.map((a) => ({ name: rename(a.name), width: a.width, dir: a.dir })),
     localWidths,
+    integerLocals: renameNames(task.integerLocals, rename),
     body: renameToks(task.body, rename),
   }
 }
@@ -362,21 +381,18 @@ function inlineInstance(
     // (rename leaves an unaliased port at `${prefix}${port}`). Setting them twice was dead code no test
     // could ever distinguish.
     const portNet: Tok = { k: 'id', v: `${prefix}${port}`, line: inst.line }
+    // `portJoin` because this buffer is not a driver the source wrote: it carries the child's value at no
+    // strength of its own, so a net it lands on must not be resolved by drive strength (see Assign).
     joins.push(
       isOutput
-        ? { lhs: cloneToks(expr), rhs: [portNet], line: inst.line }
-        : { lhs: [portNet], rhs: cloneToks(expr), line: inst.line },
+        ? { lhs: cloneToks(expr), rhs: [portNet], line: inst.line, portJoin: true }
+        : { lhs: [portNet], rhs: cloneToks(expr), line: inst.line, portJoin: true },
     )
   }
 
-  for (const g of child.gates)
-    parent.gates.push({ prim: g.prim, terminals: g.terminals.map(rename), line: g.line })
+  for (const g of child.gates) parent.gates.push({ ...g, terminals: g.terminals.map(rename) })
   for (const g of child.rawGates)
-    parent.rawGates.push({
-      prim: g.prim,
-      slices: g.slices.map((sl) => renameToks(sl, rename)),
-      line: g.line,
-    })
+    parent.rawGates.push({ ...g, slices: g.slices.map((sl) => renameToks(sl, rename)) })
   // A driver the child refused still owns the child's bits; after the copy those bits are the parent's
   // prefixed nets, so the claim has to be renamed exactly like every other token span.
   for (const r of child.refusedDrivers)
@@ -387,12 +403,16 @@ function inlineInstance(
     })
   for (const a of child.assigns)
     parent.assigns.push({
+      ...a,
       lhs: renameToks(a.lhs, rename),
       rhs: renameToks(a.rhs, rename),
-      line: a.line,
     })
   for (const v of child.powerOnValues)
-    parent.powerOnValues.push({ name: rename(v.name), value: v.value, line: v.line })
+    parent.powerOnValues.push({
+      name: rename(v.name),
+      expr: renameToks(v.expr, rename),
+      line: v.line,
+    })
   for (const b of child.alwaysBlocks)
     parent.alwaysBlocks.push({
       clk: b.clk === null ? null : rename(b.clk),
@@ -415,33 +435,165 @@ function inlineInstance(
 }
 
 /**
+ * Work out the parameter values one instance's `#( … )` list forces on the module it instantiates, or the
+ * plain-English reason this importer will not build the instance at all. Every rule below was measured
+ * against Icarus Verilog 14.0 rather than remembered:
+ *
+ *   - a name the module does not declare      → Icarus: "parameter `NOPE` not found" — an ERROR, so we refuse
+ *   - a name the module declares localparam   → Icarus: "Cannot override localparam" — an ERROR, so we refuse
+ *   - a body parameter, when the module has a header `#( … )` list → Icarus: "Parameter cannot be overridden
+ *     in the scope it has been declared in" — an ERROR, so we refuse
+ *   - MORE positional items than the module has overridable parameters → Icarus WARNS and builds with the
+ *     ones that fit, so we warn and build too; erroring there would diverge from the oracle the other way
+ *   - a positional list against a module with NO overridable parameters → the same warn-and-build
+ *
+ * Positional items count against `parameter` declarations ONLY, in source order, and only against the header
+ * list when the module has one. A `localparam` between two parameters does not take a position.
+ */
+function resolveOverrides(
+  inst: ModuleInst,
+  declared: ModuleParams,
+  warnings: string[],
+): Map<string, ConstVal> | { refuse: string } {
+  const values = new Map<string, ConstVal>()
+  const items = inst.overrides as ParamOverride[]
+  if (items.length === 0) return values
+  const positional = items.filter((item) => item.name === null)
+  if (positional.length > 0 && positional.length !== items.length)
+    return { refuse: 'a parameter override list that mixes named and positional items' }
+  const overridable = declared.decls.filter(
+    (decl) => decl.kind === 'parameter' && (declared.hasHeader ? decl.inHeader : true),
+  )
+  if (positional.length > 0) {
+    const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
+    if (positional.length > overridable.length)
+      warnings.push(
+        `${where} passes ${positional.length} parameter ${positional.length === 1 ? 'override' : 'overrides'} but "${inst.moduleName}" has ${overridable.length} overridable ${overridable.length === 1 ? 'parameter' : 'parameters'} — the extra ${positional.length - overridable.length === 1 ? 'one is' : 'ones are'} reported, not applied`,
+      )
+    for (let i = 0; i < Math.min(positional.length, overridable.length); i++) {
+      const decl = overridable[i] as ParamDecl
+      const value = evalConst((positional[i] as ParamOverride).expr)
+      if (value === undefined)
+        return {
+          refuse: `a parameter override for "${decl.name}" that is not a constant expression`,
+        }
+      values.set(decl.name, value)
+    }
+    return values
+  }
+  const byName = new Map(declared.decls.map((decl) => [decl.name, decl]))
+  for (const item of items) {
+    const name = item.name as string
+    const decl = byName.get(name)
+    if (decl === undefined)
+      return {
+        refuse: `a parameter override for "${name}", which "${inst.moduleName}" does not declare`,
+      }
+    if (decl.kind === 'localparam')
+      return {
+        refuse: `a parameter override for "${name}", which "${inst.moduleName}" declares as a localparam — a localparam cannot be overridden`,
+      }
+    if (declared.hasHeader && !decl.inHeader)
+      return {
+        refuse: `a parameter override for "${name}", which "${inst.moduleName}" declares in its body rather than in its #( … ) parameter list — only the parameter list is overridable`,
+      }
+    if (values.has(name)) return { refuse: `a parameter override that sets "${name}" twice` }
+    const value = evalConst(item.expr)
+    if (value === undefined)
+      return { refuse: `a parameter override for "${name}" that is not a constant expression` }
+    values.set(name, value)
+  }
+  return values
+}
+
+/** How this importer re-reads a module at overridden parameter values. `elaborate` returns a FRESH
+ *  ParsedModule — never a mutation of the shared default parse, which would leak the override into every
+ *  un-overridden instance of the same module — or the plain-English reason it cannot. */
+export type OverrideSupport = {
+  declared: (moduleName: string) => ModuleParams | undefined
+  elaborate: (
+    moduleName: string,
+    values: Map<string, ConstVal>,
+  ) => ParsedModule | { failed: string }
+}
+
+/** Bounds on elaboration. A parameter that never converges (`m #(.N(N-1)) u`) has no recursive instantiation
+ *  to catch — every copy is a DIFFERENT module — so the two limits below are what stops it. Both refuse by
+ *  name; neither ever returns a design. Real hierarchies are nowhere near either: a CPU is ~10 deep. */
+const MAX_HIERARCHY_DEPTH = 64
+const MAX_PARAMETERISED_COPIES = 256
+
+/**
  * Inline every sub-module instance below `topName` and return one flat ParsedModule. Each module is flattened
- * ONCE and the result reused per instance, so the same module used many times costs one flatten and N copies.
+ * ONCE PER DISTINCT PARAMETER SET and the result reused per instance, so the same module used many times at
+ * the same parameters costs one flatten and N copies. Keying the cache by module name alone was correct only
+ * while no instance could change a module's parameters; with overrides it would build the second instance's
+ * copy at the first instance's widths, and say nothing.
  */
 export function flattenHierarchy(
   modules: Map<string, ParsedModule>,
   topName: string,
   warnings: string[],
+  support?: OverrideSupport,
 ): ParsedModule {
   const separator = pickSeparator(collectIdentifiers(modules))
   const done = new Map<string, ParsedModule>()
+  const elaborated = new Map<string, ParsedModule>()
   const onStack = new Set<string>()
 
-  const flatten = (name: string): ParsedModule => {
-    const cached = done.get(name)
+  // JSON rather than a joined string: an ESCAPED Verilog identifier can hold nearly any character, so any
+  // separator picked here could in principle appear inside a module or parameter name and make two different
+  // parameter sets share one entry — exactly the silent-wrong-width collision this key exists to prevent.
+  const cacheKey = (name: string, values: Map<string, ConstVal>): string =>
+    JSON.stringify([
+      name,
+      [...values].map(([param, value]) => [param, `${value.value}:${value.width}`]).sort(),
+    ])
+
+  /** The child module at these parameter values: the shared default parse when nothing is overridden, else a
+   *  fresh elaboration, reused across instances that force the same values. */
+  const childModule = (
+    name: string,
+    values: Map<string, ConstVal>,
+    key: string,
+    fallback: ParsedModule,
+  ): ParsedModule | { failed: string } => {
+    if (values.size === 0) return fallback
+    const cached = elaborated.get(key)
     if (cached !== undefined) return cached
-    const mod = modules.get(name) as ParsedModule
-    onStack.add(name)
+    if (elaborated.size >= MAX_PARAMETERISED_COPIES)
+      return {
+        failed: `a design needing more than ${MAX_PARAMETERISED_COPIES} differently-parameterised copies of its modules`,
+      }
+    const fresh = (support as OverrideSupport).elaborate(name, values)
+    if ('failed' in fresh) return fresh
+    elaborated.set(key, fresh)
+    return fresh
+  }
+
+  const flatten = (
+    mod: ParsedModule,
+    key: string,
+    depth: number,
+  ): ParsedModule | { failed: string } => {
+    const cached = done.get(key)
+    if (cached !== undefined) return cached
+    if (depth > MAX_HIERARCHY_DEPTH)
+      return { failed: `a hierarchy nested more than ${MAX_HIERARCHY_DEPTH} modules deep` }
+    onStack.add(key)
     const out = emptyLike(mod)
     const usedNames = new Set<string>()
     for (const inst of mod.instances) {
       const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
       const known = modules.get(inst.moduleName)
-      if (inst.unsupported !== null) {
-        warnings.push(`${where} — ${inst.unsupported} — reported, not built`)
+      const refuse = (reason: string): void => {
+        warnings.push(`${where} — ${reason} — reported, not built`)
         const what = `an instance of "${inst.moduleName}" this importer cannot build`
         if (known === undefined) claimUnknownInstance(out, inst, what)
         else claimRefusedInstance(out, inst, known, what)
+      }
+      if (inst.unsupported !== null) {
+        refuse(inst.unsupported)
         continue
       }
       if (known === undefined) {
@@ -455,7 +607,22 @@ export function flattenHierarchy(
         )
         continue
       }
-      if (onStack.has(inst.moduleName)) {
+      let values = new Map<string, ConstVal>()
+      if (inst.overrides !== null) {
+        const declared = support?.declared(inst.moduleName)
+        if (support === undefined || declared === undefined) {
+          refuse('a parameter override (#(…)) this importer cannot apply here')
+          continue
+        }
+        const resolved = resolveOverrides(inst, declared, warnings)
+        if ('refuse' in resolved) {
+          refuse(resolved.refuse)
+          continue
+        }
+        values = resolved
+      }
+      const childKey = cacheKey(inst.moduleName, values)
+      if (onStack.has(childKey)) {
         warnings.push(
           `${where} — a module cannot instantiate itself, directly or through another module — reported, not built`,
         )
@@ -468,12 +635,37 @@ export function flattenHierarchy(
         continue
       }
       usedNames.add(inst.instName)
-      inlineInstance(out, inst, flatten(inst.moduleName), separator, warnings)
+      const child = childModule(inst.moduleName, values, childKey, known)
+      if ('failed' in child) {
+        refuse(child.failed)
+        continue
+      }
+      const flat = flatten(child, childKey, depth + 1)
+      if ('failed' in flat) {
+        refuse(flat.failed)
+        continue
+      }
+      inlineInstance(out, inst, flat, separator, warnings)
     }
-    onStack.delete(name)
-    done.set(name, out)
+    onStack.delete(key)
+    done.set(key, out)
     return out
   }
 
-  return flatten(topName)
+  // Nothing overrides the top module, so it is keyed at the empty parameter set — the same key any
+  // un-overridden instance of it would get, had one existed.
+  const top = modules.get(topName) as ParsedModule
+  const flat = flatten(top, cacheKey(topName, new Map()), 0)
+  if (!('failed' in flat)) return flat
+  // Unreachable while the depth limit is positive (the top module is at depth 0), but a total function is
+  // cheaper than an assertion: whatever went wrong, the design is refused rather than half-built.
+  warnings.push(`module "${topName}" — ${flat.failed} — reported, not built`)
+  const out = emptyLike(top)
+  out.refusedDrivers.push({
+    where: `module "${topName}"`,
+    what: flat.failed,
+    terms: [],
+    wholeModule: true,
+  })
+  return out
 }

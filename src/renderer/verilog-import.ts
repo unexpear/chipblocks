@@ -32,7 +32,14 @@ import {
   XOR_BLOCK,
 } from './builtin-blocks.ts'
 import { POWER_PORT_IDS } from './logic-sim.ts'
-import { type ConstVal, evalConst, MAX_WIDTH, splitOnColon } from './verilog-const.ts'
+import {
+  asInteger,
+  type ConstVal,
+  evalConst,
+  extendTo,
+  MAX_WIDTH,
+  splitOnColon,
+} from './verilog-const.ts'
 import { chooseTopModule, flattenHierarchy } from './verilog-hierarchy.ts'
 import { synthesizeBehavioral } from './verilog-synth.ts'
 
@@ -108,6 +115,13 @@ const UNMODELED_NETS: Record<string, string> = {
   tri1: 'pulls to 1 when nothing drives it',
   trireg: 'stores its last driven value on the net itself',
 }
+/** `supply0`/`supply1` written on a PORT. A net declaration turns these into a real constant drive, but the
+ *  two port paths are parsed before the assignment list exists, so there is nowhere to put that drive. The
+ *  port is claimed instead of quietly published as an ordinary undriven wire. */
+const UNMODELED_PORT_NETS: Record<string, string> = {
+  supply0: 'ties it permanently to 0 — a drive this importer builds only from a net declaration',
+  supply1: 'ties it permanently to 1 — a drive this importer builds only from a net declaration',
+}
 const BEHAVIORAL = [
   'assign',
   'always',
@@ -128,6 +142,24 @@ const BEHAVIORAL = [
 const NON_NET_DECLS = ['genvar', 'integer', 'real', 'realtime', 'time', 'event', 'specparam']
 const STRENGTH0 = new Set(['supply0', 'strong0', 'pull0', 'weak0', 'highz0'])
 const STRENGTH1 = new Set(['supply1', 'strong1', 'pull1', 'weak1', 'highz1'])
+/** The drive levels IEEE 1364-2005 §7.9 resolves two drivers of one net by, weakest first. `highz` is not the
+ *  bottom of that ladder: a driver on its high-Z side is ABSENT from the resolution, not merely out-driven. */
+export type StrengthLevel = 'highz' | 'weak' | 'pull' | 'strong' | 'supply'
+/** A driver's strength is per SIDE — `one` is in force while it drives 1, `zero` while it drives 0 — so which
+ *  of two drivers wins is not knowable from the strengths alone; it depends on what each is driving. */
+export type DriveStrength = { one: StrengthLevel; zero: StrengthLevel }
+const STRENGTH_LEVEL: Record<string, StrengthLevel> = {
+  supply0: 'supply',
+  supply1: 'supply',
+  strong0: 'strong',
+  strong1: 'strong',
+  pull0: 'pull',
+  pull1: 'pull',
+  weak0: 'weak',
+  weak1: 'weak',
+  highz0: 'highz',
+  highz1: 'highz',
+}
 /** Every reserved word the lexer must classify as a keyword (not a net name). Case-sensitive, all lowercase. */
 const KEYWORDS = new Set([
   'module',
@@ -347,11 +379,21 @@ const OPS1 = new Set(['&', '|', '^', '~', '!', '?', '+', '-', '*', '/', '%', '<'
 // ── structural parser ─────────────────────────────────────────────────────────
 /** `line` is the source line of a gate written in the source; a gate the SYNTHESIZER mints has none. It is
  *  carried so a contention between two structural gates can name where each was written. */
-export type GateInst = { prim: string; terminals: string[]; line?: number | undefined }
+export type GateInst = {
+  prim: string
+  terminals: string[]
+  line?: number | undefined
+  strength?: DriveStrength | undefined
+}
 /** A gate primitive whose terminals are not all plain nets — `and g(t[0], a[0], b[0])`, `buf g(y, 1'b1)`,
  *  `xor g(y, {a[0]}, b)`. Ordinary Verilog, but the widths that turn `t[0]` into a bit-net live in the
  *  synthesizer, so the raw token spans travel there and are resolved with the machinery an `assign` uses. */
-export type RawGate = { prim: string; slices: Tok[][]; line: number }
+export type RawGate = {
+  prim: string
+  slices: Tok[][]
+  line: number
+  strength?: DriveStrength | undefined
+}
 /**
  * A driver the source WROTE that this importer will not build. It still owns the net bits it targets: a later
  * driver on those bits is a contention in the real hardware, not a lone driver, and publishing the later one
@@ -369,12 +411,35 @@ export type RefusedDriver = {
   terms: Tok[][]
   wholeModule?: true
 }
-/** A continuous assignment `assign <lhs> = <rhs>;` captured as token spans; the synthesizer (verilog-synth)
- *  parses the rhs into gates. */
-export type Assign = { lhs: Tok[]; rhs: Tok[]; line: number }
+/**
+ * A continuous assignment `assign <lhs> = <rhs>;` captured as token spans; the synthesizer (verilog-synth)
+ * parses the rhs into gates. `strength` is the source's drive strength (absent means the default strong/strong
+ * — never "unknown" and never "weakest", or a plain assign would lose against every annotated one).
+ *
+ * `portJoin` marks an assignment the HIERARCHY FLATTENER minted to carry a sub-module port across the module
+ * boundary, not one the source wrote. Real Verilog collapses a port onto the enclosing net, so the child's own
+ * driver (with the child's own strength) contends directly with the parent's; this importer instead joins two
+ * nets with a buffer that has no strength of its own. That buffer must never take part in a strength
+ * resolution — it would carry the child's value at the WRONG strength — so a net it drives is left to the
+ * ordinary contention rule.
+ */
+export type Assign = {
+  lhs: Tok[]
+  rhs: Tok[]
+  line: number
+  strength?: DriveStrength | undefined
+  portJoin?: true
+}
 /** A register's POWER-ON contents, written `initial <reg> = <constant>;`. Not a driver: it says what the
- *  flip-flop holds before the first clock edge. */
-export type PowerOnValue = { name: string; value: ConstVal; line: number }
+ *  flip-flop holds before the first clock edge.
+ *
+ *  The expression travels UNFOLDED, because an assignment is a context and the context here is the register's
+ *  DECLARED WIDTH — which only the synthesizer knows. Folding it here with no width applied the lossless
+ *  `growWidth` that belongs to a parameter value, and that width contains the shift wall: `reg [7:0] r;
+ *  initial r = 4'd8 << 1;` folded to 0 at four bits, matched the flip-flop's power-up 0, and BUILT — where
+ *  Icarus Verilog 14.0 powers the register up holding 16. Truncating the folded value cannot repair it (0
+ *  truncated to eight bits is still 0); the width has to reach the fold, so the tokens go instead. */
+export type PowerOnValue = { name: string; expr: Tok[]; line: number }
 /** An always block captured as token spans; the synthesizer elaborates the body. `clk` is the clock net for a
  *  `@(posedge clk)` block (→ flip-flops) or null for a combinational `@(*)`/`@*`/`@(a or b)` block (→ gates). */
 export type AlwaysBlock = {
@@ -401,6 +466,10 @@ export type FuncDef = {
   retWidth: number
   inputs: { name: string; width: number }[]
   localWidths: Map<string, number>
+  /** Locals declared `integer` — IEEE 1364-2005 §3.9 makes those a SIGNED 32-bit variable, where a `reg [31:0]`
+   *  of the same width is unsigned. Only the loop unroller reads this (it must count at the exact declared type;
+   *  `for (i = 3; i >= 0; i = i - 1)` terminates signed and never terminates unsigned). */
+  integerLocals: Set<string>
   body: Tok[]
 }
 /** A synthesizable Verilog `task`: its ordered args (each with a direction + width), local widths, and body.
@@ -411,15 +480,31 @@ export type TaskDef = {
   name: string
   args: TaskArg[]
   localWidths: Map<string, number>
+  /** Locals declared `integer` — see FuncDef.integerLocals. */
+  integerLocals: Set<string>
   body: Tok[]
 }
 /** One port connection on a module instance: `.port(expr)` (named) or just `expr` (positional, `port` null).
  *  An empty `expr` is a deliberately unconnected port — legal Verilog, reported by the flattener. */
 export type PortConn = { port: string | null; expr: Tok[] }
+/** One item of an instance's `#( … )` parameter override list: `.NAME(expr)` (named) or a bare `expr`
+ *  (positional, `name` null). The expression is kept as raw tokens — it is folded by the flattener, in the
+ *  ENCLOSING module's scope, because that is the scope the LRM evaluates it in. */
+export type ParamOverride = { name: string | null; expr: Tok[]; line: number }
+/** One `parameter`/`localparam` declaration, in source order. Both facts an override needs are here: a
+ *  `localparam` can never be overridden (IEEE 1364-2005 §12.2), and when a module has a header `#( … )`
+ *  parameter port list that list is the ONLY overridable one — a body `parameter` alongside it is not
+ *  reachable by name or by position. Both rules were measured against Icarus Verilog 14.0, which rejects the
+ *  first with "Cannot override localparam" and the second with "Parameter cannot be overridden in the scope
+ *  it has been declared in". */
+export type ParamDecl = { name: string; kind: 'parameter' | 'localparam'; inHeader: boolean }
+/** Everything the flattener needs to decide whether an instance's `#( … )` list is legal for this module. */
+export type ModuleParams = { decls: ParamDecl[]; hasHeader: boolean }
 /** A `child u1(...)` sub-module instantiation, captured before any module table exists — whether `moduleName`
  *  names a module in this source is decided later, by the flattener. `unsupported` is a plain-English reason
- *  the instance cannot be built at all (a parameter override we cannot apply, an instance array); it is
- *  reported and the instance is skipped rather than built with the wrong parameters. */
+ *  the instance cannot be built at all (an instance array, a `#( … )` list we cannot read); it is reported and
+ *  the instance is skipped rather than built with the wrong parameters. `overrides` is null when no `#( … )`
+ *  was written at all, which is not the same as an empty `#()` — the empty list is legal and changes nothing. */
 export type ModuleInst = {
   moduleName: string
   instName: string
@@ -427,6 +512,7 @@ export type ModuleInst = {
   named: boolean
   line: number
   unsupported: string | null
+  overrides: ParamOverride[] | null
 }
 /**
  * What this importer could not build, after the transitive walk in verilog-synth.ts. `nets` holds every
@@ -478,6 +564,12 @@ export type ParsedModule = {
    *  refuses it. A named instantiation is unaffected: it binds by name, and a connection to a dropped port
    *  is reported on its own. */
   droppedPorts: string[]
+  /** The subset of `droppedPorts` this importer cannot represent AT ALL — a declared RANGE that would not
+   *  fold, or an `inout`, each carrying its own plain-English reason. On a sub-module that is all a drop
+   *  needs to mean — a connection to one is refused, an unconnected one costs nothing. On the module being
+   *  PUBLISHED it is fatal: the block would come out missing a pin its own source declares, so importVerilog
+   *  refuses the design by name instead of handing back a smaller module. */
+  unrepresentablePorts: UnrepresentablePort[]
   /** Every identifier inside a span this importer swallowed WITHOUT parsing its statements — a `generate`
    *  body, or a statement whose leading word could not be read as an instantiation (a bare `for` generate).
    *  Those are the only two places a module instantiation can hide, and a hidden instantiation makes the
@@ -487,21 +579,41 @@ export type ParsedModule = {
   unbuilt: UnbuiltReport
 }
 
-/** A `[ msb : lsb ]` range's bit width. Both bounds are folded as constant expressions (a parameter has
- *  already been substituted to a literal by elaborateParams, so `[WIDTH-1:0]` arrives as `[8-1:0]`). Only
- *  descending, zero-based `[N:0]` is representable (right endpoint = LSB); anything else is reported. */
+/** The port-side tables a declaration writes into. The ANSI header and the non-ANSI body form both fill
+ *  them, and must agree about every one, or the two spellings of the same module would not build alike. */
+type PortTables = {
+  portOrder: string[]
+  portPositions: (string | null)[]
+  dir: Map<string, 'input' | 'output' | 'inout'>
+  widths: Map<string, number>
+  signed: Set<string>
+  droppedPorts: string[]
+  unrepresentablePorts: UnrepresentablePort[]
+  /** The module's own `resolution` map. A port may declare a wired net type (`output wor [7:0] y`), and that
+   *  is the ONLY place that resolution is written when the header is ANSI. */
+  resolution: Map<string, 'or' | 'and'>
+}
+
+/** A `[ msb : lsb ]` range's bit width. Both bounds are folded as SELF-DETERMINED constant expressions — a
+ *  range bound is assigned to nothing, so it wraps at its own §5.4.1 width (measured: `wire [(4'd10 +
+ *  4'd10):0]` is five bits in Icarus Verilog 14.0, not twenty-one). A parameter has already been substituted
+ *  to its sized literal by elaborateParams, so `[WIDTH-1:0]` arrives as `[8'd8-1:0]` and carries the width the
+ *  declaration gave it. Only descending, zero-based `[N:0]` is representable (right endpoint = LSB);
+ *  anything else is reported. */
 function rangeWidth(
   inner: Tok[],
   params?: Map<string, ConstVal>,
 ): { width: number } | { bad: string } {
   const parts = splitOnColon(inner)
   if (parts === undefined) return { bad: 'non-constant or malformed range' }
-  const hi = evalConst(parts[0], params)
-  const lo = evalConst(parts[1], params)
+  const hi = evalConst(parts[0], params, 'self')
+  const lo = evalConst(parts[1], params, 'self')
   if (hi === undefined || lo === undefined)
     return { bad: 'non-constant range (bounds must fold to a constant)' }
-  const msb = Number(hi.value)
-  const lsb = Number(lo.value)
+  // Read each bound through asInteger, so a NEGATIVE msb (`[LO+6:0]` with `parameter signed [3:0] LO = -2`)
+  // reads as −4 and is reported, instead of reading as 4 294 967 290 and publishing a 21-bit port.
+  const msb = Number(asInteger(hi))
+  const lsb = Number(asInteger(lo))
   if (lsb !== 0 || msb < 0)
     return {
       bad: `range [${msb}:${lsb}] must be [N:0] (ascending/nonzero-based buses are unsupported)`,
@@ -522,21 +634,24 @@ function readRange(c: Cursor): { width: number } | { bad: string } {
   return rangeWidth(inner)
 }
 
-/** A memory depth range `[0 : W-1]` (ascending, zero-based) → its word count W. Bounds fold as constant
- *  expressions (parameters already substituted). Descending / nonzero-based ranges are reported: the
- *  synthesizer maps word k ↔ address k, so it needs `[0:W-1]`. */
+/** A memory depth range `[0 : W-1]` (ascending, zero-based) → its word count W. Bounds fold as SELF-DETERMINED
+ *  constant expressions, the same reading `rangeWidth` uses: `reg [7:0] m [0:(4'd10 + 4'd10)]` is FIVE words
+ *  in Icarus Verilog 14.0, and building twenty-one of them made an out-of-range address answer where the real
+ *  memory has no word. Descending / nonzero-based ranges are reported: the synthesizer maps word k ↔ address
+ *  k, so it needs `[0:W-1]`. */
 function depthRange(
   inner: Tok[],
   params?: Map<string, ConstVal>,
 ): { depth: number } | { bad: string } {
   const parts = splitOnColon(inner)
   if (parts === undefined) return { bad: 'non-constant or malformed array range' }
-  const lo = evalConst(parts[0], params)
-  const hi = evalConst(parts[1], params)
+  const lo = evalConst(parts[0], params, 'self')
+  const hi = evalConst(parts[1], params, 'self')
   if (lo === undefined || hi === undefined)
     return { bad: 'non-constant array range (bounds must fold to a constant)' }
-  const loN = Number(lo.value)
-  const hiN = Number(hi.value)
+  // Same reading as rangeWidth: a negative word bound must READ as negative, not as a 4-billion-word memory.
+  const loN = Number(asInteger(lo))
+  const hiN = Number(asInteger(hi))
   if (loN !== 0 || hiN < loN)
     return { bad: `array range [${loN}:${hiN}] must be [0:N-1] (ascending, zero-based)` }
   if (hiN + 1 > MAX_WIDTH)
@@ -544,6 +659,100 @@ function depthRange(
       bad: `memory depth ${hiN + 1} is unreasonably large (a parameter underflow?) — reported`,
     }
   return { depth: hiN + 1 }
+}
+
+/**
+ * A PORT this importer cannot represent, and why — the two reasons below both build a DIFFERENT MODULE than
+ * the source describes if they are quietly registered at width 1.
+ *
+ * `said` is what the warning tells the reader; `why` completes the sentence "the port …" wherever the name
+ * is repeated later (the refused-driver reason, the whole-design refusal).
+ */
+type UnrepresentablePort = { name: string; said: string; why: string }
+
+/** A port whose declared `[msb:lsb]` range does not fold to a constant. Measured against Icarus Verilog
+ *  14.0: `output [$clog2(16)-1:0] z; assign z = 4'hF;` read 1 here where Icarus reads 15, and the module
+ *  published with nothing said but a warning about the RANGE. */
+const unsizedPort = (name: string, bad: string): Omit<UnrepresentablePort, 'name'> => ({
+  said: `port "${name}" range — ${bad}`,
+  why: 'has a declared range this importer cannot fold to a width',
+})
+
+/** A bidirectional port. There is no direction to build it in and no third value to give it, so it has never
+ *  been built — but dropping it silently published the module anyway, with the net inside it registered ONE
+ *  BIT wide. Measured against Icarus Verilog 14.0: `inout [7:0] b; assign b = 8'hFF; assign y = b;` read 1
+ *  here where Icarus reads 255, and the same design in non-ANSI spelling read 0 while leaving a one-bit `b`
+ *  standing in the published interface. */
+const inoutPort = (name: string): Omit<UnrepresentablePort, 'name'> => ({
+  said: `inout port "${name}" (bidirectional) is not representable`,
+  why: 'is bidirectional (inout) and has no direction this two-valued netlist can drive it in',
+})
+
+/**
+ * Drop a port this importer cannot represent.
+ *
+ * A port's width is not one net's size — it is the module's INTERFACE: how many pins it has, and which bit
+ * of a connection lands on which one.
+ *
+ * So the port is DROPPED, exactly as a port expression already is: a connection to it is refused by
+ * resolveConnections, and its null `portPositions` slot keeps every later positional connection aligned. The
+ * name is claimed as a refused driver too, so nothing INSIDE the module reads it at a width we invented —
+ * across the port's WHOLE declared width when that width is known, so a bit-select read is claimed as well.
+ * `unrepresentablePorts` then carries the one case dropping cannot answer for — see importVerilog, where a
+ * design published missing a pin its own source declares is refused by name.
+ *
+ * The caller removes the port from `portOrder`/`portPositions`, because the ANSI header and the non-ANSI
+ * body reach this point at different stages of building those two lists.
+ */
+function dropUnrepresentablePort(
+  ports: PortTables,
+  refusedDrivers: RefusedDriver[],
+  warnings: string[],
+  name: string,
+  line: number,
+  reason: Omit<UnrepresentablePort, 'name'>,
+): void {
+  warnings.push(`line ${line}: ${reason.said} — reported, not built`)
+  ports.unrepresentablePorts.push({ name, ...reason })
+  refusedDrivers.push({
+    where: `line ${line}`,
+    what: `the port "${name}", which ${reason.why}`,
+    terms: [[{ k: 'id', v: name, line }]],
+  })
+}
+
+/**
+ * Give a port the meaning of the net type written on it.
+ *
+ * A net type on a port declaration is not decoration — it is the same declaration a net declaration makes.
+ * IEEE 1364-2005 §4.6: `trior` is a SYNONYM for `wor` and `triand` for `wand`, identical semantics under a
+ * different spelling. Both header styles route through here so the two sites cannot drift apart: measured
+ * against Icarus Verilog 14.0, `output wor [31:0] y` with two drivers read 252 there while this importer
+ * published a block with the `y` pin ENTIRELY ABSENT, and `output tri1 [31:0] y; assign y[3:0] = a;` read
+ * 4294967280 there against 0 here — both silent, in every one of the four wired spellings.
+ */
+function applyPortNetType(
+  ports: PortTables,
+  refusedDrivers: RefusedDriver[],
+  warnings: string[],
+  kind: string,
+  t: Tok,
+): void {
+  const resolve = NET_RESOLUTION[kind]
+  if (resolve !== undefined) {
+    ports.resolution.set(t.v, resolve)
+    return
+  }
+  const unmodeled = UNMODELED_NETS[kind] ?? UNMODELED_PORT_NETS[kind]
+  if (unmodeled === undefined) return // wire / tri / uwire — a plain net, which is what the port already is
+  warnings.push(
+    `line ${t.line}: port "${t.v}" is declared "${kind}", which ${unmodeled} — this importer has no value for that — reported, not built`,
+  )
+  refusedDrivers.push({
+    where: `line ${t.line}`,
+    what: `a "${kind}" port declaration`,
+    terms: [[t]],
+  })
 }
 
 /** Read a memory depth range at the cursor (positioned at the second `[`); leaves it just past `]`. */
@@ -564,6 +773,22 @@ function readDepthRange(c: Cursor): { depth: number } | { bad: string } {
 // rangeWidth folds. A parameter without a constant default (or a name used before it is declared) is REPORTED
 // and left as-is (its uses stay identifiers), never silently defaulted.
 
+/** What one `readParamList` pass records, and what an instantiation forces on it. `overrides` is applied AT
+ *  THE DECLARATION POINT rather than merged in afterwards: the list folds in source order and a later item may
+ *  read an earlier one, so a `localparam N = 2*W` has to fold against the OVERRIDDEN W. Folding first and
+ *  overwriting after would size the ports from the new W and the internal nets from the old one — a module
+ *  that still builds and computes a different answer, with nothing said. */
+type ParamCollector = {
+  overrides: Map<string, ConstVal> | undefined
+  /** Every declaration seen, in source order. */
+  decls: ParamDecl[] | undefined
+  /** Names an override was actually applied to, so a caller can tell a silently-dropped override from an
+   *  applied one. */
+  applied: Set<string> | undefined
+  /** True for the header `#( … )` parameter port list. */
+  inHeader: boolean
+}
+
 /** Consume one comma-separated parameter list starting just past the `parameter`/`localparam` keyword. Folds
  *  each item into `params` (in source order, so a later item may reference an earlier one). Returns the index
  *  just past the list (at its `;`, or at the `)` that closes a `#(…)` header). */
@@ -572,12 +797,20 @@ function readParamList(
   start: number,
   params: Map<string, ConstVal>,
   warnings: string[],
+  collector?: ParamCollector,
 ): number {
   let i = start
+  let kind: 'parameter' | 'localparam' =
+    (toks[start - 1] as Tok | undefined)?.v === 'localparam' ? 'localparam' : 'parameter'
   // The type/range prefix (`[7:0]`, `signed`, `integer`) applies to EVERY name in one declaration —
   // `parameter [7:0] A = 5, B = 2;` makes BOTH 8-bit — so the range is sticky across the comma list. A
   // repeated `parameter`/`localparam` keyword (ANSI headers) starts a fresh item, resetting the range.
   let range: Tok[] | undefined
+  // IEEE 1364-2005 §12.2: a `signed` keyword or an `integer` type makes the parameter SIGNED; a RANGE with no
+  // `signed` makes it unsigned whatever its default expression was; with neither, it takes the default
+  // expression's own signedness. Measured against Icarus Verilog 14.0 on `for (k = 3; k >= N; k = k - 1)`:
+  // `parameter N = -1` and `parameter integer N = -1` run five times, `parameter [3:0] N = -1` runs zero.
+  let declaredSigned = false
   for (;;) {
     for (;;) {
       // `integer`/`real`/`time` lex as plain identifiers (not keywords), so match by VALUE not kind — else a
@@ -585,11 +818,13 @@ function readParamList(
       const v = (toks[i] as Tok | undefined)?.v
       if (v === 'parameter' || v === 'localparam') {
         range = undefined
+        declaredSigned = false
+        kind = v
         i += 1
         continue
       }
       if (v !== undefined && ['signed', 'integer', 'real', 'time', 'realtime'].includes(v)) {
-        if (v === 'signed') warnings.push('a signed parameter is treated as UNSIGNED — reported')
+        if (v === 'signed' || v === 'integer') declaredSigned = true
         i += 1
         continue
       }
@@ -604,8 +839,44 @@ function readParamList(
     const nameTok = toks[i] as Tok | undefined
     if (nameTok === undefined || nameTok.k !== 'id') return i
     i += 1
+    collector?.decls?.push({ name: nameTok.v, kind, inHeader: collector.inHeader })
+    // A `localparam` is never overridable, so an override that reached here for one would be a bug upstream;
+    // reading the override map only for a `parameter` keeps that impossible rather than merely unlikely.
+    const forced = kind === 'parameter' ? collector?.overrides?.get(nameTok.v) : undefined
+    // A declared range narrows the value that lands on the parameter — Icarus gives `#(.K(7))` against
+    // `parameter [1:0] K = 2'd1` the value 3 — and it narrows an override exactly as it narrows a default.
+    // It is also the CONTEXT the default expression is evaluated in, which is not the same thing: measured,
+    // `localparam [7:0] Q = ~4'd0` is 255 in Icarus Verilog 14.0 (the `~` runs at eight bits) where folding
+    // `~4'd0` on its own and then widening gives 15, and `localparam signed [7:0] Q = 4'sh8 / 4'shf` is +8
+    // where the same divide alone is −8 at four bits.
+    const declaredRange = range === undefined ? undefined : rangeWidth(range, params)
+    const store = (val: ConstVal): void => {
+      // `applied` is recorded only where the value REALLY lands, so "an override name that is not applied"
+      // stays an exact test the caller can refuse on — a declaration whose own range does not fold sets
+      // nothing, and that has to count as unapplied rather than as done.
+      if (declaredRange === undefined) {
+        params.set(nameTok.v, { ...val, signed: declaredSigned || val.signed })
+        if (forced !== undefined) collector?.applied?.add(nameTok.v)
+        return
+      }
+      if ('bad' in declaredRange) {
+        warnings.push(`parameter "${nameTok.v}" range — ${declaredRange.bad} — reported`)
+        return
+      }
+      // A declared range resizes the value in BOTH directions through the one widening rule: a too-wide value
+      // truncates, and a too-narrow SIGNED one sign-extends (`parameter signed [7:0] N = -4'sd1` is −1, not
+      // +15). The parameter then carries its DECLARATION's signedness, not the default expression's.
+      params.set(nameTok.v, {
+        value: extendTo(val, declaredRange.width, val.signed),
+        width: declaredRange.width,
+        signed: declaredSigned,
+        unsized: false, // a DECLARED range is the size; nothing about it is left to grow
+      })
+      if (forced !== undefined) collector?.applied?.add(nameTok.v)
+    }
     if ((toks[i] as Tok | undefined)?.v !== '=') {
-      warnings.push(`parameter "${nameTok.v}" has no default value — reported, not elaborated`)
+      if (forced !== undefined) store(forced)
+      else warnings.push(`parameter "${nameTok.v}" has no default value — reported, not elaborated`)
       // skip to the next separator so the scan resyncs
       while (i < toks.length && ![',', ';', ')'].includes((toks[i] as Tok).v)) i += 1
     } else {
@@ -622,17 +893,20 @@ function readParamList(
         rhs.push(tk)
         i += 1
       }
-      const val = evalConst(rhs, params)
-      if (val === undefined) {
-        warnings.push(
-          `parameter "${nameTok.v}" default is not a constant expression — reported, not elaborated`,
+      if (forced !== undefined) store(forced)
+      else {
+        const val = evalConst(
+          rhs,
+          params,
+          declaredRange !== undefined && !('bad' in declaredRange)
+            ? declaredRange.width
+            : undefined,
         )
-      } else if (range !== undefined) {
-        const rw = rangeWidth(range, params)
-        if ('bad' in rw) warnings.push(`parameter "${nameTok.v}" range — ${rw.bad} — reported`)
-        else params.set(nameTok.v, { value: val.value % (1n << BigInt(rw.width)), width: rw.width })
-      } else {
-        params.set(nameTok.v, val)
+        if (val === undefined)
+          warnings.push(
+            `parameter "${nameTok.v}" default is not a constant expression — reported, not elaborated`,
+          )
+        else store(val)
       }
     }
     if ((toks[i] as Tok | undefined)?.v === ',') {
@@ -644,14 +918,34 @@ function readParamList(
   }
 }
 
+/** The index of the `)` closing a module's header `#( … )` parameter port list, or -1 when it has none.
+ *  `span[0]` is the `module` keyword and `span[1]` its name, so the list can only start at `span[2]`. */
+function headerParamListEnd(span: Tok[]): number {
+  if ((span[2] as Tok | undefined)?.v !== '#') return -1
+  if ((span[3] as Tok | undefined)?.v !== '(') return -1
+  return matchBracket(span, 3)
+}
+
 /** Fold every parameter/localparam default in the module's token span into a value table. */
-function collectParams(span: Tok[], warnings: string[]): Map<string, ConstVal> {
+function collectParams(
+  span: Tok[],
+  warnings: string[],
+  overrides?: Map<string, ConstVal>,
+  decls?: ParamDecl[],
+  applied?: Set<string>,
+): Map<string, ConstVal> {
   const params = new Map<string, ConstVal>()
+  const headerEnd = headerParamListEnd(span)
   let i = 0
   while (i < span.length) {
     const t = span[i] as Tok
     if (t.k === 'kw' && (t.v === 'parameter' || t.v === 'localparam')) {
-      i = readParamList(span, i + 1, params, warnings)
+      i = readParamList(span, i + 1, params, warnings, {
+        overrides,
+        decls,
+        applied,
+        inHeader: headerEnd !== -1 && i < headerEnd,
+      })
       continue
     }
     i += 1
@@ -659,12 +953,26 @@ function collectParams(span: Tok[], warnings: string[]): Map<string, ConstVal> {
   return params
 }
 
-/** Replace every identifier token that names a parameter with its sized literal (`W` → `8'd8`). */
+/** The sized literal a parameter substitutes to. A SIGNED parameter keeps the `'s` marker, or the literal it
+ *  becomes carries a different type than the parameter did and every comparison against it silently flips to
+ *  unsigned (IEEE 1364-2005 §5.5.1: one unsigned operand makes the whole comparison unsigned). Both directions
+ *  were measured against Icarus Verilog 14.0 on `for (k = …; k … N; …)`: `parameter N = -1` written as
+ *  `32'd4294967295` made `k >= N` false on the FIRST test where Icarus runs the loop five times, and
+ *  `parameter N = 2` written as `32'd2` made `k < N` false at k = −2 where Icarus runs it four times. */
+function paramLiteral(p: ConstVal): string {
+  if (!p.signed) return `${p.width}'d${p.value.toString()}`
+  return `${p.width}'sh${p.value.toString(16)}`
+}
+
+/** Replace every identifier token that names a parameter with its sized literal (`W` → `8'd8`). An identifier
+ *  written straight after a `.` is a PORT or PARAMETER name being connected by name (`.W(4)`), never a
+ *  reference to this module's own parameter — rewriting that one to a literal would destroy the connection. */
 function substituteParams(span: Tok[], params: Map<string, ConstVal>): Tok[] {
-  return span.map((t) => {
+  return span.map((t, i) => {
     if (t.k !== 'id') return t
+    if ((span[i - 1] as Tok | undefined)?.v === '.') return t
     const p = params.get(t.v)
-    return p === undefined ? t : { k: 'num', v: `${p.width}'d${p.value.toString()}`, line: t.line }
+    return p === undefined ? t : { k: 'num', v: paramLiteral(p), line: t.line }
   })
 }
 
@@ -674,7 +982,10 @@ function substituteParams(span: Tok[], params: Map<string, ConstVal>): Tok[] {
  *  name is left un-substituted (the gate/port survives), rather than a gate disappearing with no warning. A
  *  structural position is: an id right before `(` (a gate/module INSTANCE name), or an id declared after an
  *  input/output/inout/wire/reg keyword (a net/port NAME — a `[range]` is skipped, so a `[W-1:0]` USE isn't
- *  mistaken for a declaration). */
+ *  mistaken for a declaration). A name written after a `.` is NOT a structural position: `.W(4)` is a named
+ *  parameter override and `.W(x)` a named port connection, and reading either as an instance name deleted the
+ *  ENCLOSING module's parameter `W` — measured at HEAD, that silently dropped every `[W-1:0]` port from the
+ *  published interface. */
 function collidingParamNames(span: Tok[], params: Map<string, ConstVal>): Set<string> {
   const collide = new Set<string>()
   const flag = (name: string): void => {
@@ -682,7 +993,12 @@ function collidingParamNames(span: Tok[], params: Map<string, ConstVal>): Set<st
   }
   for (let i = 0; i < span.length; i++) {
     const t = span[i] as Tok
-    if (t.k === 'id' && (span[i + 1] as Tok | undefined)?.v === '(') flag(t.v) // instance name
+    if (
+      t.k === 'id' &&
+      (span[i + 1] as Tok | undefined)?.v === '(' &&
+      (span[i - 1] as Tok | undefined)?.v !== '.'
+    )
+      flag(t.v) // instance name
     if (t.k === 'kw' && ['input', 'output', 'inout', 'wire', 'reg'].includes(t.v)) {
       let depth = 0
       for (let j = i + 1; j < span.length; j++) {
@@ -697,12 +1013,31 @@ function collidingParamNames(span: Tok[], params: Map<string, ConstVal>): Set<st
   return collide
 }
 
+/** What one module elaboration produced: the substituted token stream, the parameter declarations it saw (so
+ *  the flattener can decide whether an instantiation's `#( … )` list is legal), and any override name that did
+ *  NOT reach a declaration. An unapplied override is the dangerous case — the module would elaborate at its
+ *  DEFAULT value and build silently wrong — so the caller refuses on it. */
+type Elaboration = {
+  toks: Tok[]
+  params: ModuleParams
+  unapplied: string[]
+}
+
 /** Elaborate the parameters of the module in `toks` (callers pass ONE module span; params are module-scoped,
  *  so a same-named parameter in another module never rewrites this one's nets), returning the token stream
- *  with every use substituted. */
-function elaborateParams(toks: Tok[], warnings: string[]): Tok[] {
+ *  with every use substituted. `overrides` carries the values an instantiation forces on this module. */
+function elaborateModule(
+  toks: Tok[],
+  warnings: string[],
+  overrides?: Map<string, ConstVal>,
+): Elaboration {
+  const decls: ParamDecl[] = []
+  const applied = new Set<string>()
+  const unappliedNames = (): string[] =>
+    [...(overrides?.keys() ?? [])].filter((name) => !applied.has(name))
   const start = toks.findIndex((t) => t.k === 'kw' && t.v === 'module')
-  if (start === -1) return toks
+  if (start === -1)
+    return { toks, params: { decls, hasHeader: false }, unapplied: unappliedNames() }
   let end = toks.length
   for (let i = start + 1; i < toks.length; i++) {
     if ((toks[i] as Tok).k === 'kw' && (toks[i] as Tok).v === 'endmodule') {
@@ -711,7 +1046,8 @@ function elaborateParams(toks: Tok[], warnings: string[]): Tok[] {
     }
   }
   const span = toks.slice(start, end)
-  const params = collectParams(span, warnings)
+  const params = collectParams(span, warnings, overrides, decls, applied)
+  const moduleParams: ModuleParams = { decls, hasHeader: headerParamListEnd(span) !== -1 }
   // A parameter whose name collides with a declared net/port/instance is an illegal redeclaration — report it
   // and DON'T substitute (so the gate/port keeps its real name and survives, instead of being silently mangled).
   for (const name of collidingParamNames(span, params)) {
@@ -719,9 +1055,14 @@ function elaborateParams(toks: Tok[], warnings: string[]): Tok[] {
       `parameter "${name}" collides with a net/port/instance of the same name — reported, not substituted`,
     )
     params.delete(name)
+    applied.delete(name)
   }
-  if (params.size === 0) return toks
-  return [...toks.slice(0, start), ...substituteParams(span, params), ...toks.slice(end)]
+  if (params.size === 0) return { toks, params: moduleParams, unapplied: unappliedNames() }
+  return {
+    toks: [...toks.slice(0, start), ...substituteParams(span, params), ...toks.slice(end)],
+    params: moduleParams,
+    unapplied: unappliedNames(),
+  }
 }
 
 /** A tiny cursor over the token stream. */
@@ -763,6 +1104,33 @@ function skipStatement(c: Cursor): void {
       if (c.peek()?.v === 'else') continue
       return
     }
+  }
+}
+
+/**
+ * Register each name in a module-scope `integer a, b = 0;` declaration as a 32-bit SIGNED variable, WITHOUT
+ * moving the cursor (the declaration is still skipped as a whole). A name followed by `[` is an integer ARRAY,
+ * which nothing here models, so it is left unregistered — the first use then reports rather than reading a
+ * silently-wrong width.
+ */
+function registerIntegerVariables(
+  c: Cursor,
+  widths: Map<string, number>,
+  signed: Set<string>,
+): void {
+  let depth = 0
+  let atName = true
+  for (let i = c.i; i < c.toks.length; i++) {
+    const t = c.toks[i] as Tok
+    if (t.v === ';' && depth === 0) return
+    if (t.v === '(' || t.v === '[' || t.v === '{') depth += 1
+    else if (t.v === ')' || t.v === ']' || t.v === '}') depth -= 1
+    else if (t.v === ',' && depth === 0) atName = true
+    if (depth !== 0 || !atName || t.k !== 'id') continue
+    atName = false
+    if ((c.toks[i + 1] as Tok | undefined)?.v === '[') continue
+    widths.set(t.v, 32)
+    signed.add(t.v)
   }
 }
 
@@ -813,9 +1181,12 @@ function initialPowerOnValues(span: Tok[]): PowerOnValue[] | null {
     if (span[i + 1]?.v !== '=') return null
     let j = i + 2
     while (j < end && span[j]?.v !== ';') j += 1
-    const value = evalConst(span.slice(i + 2, j))
-    if (value === undefined) return null
-    out.push({ name: name.v, value, line: name.line })
+    const expr = span.slice(i + 2, j)
+    // Fold once here only to prove the expression IS a constant — an `initial` whose value is not constant is
+    // not a power-on value at all, and the whole block goes back to being an unbuildable construct. The value
+    // itself is deliberately discarded: it is the synthesizer that folds it, at the register's own width.
+    if (evalConst(expr) === undefined) return null
+    out.push({ name: name.v, expr, line: name.line })
     i = j + 1
   }
   return out.length === 0 ? null : out
@@ -945,6 +1316,18 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   const signed = new Set<string>()
   const resolution = new Map<string, 'or' | 'and'>()
   const droppedPorts: string[] = []
+  const unrepresentablePorts: UnrepresentablePort[] = []
+  const ports: PortTables = {
+    portOrder,
+    portPositions,
+    dir,
+    widths,
+    signed,
+    droppedPorts,
+    unrepresentablePorts,
+    resolution,
+  }
+  const refusedDrivers: RefusedDriver[] = []
   // A `#( … )` parameter-port list: its defaults were already folded + substituted by elaborateParams, so
   // just consume the group here. Without this the cursor would sit on `#`, the port `(` would never be read,
   // and a parameterized module would silently lose its ENTIRE port list.
@@ -952,13 +1335,11 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     c.next()
     if (c.is('(')) readGroup(c)
   }
-  if (c.is('('))
-    parseHeader(readGroup(c), portOrder, portPositions, dir, widths, signed, droppedPorts, warnings)
+  if (c.is('(')) parseHeader(readGroup(c), ports, refusedDrivers, warnings)
   if (c.is(';')) c.next()
 
   const gates: GateInst[] = []
   const rawGates: RawGate[] = []
-  const refusedDrivers: RefusedDriver[] = []
   const powerOnValues: PowerOnValue[] = []
   const assigns: Assign[] = []
   const alwaysBlocks: AlwaysBlock[] = []
@@ -973,7 +1354,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       continue
     }
     if (t.k === 'kw' && (t.v === 'input' || t.v === 'output' || t.v === 'inout')) {
-      parsePortDecl(c, dir, widths, signed, assigns, refusedDrivers, warnings)
+      parsePortDecl(c, ports, refusedDrivers, warnings)
       continue
     }
     if (t.k === 'kw' && (t.v === 'reg' || NET_TYPES.has(t.v))) {
@@ -1019,6 +1400,11 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     if (t.k === 'kw' && NON_NET_DECLS.includes(t.v)) {
       c.next()
+      // The declaration itself is still skipped — an `integer` is a procedural variable, never a gate terminal.
+      // Its WIDTH and SIGNEDNESS are registered because IEEE 1364-2005 §3.9 makes it a signed 32-bit variable,
+      // and a procedural loop has to count at its counter's exact declared type: unregistered, a 32-bit
+      // `integer` would be modelled as a 1-bit register that wraps to 0 after one step.
+      if (t.v === 'integer') registerIntegerVariables(c, widths, signed)
       skipStatement(c)
       continue
     }
@@ -1085,6 +1471,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     resolution,
     instances,
     droppedPorts,
+    unrepresentablePorts,
     namesInsideUnparsedSpans,
     unbuilt: { nets: new Set<string>(), constructs: [], wholeModule: false },
   }
@@ -1094,8 +1481,9 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
  * Parse a sub-module instantiation `child #(…) u1 (…), u2 (…);` into one ModuleInst per instance name.
  * Whether `child` names a module in this source is NOT decided here — the flattener owns that, so a UDP or a
  * synthesis-tool cell (yosys' `$_NAND_`) still reports the honest "no such module" rather than a parse error.
- * A `#(…)` override or an instance-array range is recorded as `unsupported`: building the instance anyway
- * would use the module's own parameter defaults, i.e. the wrong widths, with nothing said.
+ * A `#(…)` list is CAPTURED, not folded: its expressions belong to the enclosing module's scope and the
+ * flattener elaborates the child against them. An instance-array range is recorded as `unsupported`: building
+ * it anyway would build one copy where the source asked for several, with nothing said.
  */
 function parseInstance(
   c: Cursor,
@@ -1108,10 +1496,20 @@ function parseInstance(
   const modTok = c.next() as Tok
   const line = modTok.line
   let unsupported: string | null = null
+  let overrides: ParamOverride[] | null = null
   if (c.is('#')) {
     c.next()
-    if (c.is('(')) readGroup(c)
-    unsupported = 'a parameter override (#(…)) cannot be applied to an already-elaborated module'
+    if (!c.is('(')) {
+      // A module instantiation takes a parameter LIST after `#`; a bare `#5` is a delay, which a module
+      // instance may not carry. Consume the one token so the instance names still parse, and refuse.
+      c.next()
+      unsupported = 'a `#` that is not a parameter list (a delay on a module instance)'
+    } else {
+      overrides = parseOverrideList(readGroup(c))
+      if (overrides === null)
+        unsupported =
+          'a parameter override list that mixes named and positional items, or has an item this importer cannot read'
+    }
   }
   let parsedAny = false
   while (!c.atEnd()) {
@@ -1135,6 +1533,7 @@ function parseInstance(
       unsupported: arrayed
         ? 'an instance array (one name covering several copies) is not built'
         : unsupported,
+      overrides,
     })
     parsedAny = true
     if (!c.is(',')) break
@@ -1175,6 +1574,29 @@ function readBracketGroup(c: Cursor): void {
   }
 }
 
+/** Split an instance's `#( … )` list into one item per override. Every item is either named (`.W(4)`) or
+ *  positional (`4`) and Verilog does not let the two mix — Icarus rejects `#(4, .B(1))` as a syntax error —
+ *  so a mixed list, or an item that is not readable as either form, returns null and the instance is refused
+ *  by name rather than built with some of its parameters at their defaults. */
+function parseOverrideList(slices: Tok[][]): ParamOverride[] | null {
+  const named = slices.some((s) => s[0]?.v === '.')
+  const items: ParamOverride[] = []
+  for (const s of slices) {
+    const first = s[0]
+    if (first === undefined) return null
+    if (!named) {
+      items.push({ name: null, expr: s, line: first.line })
+      continue
+    }
+    const nameTok = s[1]
+    if (first.v !== '.' || nameTok === undefined || nameTok.k !== 'id') return null
+    const open = s.findIndex((t) => t.v === '(')
+    if (open === -1 || (s[s.length - 1] as Tok).v !== ')') return null
+    items.push({ name: nameTok.v, expr: s.slice(open + 1, s.length - 1), line: first.line })
+  }
+  return items
+}
+
 /** Split an instance's connection list into named (`.port(expr)`) or positional (`expr`) connections. A
  *  connection with no expression is a deliberately unconnected port — kept, so the flattener can say which
  *  port floats rather than silently shifting the positional order. */
@@ -1212,16 +1634,29 @@ function parseConnections(
 function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: string[]): void {
   const line = c.peek()?.line ?? 0
   c.next() // 'function'
+  // A `signed` function return is REFUSED, not warned about and then built. IEEE 1364-2005 §10.3.1 makes the
+  // call a signed operand, and a `call` node carries no signedness — so building it zero-extended is a
+  // measured wrong answer (Icarus Verilog 14.0 gives 11111111 where this gave 00001111 at a = 15). A refusal
+  // costs one function; the warn-and-build cost four silently-flipped output bits.
+  let signedReturn = false
   while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) {
-    if (c.peek()?.v === 'signed')
-      warnings.push(`line ${line}: a signed function return is treated as UNSIGNED — reported`)
+    if (c.peek()?.v === 'signed') signedReturn = true
     c.next()
   }
+  // `bad` marks an unsupported declaration (an ascending/nonzero-based/unfoldable range → what would be a
+  // silently-wrong width-1 signal). Rather than build the function at the wrong width, drop it + report; a call
+  // to it then reports as "unknown function". Never a silent miscompile.
+  const bad = { v: false }
   let retWidth = 1
   if (c.is('[')) {
     const r = readRange(c)
-    if ('bad' in r) warnings.push(`line ${line}: function return range — ${r.bad} — reported`)
-    else retWidth = r.width
+    // The return range is the function's own WIDTH. Warning about it and keeping the default 1 built every
+    // call one bit wide — `function [$clog2(16)-1:0] f;` answered 1 where Icarus Verilog 14.0 answers 15 — so
+    // it now drops the function like every other unsupported declaration inside one.
+    if ('bad' in r) {
+      warnings.push(`line ${line}: function return range — ${r.bad} — reported, not built`)
+      bad.v = true
+    } else retWidth = r.width
   }
   const nameTok = c.next()
   if (nameTok === undefined || nameTok.k !== 'id') {
@@ -1232,10 +1667,11 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
   const name = nameTok.v
   const inputs: { name: string; width: number }[] = []
   const localWidths = new Map<string, number>()
-  // `bad` marks an unsupported declaration (an ascending/nonzero-based/parameterized range → what would be a
-  // silently-wrong width-1 signal). Rather than build the function at the wrong width, drop it + report; a call
-  // to it then reports as "unknown function". Never a silent miscompile.
-  const bad = { v: false }
+  const integerLocals = new Set<string>()
+  if (signedReturn) {
+    warnings.push(`line ${line}: a signed function return is not built — reported`)
+    bad.v = true
+  }
   if (c.is('(')) parseFunctionPorts(readGroup(c), inputs, warnings, bad)
   if (c.is(';')) c.next()
   const body: Tok[] = []
@@ -1245,7 +1681,15 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
       continue
     }
     if (c.is('reg') || c.is('integer') || c.is('wire')) {
-      collectDecl(c, (nm, w) => localWidths.set(nm, w), warnings, bad)
+      collectDecl(
+        c,
+        (nm, w, isInteger) => {
+          localWidths.set(nm, w)
+          if (isInteger) integerLocals.add(nm)
+        },
+        warnings,
+        bad,
+      )
       continue
     }
     body.push(c.next() as Tok)
@@ -1258,7 +1702,7 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
     return
   }
   if (functions.has(name)) warnings.push(`line ${line}: function "${name}" redefined — reported`)
-  functions.set(name, { name, retWidth, inputs, localWidths, body })
+  functions.set(name, { name, retWidth, inputs, localWidths, integerLocals, body })
 }
 
 /** Read one `<kw> [range]? name {, name} ;` declaration, calling `emit(name, width)` per name (the range is
@@ -1266,14 +1710,19 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
  *  an unsupported range sets `bad` (the function is then dropped, never built at a silently-wrong width). */
 function collectDecl(
   c: Cursor,
-  emit: (name: string, width: number) => void,
+  emit: (name: string, width: number, isInteger: boolean) => void,
   warnings: string[],
   bad: { v: boolean },
 ): void {
   const kw = c.next() // 'reg' | 'wire' | 'integer' | 'input'
-  let width = kw?.v === 'integer' ? 32 : 1
+  const isInteger = kw?.v === 'integer'
+  let width = isInteger ? 32 : 1
+  // A `signed` local inside a function or task is REFUSED, not silently unsigned: its declared type is what
+  // every later read of it takes (§5.5.1), and the type wall it would need is not something a dropped flag can
+  // stand in for. The function/task is dropped and a call to it reports as unknown.
   while (c.peek()?.k === 'kw' && c.peek()?.v === 'signed') {
-    warnings.push('a `signed` declaration inside a function/task is treated as UNSIGNED — reported')
+    warnings.push('a `signed` declaration inside a function/task is not built — reported')
+    bad.v = true
     c.next()
   }
   if (c.is('[')) {
@@ -1285,7 +1734,7 @@ function collectDecl(
   }
   while (!c.atEnd() && !c.is(';')) {
     const t = c.next() as Tok
-    if (t.k === 'id') emit(t.v, width)
+    if (t.k === 'id') emit(t.v, width, isInteger)
   }
   if (c.is(';')) c.next()
 }
@@ -1309,8 +1758,10 @@ function parseFunctionPorts(
       ['input', 'signed'].includes((s[j] as Tok).v)
     ) {
       if ((s[j] as Tok).v === 'input') sawInput = true
-      if ((s[j] as Tok).v === 'signed')
-        warnings.push('a signed function argument is treated as UNSIGNED — reported')
+      if ((s[j] as Tok).v === 'signed') {
+        warnings.push('a signed function argument is not built — reported')
+        bad.v = true
+      }
       j += 1
     }
     if (sawInput) width = 1
@@ -1367,6 +1818,7 @@ function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): 
   const name = nameTok.v
   const args: TaskArg[] = []
   const localWidths = new Map<string, number>()
+  const integerLocals = new Set<string>()
   const bad = { v: false }
   if (c.is('(')) parseTaskPorts(readGroup(c), args, warnings, bad)
   if (c.is(';')) c.next()
@@ -1382,7 +1834,15 @@ function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): 
       continue
     }
     if (kw === 'reg' || kw === 'integer' || kw === 'wire') {
-      collectDecl(c, (nm, w) => localWidths.set(nm, w), warnings, bad)
+      collectDecl(
+        c,
+        (nm, w, isInteger) => {
+          localWidths.set(nm, w)
+          if (isInteger) integerLocals.add(nm)
+        },
+        warnings,
+        bad,
+      )
       continue
     }
     body.push(c.next() as Tok)
@@ -1408,7 +1868,7 @@ function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): 
     return
   }
   if (tasks.has(name)) warnings.push(`line ${line}: task "${name}" redefined — reported`)
-  tasks.set(name, { name, args, localWidths, body })
+  tasks.set(name, { name, args, localWidths, integerLocals, body })
 }
 
 /** ANSI task port-list slices → args with directions (input/output/inout, a range, both sticky across a
@@ -1434,7 +1894,10 @@ function parseTaskPorts(
         dir = v
         sawDir = true
       }
-      if (v === 'signed') warnings.push('a signed task argument is treated as UNSIGNED — reported')
+      if (v === 'signed') {
+        warnings.push('a signed task argument is not built — reported')
+        bad.v = true
+      }
       j += 1
     }
     if (sawDir) width = 1
@@ -1529,68 +1992,79 @@ function parseAlways(
 /** Append one complete procedural statement's tokens to `out`: a begin…end block, an if/else (both branches),
  *  a case…endcase, or a plain statement up to its ';'. Nesting-aware so the synthesizer sees the whole body. */
 function readStatementSpan(c: Cursor, out: Tok[]): void {
-  if (c.atEnd()) return
-  const t = c.peek() as Tok
-  if (t.v === 'begin') {
-    out.push(c.next() as Tok)
-    let depth = 1
-    while (!c.atEnd() && depth > 0) {
-      const x = c.next() as Tok
-      if (x.k === 'kw' && x.v === 'begin') depth += 1
-      else if (x.k === 'kw' && x.v === 'end') depth -= 1
-      out.push(x)
-    }
-    return
+  const end = statementSpanEnd(c.toks, c.i)
+  while (c.i < end) out.push(c.next() as Tok)
+}
+
+const CASE_WORDS = new Set(['case', 'casex', 'casez'])
+
+/** The index just past the closing word that matches the opener at `start`, counting nested openers. */
+function nestedSpanEnd(
+  toks: Tok[],
+  start: number,
+  isOpener: (t: Tok) => boolean,
+  isCloser: (t: Tok) => boolean,
+): number {
+  let i = start + 1
+  let depth = 1
+  while (i < toks.length && depth > 0) {
+    const x = toks[i++] as Tok
+    if (isOpener(x)) depth += 1
+    else if (isCloser(x)) depth -= 1
   }
-  if (t.v === 'case' || t.v === 'casex' || t.v === 'casez') {
-    out.push(c.next() as Tok)
-    let depth = 1
-    while (!c.atEnd() && depth > 0) {
-      const x = c.next() as Tok
-      if (x.v === 'case' || x.v === 'casex' || x.v === 'casez') depth += 1
-      else if (x.v === 'endcase') depth -= 1
-      out.push(x)
-    }
-    return
+  return i
+}
+
+/** The index just past a `( … )` group whose '(' is at `open`. */
+function groupSpanEnd(toks: Tok[], open: number): number {
+  let i = open + 1
+  let depth = 1
+  while (i < toks.length && depth > 0) {
+    const v = (toks[i++] as Tok).v
+    if (v === '(') depth += 1
+    else if (v === ')') depth -= 1
   }
-  if (t.v === 'if') {
-    out.push(c.next() as Tok) // 'if'
-    if (c.is('(')) {
-      out.push(c.next() as Tok) // '('
-      let d = 1
-      while (!c.atEnd() && d > 0) {
-        const x = c.next() as Tok
-        if (x.v === '(') d += 1
-        else if (x.v === ')') d -= 1
-        out.push(x)
-      }
-    }
-    readStatementSpan(c, out) // then-branch
-    if (c.is('else')) {
-      out.push(c.next() as Tok)
-      readStatementSpan(c, out) // else-branch
-    }
-    return
+  return i
+}
+
+/**
+ * The index just past ONE complete procedural statement starting at `start`: a begin…end block, an if/else
+ * (both branches), a case…endcase, a loop (its `( … )` header plus its body statement), or a plain statement
+ * up to its ';'. Nesting-aware, so an inner ';' never ends the outer statement.
+ *
+ * The loop unroller in verilog-synth.ts re-parses a loop BODY once per iteration and needs exactly this span,
+ * so the two must agree about where a statement ends — hence one implementation, used from both sides.
+ */
+export function statementSpanEnd(toks: Tok[], start: number): number {
+  const t = toks[start]
+  if (t === undefined) return start
+  if (t.v === 'begin')
+    return nestedSpanEnd(
+      toks,
+      start,
+      (x) => x.k === 'kw' && x.v === 'begin',
+      (x) => x.k === 'kw' && x.v === 'end',
+    )
+  if (CASE_WORDS.has(t.v))
+    return nestedSpanEnd(
+      toks,
+      start,
+      (x) => CASE_WORDS.has(x.v),
+      (x) => x.v === 'endcase',
+    )
+  // if/else and the procedural loops: an optional `( … )` header, then a body that is itself one statement.
+  // `forever` has no header; only `if` takes an else-branch.
+  if (t.v === 'if' || t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever') {
+    let i = start + 1
+    if (t.v !== 'forever' && (toks[i] as Tok | undefined)?.v === '(') i = groupSpanEnd(toks, i)
+    i = statementSpanEnd(toks, i)
+    if (t.v === 'if' && (toks[i] as Tok | undefined)?.v === 'else')
+      return statementSpanEnd(toks, i + 1)
+    return i
   }
-  // Procedural loops (for/while/repeat have a (…) header + a body; forever is just a body). The synthesizer
-  // rejects these, but the WHOLE statement must be captured so its inner ';'s don't spill into the parse.
-  if (t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever') {
-    out.push(c.next() as Tok)
-    if (t.v !== 'forever' && c.is('(')) {
-      out.push(c.next() as Tok) // '('
-      let d = 1
-      while (!c.atEnd() && d > 0) {
-        const x = c.next() as Tok
-        if (x.v === '(') d += 1
-        else if (x.v === ')') d -= 1
-        out.push(x)
-      }
-    }
-    readStatementSpan(c, out) // loop body
-    return
-  }
-  while (!c.atEnd() && !c.is(';')) out.push(c.next() as Tok)
-  if (c.is(';')) out.push(c.next() as Tok)
+  let i = start
+  while (i < toks.length && (toks[i] as Tok).v !== ';') i += 1
+  return i < toks.length ? i + 1 : i
 }
 
 /** Parse `assign <lhs> = <rhs> {, <lhs> = <rhs>} ;` into one Assign per comma-separated assignment. lhs and
@@ -1602,11 +2076,12 @@ function parseAssigns(c: Cursor, warnings: string[]): Assign[] {
   // the target IS a net and the delay is what this importer does not model. A delay changes WHEN a net
   // settles, never what it settles to, and this netlist has no timing at all (a gate delay is already
   // reported and the gate still built), so the assignment is built and the delay reported.
+  let strength: DriveStrength | undefined
   if (c.is('(') && looksLikeStrength(c)) {
-    const g = readGroup(c)
-    if (!isDefaultStrength(g))
+    strength = readStrength(c)
+    if (!isDefaultStrength(strength))
       warnings.push(
-        'drive strength on a continuous assignment is unmodeled (ChipBlocks gates have fixed drive) — reported',
+        'drive strength on a continuous assignment is read only to resolve two drivers on one net — a lone driver puts out the same value whatever its strength — reported',
       )
   }
   if (c.is('#')) {
@@ -1638,7 +2113,7 @@ function parseAssigns(c: Cursor, warnings: string[]): Assign[] {
       else if (depth === 0 && (t.v === ';' || t.v === ',')) break
       rhs.push(c.next() as Tok)
     }
-    out.push({ lhs, rhs, line })
+    out.push({ lhs, rhs, line, strength })
     const sep = c.peek()?.v
     c.next() // consume ',' (more assignments) or ';' (done)
     if (sep !== ',') break
@@ -1649,14 +2124,15 @@ function parseAssigns(c: Cursor, warnings: string[]): Assign[] {
 /** Header ports: ANSI (directions inline) or non-ANSI (bare id list, directions come from body decls). */
 function parseHeader(
   slices: Tok[][],
-  portOrder: string[],
-  portPositions: (string | null)[],
-  dir: Map<string, 'input' | 'output' | 'inout'>,
-  widths: Map<string, number>,
-  signed: Set<string>,
-  droppedPorts: string[],
+  ports: PortTables,
+  refusedDrivers: RefusedDriver[],
   warnings: string[],
 ): void {
+  const { portOrder, portPositions, dir, widths, signed, droppedPorts } = ports
+  // A header range that would not fold, held until the NAME it belongs to is read so the refusal can say
+  // which port it was. It survives a `]` with no identifier after it (malformed, but not a licence to
+  // publish), so `pending` is checked once more after the whole list.
+  let pending: { bad: string; line: number } | undefined
   const keep = (name: string): void => {
     portOrder.push(name)
     portPositions.push(name)
@@ -1674,6 +2150,7 @@ function parseHeader(
   let d: 'input' | 'output' | 'inout' | undefined
   let width: number | 'bad' | undefined
   let sgn = false
+  let netType: string | undefined
   for (const s of slices) {
     if (s.length === 0) {
       warnings.push('null port position (empty port) is not representable — skipped')
@@ -1697,18 +2174,29 @@ function parseHeader(
         d = t.v
         width = undefined
         sgn = false
+        netType = undefined
       } else if (t.k === 'kw' && t.v === 'signed') {
         sgn = true
+      } else if (t.k === 'kw' && NET_TYPES.has(t.v)) {
+        netType = t.v
       } else if (t.k === 'p' && t.v === '[') {
         const inner: Tok[] = []
         i += 1
         while (i < s.length && s[i]?.v !== ']') inner.push(s[i++] as Tok)
         const r = rangeWidth(inner)
         width = 'bad' in r ? 'bad' : r.width
-        if ('bad' in r) warnings.push(`vector/bus header port range — ${r.bad} — skipped`)
+        if ('bad' in r) pending = { bad: r.bad, line: t.line }
       } else if (t.k === 'id') {
         if (width === 'bad') {
-          warnings.push(`vector/bus port "${t.v}" has an unsupported range — skipped`)
+          dropUnrepresentablePort(
+            ports,
+            refusedDrivers,
+            warnings,
+            t.v,
+            pending?.line ?? t.line,
+            unsizedPort(t.v, pending?.bad ?? 'non-constant range (bounds must fold to a constant)'),
+          )
+          pending = undefined
           drop(t.v)
           continue
         }
@@ -1719,33 +2207,60 @@ function parseHeader(
           drop(t.v)
           continue
         }
+        // The width is registered even though the port is dropped: the net still stands INSIDE the module,
+        // and claiming it at its real width is what makes a `b[3]` read unbuilt too. It is not a pin — the
+        // drop below takes it out of the interface — so nothing publishes it.
+        if (typeof width === 'number' && width > 1) widths.set(t.v, width)
         if (d === 'inout') {
-          warnings.push(`inout port "${t.v}" (bidirectional) is not representable — skipped`)
+          dropUnrepresentablePort(ports, refusedDrivers, warnings, t.v, t.line, inoutPort(t.v))
           drop(t.v)
           continue
         }
         keep(t.v)
         dir.set(t.v, d)
-        if (typeof width === 'number' && width > 1) widths.set(t.v, width)
         if (sgn) signed.add(t.v)
+        if (netType !== undefined) applyPortNetType(ports, refusedDrivers, warnings, netType, t)
       }
     }
+  }
+  if (pending !== undefined) {
+    dropUnrepresentablePort(
+      ports,
+      refusedDrivers,
+      warnings,
+      '<unnamed header port>',
+      pending.line,
+      unsizedPort('<unnamed header port>', pending.bad),
+    )
+    drop('<unnamed header port>')
   }
 }
 
 function parsePortDecl(
   c: Cursor,
-  dir: Map<string, 'input' | 'output' | 'inout'>,
-  widths: Map<string, number>,
-  signed: Set<string>,
-  assigns: Assign[],
+  ports: PortTables,
   refusedDrivers: RefusedDriver[],
   warnings: string[],
 ): void {
+  const { portOrder, portPositions, dir, widths, signed, droppedPorts } = ports
+  // The non-ANSI header already listed this name as a port POSITION. A range that will not fold makes it
+  // unrepresentable after the fact, so it has to leave portOrder the same way an inout does — while its
+  // position keeps a null place, or every later positional connection would shift onto the wrong pin.
+  const dropFromHeader = (name: string): void => {
+    const at = portOrder.indexOf(name)
+    if (at !== -1) portOrder.splice(at, 1)
+    const pos = portPositions.indexOf(name)
+    if (pos !== -1) portPositions[pos] = null
+    droppedPorts.push(name)
+  }
   const d = (c.next() as Tok).v as 'input' | 'output' | 'inout'
   let width: number | 'bad' | undefined // the pending `[N:0]` range for the following ids
   let sgn = false
+  let netType: string | undefined
   let lastId: Tok | undefined
+  // Held until the NAME arrives, exactly as in parseHeader, so the refusal can say which port it was — and
+  // re-checked after the `;` so a range with no identifier behind it cannot publish either.
+  let pending: { bad: string; line: number } | undefined
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
     if (t.v === '=') {
@@ -1775,28 +2290,54 @@ function parsePortDecl(
       c.next()
       continue
     }
+    if (t.k === 'kw' && NET_TYPES.has(t.v)) {
+      netType = t.v
+      c.next()
+      continue
+    }
     if (t.k === 'p' && t.v === '[') {
       const r = readRange(c)
       width = 'bad' in r ? 'bad' : r.width
-      if ('bad' in r) warnings.push(`line ${t.line}: bus range on "${d}" — ${r.bad} — reported`)
+      if ('bad' in r) pending = { bad: r.bad, line: t.line }
       continue
     }
     c.next()
     if (t.k !== 'id') continue
     lastId = t
     if (width === 'bad') {
-      warnings.push(`vector/bus port "${t.v}" has an unsupported range — skipped`)
+      dropUnrepresentablePort(
+        ports,
+        refusedDrivers,
+        warnings,
+        t.v,
+        pending?.line ?? t.line,
+        unsizedPort(t.v, pending?.bad ?? 'non-constant range (bounds must fold to a constant)'),
+      )
+      dropFromHeader(t.v)
+      pending = undefined
       continue
     }
+    // See parseHeader: the width belongs to the net inside the module even when the port is dropped.
+    if (typeof width === 'number' && width > 1) widths.set(t.v, width)
     if (d === 'inout') {
-      warnings.push(`inout port "${t.v}" (bidirectional) is not representable — skipped`)
+      dropUnrepresentablePort(ports, refusedDrivers, warnings, t.v, t.line, inoutPort(t.v))
+      dropFromHeader(t.v)
       continue
     }
     dir.set(t.v, d)
-    if (typeof width === 'number' && width > 1) widths.set(t.v, width)
     if (sgn) signed.add(t.v)
+    if (netType !== undefined) applyPortNetType(ports, refusedDrivers, warnings, netType, t)
   }
   if (c.is(';')) c.next()
+  if (pending !== undefined)
+    dropUnrepresentablePort(
+      ports,
+      refusedDrivers,
+      warnings,
+      '<unnamed port>',
+      pending.line,
+      unsizedPort('<unnamed port>', pending.bad),
+    )
 }
 
 function parseNetDecl(
@@ -1815,9 +2356,34 @@ function parseNetDecl(
   const unmodeled = UNMODELED_NETS[kind]
   const supply = kind === 'supply0' ? 0 : kind === 'supply1' ? 1 : undefined
   c.next() // the net-type or `reg` keyword
+  // A drive strength may sit between the net type and the names (`wire (weak1, weak0) t = a;`), where it
+  // belongs to the declaration's own assignment. Only `supply0`/`supply1` are reserved words in this lexer, so
+  // without this branch `weak1` and `weak0` were read as two ordinary NET NAMES and the strength vanished with
+  // no warning at all — the quietest way this importer could lose a driver's strength.
+  let declStrength: DriveStrength | undefined
+  if (c.is('(') && looksLikeStrength(c)) {
+    declStrength = readStrength(c)
+    if (!isDefaultStrength(declStrength))
+      warnings.push(
+        `drive strength on a "${kind}" declaration is read only to resolve two drivers on one net — a lone driver puts out the same value whatever its strength — reported`,
+      )
+  }
   let width: number | 'bad' | undefined
   let sgn = false
   let lastId: Tok | undefined
+  /** A declared name this importer has no WIDTH for. Its size is not one bit — it is unknown — so registering
+   *  it as a one-bit net publishes a design whose every read of it is a value the source never wrote (measured:
+   *  `wire [$clog2(256)-1:0] z; assign z = 8'hFF;` read 1 where Icarus Verilog 14.0 reads 255, with nothing said
+   *  but a warning about the RANGE). Refuse the name instead, exactly as a memory whose range will not fold
+   *  already does, and let the transitive-unbuilt rule carry it out to the module pins. */
+  const unbuiltDecl = (t: Tok, what: string, why: string): void => {
+    warnings.push(`line ${t.line}: ${what} "${t.v}" ${why} — reported, not built`)
+    refusedDrivers.push({
+      where: `line ${t.line}`,
+      what: `the ${what} "${t.v}"`,
+      terms: [[t]],
+    })
+  }
   /** A declared name gets its net type's extra meaning here: a resolution function, a constant supply drive,
    *  or an honest "this importer has no value for it". */
   const applyNetType = (t: Tok, w: number): void => {
@@ -1844,7 +2410,8 @@ function parseNetDecl(
       // On a NET this is exactly `assign name = expr;` (IEEE 1364 §6.1.2) — build it. On a `reg` the same
       // syntax is an initial VALUE, not a permanent drive; building it as one would wrongly hold the register
       // for ever, so it stays reported.
-      if (isNet && lastId !== undefined) assigns.push({ lhs: [lastId], rhs, line: t.line })
+      if (isNet && lastId !== undefined)
+        assigns.push({ lhs: [lastId], rhs, line: t.line, strength: declStrength })
       else {
         warnings.push(
           `line ${t.line}: an initial value on a "reg" declaration is not a continuous drive and is not modeled — reported, not built`,
@@ -1882,24 +2449,20 @@ function parseNetDecl(
     // word width, this one the depth. Register it as an array (not a plain bus) so mem[addr] can read/write it.
     if (c.is('[')) {
       const dr = readDepthRange(c)
-      const unbuiltMemory = (why: string): void => {
-        warnings.push(`line ${t.line}: memory "${t.v}" ${why} — reported, not built`)
-        refusedDrivers.push({
-          where: `line ${t.line}`,
-          what: `the memory "${t.v}"`,
-          terms: [[t]],
-        })
-      }
       if ('bad' in dr) {
-        unbuiltMemory(`array range — ${dr.bad}`)
+        unbuiltDecl(t, 'memory', `array range — ${dr.bad}`)
         continue
       }
       if (width === 'bad') {
-        unbuiltMemory('has an unsupported word range')
+        unbuiltDecl(t, 'memory', 'has an unsupported word range')
         continue
       }
       mems.set(t.v, { width: typeof width === 'number' ? width : 1, depth: dr.depth })
       if (sgn) signed.add(t.v) // a `reg signed […] m […]` — its words read sign-extended
+      continue
+    }
+    if (width === 'bad') {
+      unbuiltDecl(t, isNet ? 'net' : 'register', 'has a range this importer cannot size')
       continue
     }
     if (typeof width === 'number' && width > 1) widths.set(t.v, width)
@@ -1940,11 +2503,12 @@ function parseGateStatement(
   warnings: string[],
 ): void {
   const prim = (c.next() as Tok).v
+  let strength: DriveStrength | undefined
   if (c.is('(') && looksLikeStrength(c)) {
-    const g = readGroup(c)
-    if (!isDefaultStrength(g))
+    strength = readStrength(c)
+    if (!isDefaultStrength(strength))
       warnings.push(
-        `drive strength on "${prim}" is unmodeled (ChipBlocks gates have fixed drive) — reported`,
+        `drive strength on "${prim}" is read only to resolve two drivers on one net — a lone driver puts out the same value whatever its strength — reported`,
       )
   }
   if (c.is('#')) {
@@ -1988,12 +2552,12 @@ function parseGateStatement(
           terms: drivenSlices(prim, slices),
         })
     } else if (clean && terminals.length >= 2) {
-      gates.push({ prim, terminals, line })
+      gates.push({ prim, terminals, line, strength })
     } else if (slices.length >= 2) {
       // A terminal that is a bit-select, a constant or an expression (`and g(t[0], a[0], b[0])`) is ordinary
       // Verilog. It is carried to the synthesizer, which is the only place that knows every net's width, and
       // resolved there with the same machinery an `assign` uses — see resolveRawGates.
-      rawGates.push({ prim, slices, line })
+      rawGates.push({ prim, slices, line, strength })
     } else {
       warnings.push(
         `line ${line}: a "${prim}" instance has fewer than two terminals — reported, not built`,
@@ -2051,9 +2615,23 @@ function looksLikeStrength(c: Cursor): boolean {
   if (a === undefined || b === undefined) return false
   return (STRENGTH0.has(a.v) && STRENGTH1.has(b.v)) || (STRENGTH1.has(a.v) && STRENGTH0.has(b.v))
 }
-function isDefaultStrength(g: Tok[][]): boolean {
-  const flat = g.flat().map((t) => t.v)
-  return flat.length === 2 && flat.includes('strong0') && flat.includes('strong1')
+/**
+ * Read the `(<0-side>, <1-side>)` group at the cursor (either order) into the pair the synthesizer resolves
+ * by. Returns undefined when the group is not exactly one 0-side and one 1-side keyword — the caller then has
+ * nothing it may believe, and a strength it cannot read must never become a strength it guessed.
+ */
+function readStrength(c: Cursor): DriveStrength | undefined {
+  const flat = readGroup(c).flat()
+  if (flat.length !== 2) return undefined
+  const [first, second] = [flat[0] as Tok, flat[1] as Tok]
+  const zero = STRENGTH0.has(first.v) ? first.v : STRENGTH0.has(second.v) ? second.v : undefined
+  const one = STRENGTH1.has(first.v) ? first.v : STRENGTH1.has(second.v) ? second.v : undefined
+  if (zero === undefined || one === undefined) return undefined
+  return { one: STRENGTH_LEVEL[one] as StrengthLevel, zero: STRENGTH_LEVEL[zero] as StrengthLevel }
+}
+/** The strength every unannotated driver already has, so annotating it changes nothing worth reporting. */
+function isDefaultStrength(s: DriveStrength | undefined): boolean {
+  return s === undefined || (s.one === 'strong' && s.zero === 'strong')
 }
 
 // ── lowering: parsed gates → composite BlockData ──────────────────────────────
@@ -2361,12 +2939,23 @@ function place(nodes: BlockInnerNode[], endpoints: Map<string, Pin[]>): void {
 export function importVerilog(text: string): ImportResult {
   const { tokens, warnings } = lex(text)
   const modules = new Map<string, ParsedModule>()
+  const spans = new Map<string, Tok[]>()
+  const declaredParams = new Map<string, ModuleParams>()
+  // What each module reported when it was elaborated at its DEFAULT parameter values. An instantiation that
+  // overrides a parameter re-elaborates the module, and anything NEW that the module reports at those values
+  // — a bus whose range no longer folds, a memory depth that underflowed — means the override produced a
+  // module this importer cannot represent. Refusing the instance by name is the only honest answer there:
+  // `#(.W(0))` makes `[W-1:0]` two bits wide in Icarus, which our zero-based-only ranges cannot build.
+  const defaultReports = new Map<string, Set<string>>()
   const order: string[] = []
   for (const span of splitModuleSpans(tokens)) {
     // Fold + substitute parameters/localparams into literals before parsing, so buses like `[W-1:0]` size
     // correctly and no parameter plumbing threads through the structural + expression parsers. Parameters are
     // module-scoped, so this runs per module span — a `W` in one module never rewrites another's nets.
-    const mod = parseModule(elaborateParams(span, warnings), warnings)
+    const reports: string[] = []
+    const elaborated = elaborateModule(span, reports)
+    const mod = parseModule(elaborated.toks, reports)
+    warnings.push(...reports)
     if (mod === null) continue
     if (modules.has(mod.name)) {
       warnings.push(
@@ -2375,6 +2964,9 @@ export function importVerilog(text: string): ImportResult {
       continue
     }
     modules.set(mod.name, mod)
+    spans.set(mod.name, span)
+    declaredParams.set(mod.name, elaborated.params)
+    defaultReports.set(mod.name, new Set(reports))
     order.push(mod.name)
   }
   if (order.length === 0) {
@@ -2382,9 +2974,46 @@ export function importVerilog(text: string): ImportResult {
     return { block: null, warnings, moduleName: null }
   }
   const topName = chooseTopModule(modules, order, warnings)
+  // A port of the module being PUBLISHED that this importer cannot represent has nowhere honest to go. On a
+  // sub-module it is merely dropped (a connection to it is refused, an unconnected one costs nothing), but
+  // here the drop IS the design: the block would be handed back missing a pin its own source declares, and
+  // every later use of it — a wiring, an instantiation, a saved circuit — would be built against an interface
+  // the source never described. Measured against Icarus Verilog 14.0: `output [$clog2(16)-1:0] z` published
+  // with no z pin at all (ANSI) or a one-bit z reading 1 where Icarus reads 15 (non-ANSI); `inout [7:0] b`
+  // published with no b pin at all (ANSI) or a one-bit b (non-ANSI), and the net inside read 1 or 0 where
+  // Icarus reads 255 and 170.
+  const lostPorts = modules.get(topName)?.unrepresentablePorts ?? []
+  if (lostPorts.length > 0) {
+    const detail = lostPorts.map((p) => `port "${p.name}" ${p.why}`).join('; ')
+    warnings.push(
+      `module "${topName}" is NOT built: ${detail}. Publishing would mean inventing an interface this design never described — a block missing a pin its own source declares, or carrying one at a width the source never gave it — so no design is published`,
+    )
+    return { block: null, warnings, moduleName: topName }
+  }
   // Inline every sub-module instance so the synthesizer below sees one flat module, exactly as if the design
-  // had been written that way by hand.
-  const mod = flattenHierarchy(modules, topName, warnings)
+  // had been written that way by hand. Nothing overrides the TOP module's parameters, so it keeps the default
+  // parse; a sub-module an instantiation parameterises is elaborated again, once per distinct value set.
+  const mod = flattenHierarchy(modules, topName, warnings, {
+    declared: (name) => declaredParams.get(name),
+    elaborate: (name, values) => {
+      const span = spans.get(name)
+      if (span === undefined) return { failed: `no module "${name}" is defined in this source` }
+      const reports: string[] = []
+      const elaborated = elaborateModule(span, reports, values)
+      if (elaborated.unapplied.length > 0)
+        return {
+          failed: `a parameter override this importer could not apply to ${elaborated.unapplied.map((n) => `"${n}"`).join(', ')}`,
+        }
+      const out = parseModule(elaborated.toks, reports)
+      if (out === null)
+        return { failed: 'a module that could not be read again with these parameters' }
+      const known = defaultReports.get(name) as Set<string>
+      const added = reports.filter((report) => !known.has(report))
+      if (added.length > 0)
+        return { failed: `a parameter override that makes "${name}" report ${added[0] as string}` }
+      return out
+    },
+  })
   // Synthesize behavioral RTL — continuous assignments into gates and clocked always-blocks into flip-flops
   // + next-state gates (both appended to mod) — then lower everything.
   synthesizeBehavioral(mod, warnings)

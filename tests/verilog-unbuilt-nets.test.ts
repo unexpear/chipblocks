@@ -275,6 +275,62 @@ describe('initial <reg> = <constant> is a power-on value, not a second driver', 
     expect(said(warnings)).toContain('nothing clocks it')
   })
 
+  // An assignment is a CONTEXT, and the context of a power-on value is the register's DECLARED WIDTH. Folding
+  // it context-free applied the lossless width a parameter VALUE gets, and that width contains the shift wall:
+  // the expression wrapped to zero, matched the flip-flop's power-up 0, and the design BUILT holding the wrong
+  // value with nothing said. Every number below is the output of Icarus Verilog 14.0 on the same source, read
+  // through a 32-bit probe.
+  const clocked = (decl: string, init: string): string =>
+    `module m(clk, o); input clk; output [31:0] o; reg ${decl} r; initial r = ${init}; always @(posedge clk) r <= r; assign o = r; endmodule`
+
+  test('a shift in a power-on value takes the register width, not the shift wall (Icarus: 16)', () => {
+    const { block, warnings } = importVerilog(clocked('[7:0]', "4'd8 << 1"))
+    expect(block).toBeNull()
+    expect(said(warnings)).toContain('asks for 16')
+  })
+
+  test('a wider register carries the same shift further (Icarus: 48)', () => {
+    const { block, warnings } = importVerilog(clocked('[15:0]', "4'd12 << 2"))
+    expect(block).toBeNull()
+    expect(said(warnings)).toContain('asks for 48')
+  })
+
+  test('a shift by ZERO still takes the register width (Icarus: 16)', () => {
+    const { block, warnings } = importVerilog(clocked('[15:0]', "(4'd15 + 4'd1) << 0"))
+    expect(block).toBeNull()
+    expect(said(warnings)).toContain('asks for 16')
+  })
+
+  test('a bitwise negate fills to the register width (Icarus: 240)', () => {
+    const { block, warnings } = importVerilog(clocked('[7:0]', "~4'd15"))
+    expect(block).toBeNull()
+    expect(said(warnings)).toContain('asks for 240')
+  })
+
+  test('an ordinary sized shift reports its real value (Icarus: 8)', () => {
+    const { block, warnings } = importVerilog(clocked('[7:0]', "8'd1 << 3"))
+    expect(block).toBeNull()
+    expect(said(warnings)).toContain('asks for 8')
+  })
+
+  test('a value too wide for the register TRUNCATES to zero and builds (Icarus: 0)', () => {
+    const { block, warnings } = importVerilog(clocked('[3:0]', "8'd16"))
+    expect(warnings).toEqual([])
+    expect(block).not.toBeNull()
+  })
+
+  test('an overflowing add truncates to zero in a narrow register and builds (Icarus: 0)', () => {
+    const { block, warnings } = importVerilog(clocked('[3:0]', "4'd15 + 4'd1"))
+    expect(warnings).toEqual([])
+    expect(block).not.toBeNull()
+  })
+
+  test('a one-bit register takes the low bit of the shift, which is zero (Icarus: 0)', () => {
+    const { block, warnings } = importVerilog(clocked('', "4'd8 << 1"))
+    expect(warnings).toEqual([])
+    expect(block).not.toBeNull()
+  })
+
   test('an initial block that does anything else is still not built', () => {
     const { block, warnings } = importVerilog(
       mod("wire [3:0] t; assign t = a & b; initial force t = 4'hF; assign o = t;"),

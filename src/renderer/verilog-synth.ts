@@ -22,10 +22,20 @@
  * based selects, a bit-select on a memory read, an unclocked assign to a memory — is REPORTED, never faked.
  */
 
-import { constInt, MAX_REPL, splitOnColon } from './verilog-const.ts'
+import {
+  asInteger,
+  type ConstVal,
+  constInt,
+  evalConst,
+  extendTo,
+  MAX_REPL,
+  plainDecimal,
+  splitOnColon,
+} from './verilog-const.ts'
 import type {
   AlwaysBlock,
   Assign,
+  DriveStrength,
   FlopInst,
   FuncDef,
   GateInst,
@@ -33,12 +43,13 @@ import type {
   PowerOnValue,
   RawGate,
   RefusedDriver,
+  StrengthLevel,
   TaskArg,
   TaskDef,
   Tok,
   UnbuiltReport,
 } from './verilog-import.ts'
-import { assignmentTargets } from './verilog-import.ts'
+import { assignmentTargets, statementSpanEnd } from './verilog-import.ts'
 
 /** Declared memories, by name (`reg [D-1:0] m [0:W-1]`). Threaded through the parser so `m[addr]` becomes a
  *  memory read/write rather than a (rejected) non-constant bit-select. */
@@ -63,10 +74,14 @@ type Expr =
   | { t: 'call'; name: string; args: Expr[]; retWidth?: number; fn?: FuncDef }
   // a self-determined WIDTH WALL: evaluate `of` at exactly `width` bits (truncate/zero-extend), regardless of
   // the surrounding context — how a function's inputs/locals/return honor their declared widths exactly.
-  | { t: 'sized'; width: number; of: Expr }
+  | { t: 'sized'; width: number; signed: boolean; of: Expr }
   // a `$signed(x)` / `$unsigned(x)` cast: re-interpret `of` as signed / unsigned (changes only how it extends).
   | { t: 'cast'; signed: boolean; of: Expr }
   | { t: 'bad'; why: string }
+
+/** A declared variable's own type — the width AND signedness a store to it must take, and every later read of
+ *  it must report. One record, because a width without its signedness is exactly half an answer. */
+type Decl = { width: number; signed: boolean }
 
 /** The synthetic net name of memory word k (bracket form — can't collide with a user simple identifier). */
 const memWord = (name: string, k: number): string => `${name}[${k}]`
@@ -75,24 +90,50 @@ const clog2 = (words: number): number => Math.max(1, Math.ceil(Math.log2(Math.ma
 /** The value of an expression that folds to a constant (all bits known), else undefined. Synthesizes into a
  *  throwaway context so it reuses synthAt's EXACT-width folding — `3+2` folds to 5, but a sized `4'd15+4'd1`
  *  wraps to 0 exactly as the hardware would, so no false out-of-range report. Any net reference ⇒ undefined. */
-function foldConst(e: Expr, widthOf: (n: string) => number): number | undefined {
+function foldConst(
+  e: Expr,
+  widthOf: (n: string) => number,
+  signedOf: (n: string) => boolean,
+): number | undefined {
+  const v = foldConstBits(e, widthOf, signedOf)
+  return v === undefined ? undefined : Number(v.value)
+}
+
+/**
+ * The one elaboration-time fold — an expression's exact self-determined value as a ConstVal, carrying the
+ * width it was folded at AND its own signedness (IEEE 1364-2005 §5.4.1 + §5.5.1). Both come from the
+ * expression itself: the throwaway context is given the real `signedOf`, and the context signedness is the
+ * expression's own, so `3 + ST` with `parameter signed [3:0] ST = -1` folds to 2 here exactly as it does when
+ * it is synthesized into gates. Returning a bare bigint was what made every caller re-guess the type of the
+ * number it had just been handed.
+ */
+function foldConstBits(
+  e: Expr,
+  widthOf: (n: string) => number,
+  signedOf: (n: string) => boolean,
+): ConstVal | undefined {
   // A function call is never a compile-time constant (it synthesizes gates) and can't inline in the throwaway
   // fold ctx (no funcs/tie) — so treat any tree containing one as non-constant rather than fold it wrong.
   if (hasCall(e)) return undefined
   let z = 0
-  const bits = synthAt(e, selfWidth(e, widthOf), false, {
+  const width = selfWidth(e, widthOf)
+  const signed = isSigned(e, signedOf)
+  const bits = synthAt(e, width, signed, {
     gates: [],
     fresh: () => `#fold${z++}`,
     widthOf,
     bitNet: (n, i) => `${n}[${i}]`,
+    signedOf,
   })
-  let v = 0
+  let v = 0n
   for (let i = 0; i < bits.length; i++) {
     const b = bits[i]
     if (b === undefined || !isC(b)) return undefined
-    if (b.c) v += 2 ** i
+    if (b.c) v |= 1n << BigInt(i)
   }
-  return v
+  // A synthesized fold has already been materialized as `width` real bits, so its size is settled — there is
+  // nothing left for an unsized constant to grow into.
+  return { value: v, width, signed, unsized: false }
 }
 
 /** Binary-operator binding power (higher binds tighter), the IEEE 1364-2005 Table 5-4 ladder. `?:` (loosest)
@@ -354,7 +395,10 @@ function parseConcatBody(ts: TokStream, mems: MemTable): Expr {
   }
   if (ts.peek()?.v !== '}') return { t: 'bad', why: 'missing "}" in concatenation' }
   ts.next()
-  return parts.length === 1 ? (parts[0] as Expr) : { t: 'concat', parts }
+  // A ONE-element concatenation is still a concatenation, and a concatenation is UNSIGNED whatever its
+  // operands are (IEEE 1364-2005 §5.5.1). Collapsing `{s}` to a bare `s` kept the signedness of `s`, so
+  // `assign y = {s}` on a signed 4-bit s sign-extended into an 8-bit y where Icarus zero-extends.
+  return { t: 'concat', parts }
 }
 
 /** A Verilog integer literal → its LSB-first constant bits, or `bad` for x/z / unparseable. A plain unsized
@@ -363,7 +407,17 @@ function parseConcatBody(ts: TokStream, mems: MemTable): Expr {
 function constExpr(v: string): Expr {
   const based = v.match(/^(\d*)'([sS]?)([bBoOdDhH])([0-9a-fA-FxXzZ?_]+)$/)
   if (based === null) {
-    if (/^[0-9][0-9_]*$/.test(v)) return bitsOf(BigInt(v.replace(/_/g, '')), 32, true)
+    if (/^[0-9][0-9_]*$/.test(v)) {
+      // An unsized decimal is signed and "at least 32 bits" (§3.11.1) with an implementation-defined size, so
+      // a magnitude needing bit 31 has no width this importer can prove — it is refused, not guessed at.
+      const dec = plainDecimal(BigInt(v.replace(/_/g, '')))
+      if (dec === undefined)
+        return {
+          t: 'bad',
+          why: `decimal literal "${v}" needs more than 31 bits — its size is not portable`,
+        }
+      return bitsOf(dec.value, dec.width, true)
+    }
     return { t: 'bad', why: `constant "${v}"` }
   }
   const width = based[1] === '' ? 32 : Number.parseInt(based[1] as string, 10)
@@ -536,6 +590,36 @@ function hasCall(e: Expr): boolean {
   }
 }
 
+/** Does the tree contain a literal x — `casex ({op[3:2], 2'bxx})`? Read only by the wildcard case forms, where
+ *  an x on the SELECTOR side is not an ordinary unknown but changes which item matches (under casex it is a
+ *  don't-care that matches anything; under casez it is a literal x that matches nothing), so such a selector
+ *  is refused by name rather than answered. A net can never be x, so this is the only way one arrives. */
+function hasUnknownConst(e: Expr): boolean {
+  switch (e.t) {
+    case 'const':
+      return e.bits.includes('x')
+    case 'un':
+      return hasUnknownConst(e.a)
+    case 'sized':
+    case 'cast':
+      return hasUnknownConst(e.of)
+    case 'bin':
+      return hasUnknownConst(e.a) || hasUnknownConst(e.b)
+    case 'tern':
+      return hasUnknownConst(e.c) || hasUnknownConst(e.a) || hasUnknownConst(e.b)
+    case 'concat':
+      return e.parts.some(hasUnknownConst)
+    case 'repl':
+      return hasUnknownConst(e.of)
+    case 'memread':
+      return hasUnknownConst(e.idx)
+    case 'call':
+      return e.args.some(hasUnknownConst)
+    default:
+      return false
+  }
+}
+
 // ── bit-level synthesis ─────────────────────────────────────────────────────────
 /** A synthesized bit: a known constant, a net, or UNKNOWN. `x` is Verilog's don't-care/uninitialised value.
  *  It is not a third wire level — a ChipBlocks net is only ever 0 or 1 — it is what we KNOW about a bit while
@@ -550,8 +634,10 @@ type Ctx = {
   fresh: () => string
   widthOf: (name: string) => number
   bitNet: (name: string, i: number) => string
-  /** Whether a declared net is `signed` (drives sign- vs zero-extension); absent ⇒ everything unsigned. */
-  signedOf?: (name: string) => boolean
+  /** Whether a declared net is `signed` (drives sign- vs zero-extension). REQUIRED: an absent oracle used to
+   *  read as "everything unsigned", and that silent default is the door every signedness defect in this file
+   *  walked through — a context with no declared types must refuse, never assume. */
+  signedOf: (name: string) => boolean
   /** The module's functions (for inlining a `call`) and a per-call counter for unique inlined-net names. */
   funcs?: Map<string, FuncDef>
   callSeq?: { n: number }
@@ -631,10 +717,21 @@ function mux1(sel: Bit, t: Bit, f: Bit, x: Ctx): Bit {
  * Unsigned restoring division at width w → { q: quotient, rem: remainder }, both length w. Each of the w
  * steps shifts the partial remainder in one dividend bit then does a (w+1)-bit trial subtract of the divisor;
  * if the remainder is still ≥ the divisor it keeps the difference and sets the quotient bit, else it restores.
- * ~w² gates. Divide-by-zero yields an all-ones quotient and the dividend as the remainder — real Verilog is
- * x there, but x isn't modelled, so this is the defined stand-in (documented, not faked).
+ * ~w² gates.
+ *
+ * A divisor every bit of which folds to a constant 0 is an ELABORATION-TIME fact, and IEEE 1364-2005 §5.1.5
+ * gives `a / 0` and `a % 0` no value at all — Icarus Verilog 14.0 returns x for every input, measured. The
+ * restoring loop below would hand back an all-ones quotient and the dividend as the remainder, so the design
+ * used to publish a fabricated number on all 16 rows where Verilog has none. Returning UNKNOWN instead lets
+ * the driver's existing x-guard refuse the bit by name and the transitive-unbuilt rule poison it out to the
+ * pins. A divisor that is merely CAPABLE of being zero at run time is a different question: a ChipBlocks net
+ * is only ever 0 or 1, so a run-time x is not representable here and those rows are NOT covered.
  */
 function divmod(a: Bit[], b: Bit[], w: number, x: Ctx): { q: Bit[]; rem: Bit[] } {
+  if (b.length > 0 && b.every((bit) => isC(bit) && bit.c === 0)) {
+    const unknown = (): Bit[] => new Array<Bit>(w).fill(UNKNOWN)
+    return { q: unknown(), rem: unknown() }
+  }
   const bExt: Bit[] = [...b, { c: 0 }] // divisor zero-extended to w+1 bits
   let rem: Bit[] = resize([], w + 1) // partial remainder, starts 0
   const q: Bit[] = new Array<Bit>(w)
@@ -732,7 +829,9 @@ function isSigned(e: Expr, sgnOf: (n: string) => boolean): boolean {
     case 'memread':
       return sgnOf(e.name) // a `reg signed […] m […]` reads signed words
     case 'sized':
-      return isSigned(e.of, sgnOf)
+      // A read of a declared variable takes the VARIABLE's type, never the type of what was stored into it
+      // (§5.5.1 + §10.3.1) — recursing into `e.of` here made a `reg [3:0] t; t = $signed(x)` read signed.
+      return e.signed
     default:
       return false // bitsel, partsel, concat, repl, memread, call
   }
@@ -766,6 +865,29 @@ function condNegate(bits: Bit[], doNeg: Bit, x: Ctx): Bit[] {
   return bits.map((b, i) => mux1(doNeg, neg[i] as Bit, b, x))
 }
 
+/**
+ * A SELF-DETERMINED operand (IEEE 1364-2005 §5.4.1): its own width AND its own signedness, whatever the
+ * surrounding context is. Reductions, `&&`/`||` operands, a `?:` condition, a shift's amount, a `$signed()`
+ * cast's inner expression and a structural gate's terminal are all this shape, and each used to pass a
+ * hard-coded `false` for the type — which turned a `>>>` inside any of them into a logical shift.
+ */
+function synthSelf(e: Expr, x: Ctx): Bit[] {
+  return synthAt(e, selfWidth(e, x.widthOf), isSigned(e, x.signedOf), x)
+}
+
+/**
+ * A PORT CONNECTION IS NOT AN ASSIGNMENT CONTEXT (IEEE 1364-2005 §12.3.6): the expression written in the
+ * instance's connection list is SELF-DETERMINED, and only the finished value is then extended (or truncated)
+ * to the port's width. Handing the port's width down as a context width instead is the wall: an eight-bit add
+ * fed to a `[31:0]` port was evaluated at thirty-two bits and never wrapped, so `.p(8'd200 + 8'd100)` carried
+ * 300 where Icarus Verilog 14.0 carries 44, and `.p(a + a)` on a four-bit `a` carried 18 where Icarus carries
+ * 2. The extension keeps the expression's OWN signedness, which is what makes a signed four-bit -1 arrive at
+ * an unsigned thirty-two-bit port as 4294967295 — measured, not assumed.
+ */
+function synthPortConnection(e: Expr, w: number, x: Ctx): Bit[] {
+  return resizeSigned(synthSelf(e, x), w, isSigned(e, x.signedOf))
+}
+
 /** Synthesize an expression at context width `w`, returning a length-w bit-vector (LSB-first). Both the context
  *  WIDTH `w` and the context SIGNEDNESS `sgn` are pushed down into the width-preserving operators (~ - + & | ^
  *  ~^ + - * and both ?: arms) — `sgn` decides SIGN- vs ZERO-extension when a narrower value is widened — and
@@ -773,7 +895,7 @@ function condNegate(bits: Bit[], doNeg: Bit, x: Ctx): Bit[] {
  *  the ternary condition, a shift's amount), which re-establish their own width + signedness. `sgn` matches the
  *  containing expression's signedness (IEEE 1364-2005 §5.5.1: signed iff ALL operands are signed). */
 function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
-  const S = x.signedOf ?? noSign
+  const S = x.signedOf
   switch (e.t) {
     case 'const':
       return resizeSigned(
@@ -821,7 +943,7 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
       if (e.op === '~') return synthAt(e.a, w, sgn, x).map((b) => not1(b, x))
       if (e.op === '+') return synthAt(e.a, w, sgn, x)
       if (e.op === '-') return negate(synthAt(e.a, w, sgn, x), x)
-      const operand = synthAt(e.a, selfWidth(e.a, x.widthOf), false, x) // reductions: self-width, unsigned
+      const operand = synthSelf(e.a, x) // a reduction's operand is self-determined: own width, own type
       const r =
         e.op === '!'
           ? not1(reduce(operand, 'or', x), x)
@@ -875,32 +997,35 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
         return resize([e.op === '==' ? eq : not1(eq, x)], w)
       }
       if (e.op === '<<' || e.op === '>>' || e.op === '<<<' || e.op === '>>>') {
-        // Shift: the LEFT operand is context-sized to w (signedness = its own); the amount is self-determined
-        // and never widens. `<<`/`<<<` fill 0 at the bottom; `>>` fills 0 at the top; `>>>` (arithmetic) fills
-        // the SIGN bit at the top iff the left operand is signed. A constant amount reindexes; a variable amount
-        // is a barrel shifter. Anything shifted past the width falls off to the fill bit.
+        // Shift: per §5.4.1 Table 5-22 a shift's size is max(context, L(left operand)) — the context can only
+        // GROW it, never shrink it, so the shift happens at `evalW` and is truncated to `w` only at the end
+        // (mirroring `/` and `%` above). Evaluating the left operand at a NARROWER context truncated it before
+        // the shift ever ran, so `y[0] = a >> 1` on a 4-bit `a` read 0 instead of a[1]. The amount is
+        // self-determined and never widens. `<<`/`<<<` fill 0 at the bottom; `>>` fills 0 at the top; `>>>`
+        // (arithmetic) fills the SIGN bit at the top iff the containing region is signed.
         const left = e.op === '<<' || e.op === '<<<'
-        const la = synthAt(e.a, w, sgn, x)
+        const evalW = Math.max(w, selfWidth(e.a, x.widthOf))
+        const la = synthAt(e.a, evalW, sgn, x)
         // >>> arithmetic-fills the sign bit only when the CONTEXT is signed (an unsigned context makes it a
         // logical shift), so `u + (a >>> 1)` zero-fills even for a signed `a`.
-        const topFill: Bit = e.op === '>>>' && sgn && w > 0 ? (la[w - 1] as Bit) : { c: 0 }
+        const topFill: Bit = e.op === '>>>' && sgn && evalW > 0 ? (la[evalW - 1] as Bit) : { c: 0 }
         const shiftBy = (srcBits: Bit[], amt: number): Bit[] =>
-          Array.from({ length: w }, (_, i) => {
+          Array.from({ length: evalW }, (_, i) => {
             const from = left ? i - amt : i + amt
-            if (from >= 0 && from < w) return srcBits[from] as Bit
+            if (from >= 0 && from < evalW) return srcBits[from] as Bit
             return left ? ({ c: 0 } as Bit) : topFill // bottom-fill 0 on <<, top-fill on >> / >>>
           })
-        const k = foldConst(e.b, x.widthOf)
-        if (k !== undefined) return shiftBy(la, k)
+        const k = foldConst(e.b, x.widthOf, S)
+        if (k !== undefined) return resize(shiftBy(la, k), w)
         const bw = selfWidth(e.b, x.widthOf)
-        const amtBits = synthAt(e.b, bw, false, x)
+        const amtBits = synthSelf(e.b, x)
         let cur = la
         for (let j = 0; j < bw; j++) {
           const shifted = shiftBy(cur, 2 ** j)
           const sel = amtBits[j] as Bit
           cur = cur.map((c, i) => mux1(sel, shifted[i] as Bit, c, x))
         }
-        return cur
+        return resize(cur, w)
       }
       if (RELATIONAL.has(e.op)) {
         // Magnitude comparison → 1 bit. a >= b ⟺ the carry-OUT of a + ~b + 1 (no borrow). When BOTH operands
@@ -970,8 +1095,8 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
         return resize(e.op === '/' ? q : rem, w)
       }
       if (e.op === '&&' || e.op === '||') {
-        const ca = reduce(synthAt(e.a, selfWidth(e.a, x.widthOf), false, x), 'or', x)
-        const cb = reduce(synthAt(e.b, selfWidth(e.b, x.widthOf), false, x), 'or', x)
+        const ca = reduce(synthSelf(e.a, x), 'or', x)
+        const cb = reduce(synthSelf(e.b, x), 'or', x)
         return resize([e.op === '&&' ? and1(ca, cb, x) : or1(ca, cb, x)], w)
       }
       // Every supported binary op has a branch above; a bare fallthrough would silently miscompile a newly
@@ -979,7 +1104,7 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
       throw new Error(`synthAt: no branch for binary operator "${e.op}"`)
     }
     case 'tern': {
-      const sel = reduce(synthAt(e.c, selfWidth(e.c, x.widthOf), false, x), 'or', x) // nonzero test, 1 bit
+      const sel = reduce(synthSelf(e.c, x), 'or', x) // nonzero test, 1 bit
       if (isC(sel)) return synthAt(sel.c === 1 ? e.a : e.b, w, sgn, x)
       const la = synthAt(e.a, w, sgn, x)
       const lb = synthAt(e.b, w, sgn, x)
@@ -992,7 +1117,9 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
       // the FULL address width (never fewer than clog2(depth)) so a too-wide address's high bits force a
       // no-match (reads 0) instead of aliasing onto a low word — the write path compares at this width too.
       const addrW = Math.max(clog2(e.depth), selfWidth(e.idx, x.widthOf))
-      const addr = synthAt(e.idx, addrW, false, x)
+      // The index is SELF-determined (own width, own type); the address it denotes is an unsigned word
+      // number (§5.2.1), so it zero-extends into the decode width rather than being evaluated unsigned.
+      const addr = resize(synthSelf(e.idx, x), addrW)
       const oneHot: Bit[] = []
       for (let k = 0; k < e.depth; k++) {
         let match: Bit = { c: 1 }
@@ -1022,14 +1149,12 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
     case 'cast':
       // $signed/$unsigned only change `of`'s SELF-signedness (via isSigned, which the parent reads to set the
       // context sgn); the extension here uses the inherited `sgn`, so `$signed(a) | b` (an unsigned `|`) zero-
-      // extends. Evaluate `of` at its own self-width, then extend to the context.
-      return resizeSigned(synthAt(e.of, selfWidth(e.of, x.widthOf), false, x), w, sgn)
+      // extends. `of` is SELF-determined — own width and OWN TYPE — so a `>>>` inside a cast stays arithmetic.
+      return resizeSigned(synthSelf(e.of, x), w, sgn)
     default:
       return resize([], w) // 'bad' — gated out by firstBad()
   }
 }
-
-const noSign = (): boolean => false
 
 /**
  * Inline a function call into REAL gates at the function's declared return width — the gate-materialization
@@ -1055,13 +1180,27 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
     n.startsWith(prefix) ? (fnWidth.get(n.slice(prefix.length)) ?? 1) : x.widthOf(n)
   const bodyBitNet = (n: string, i: number): string => (bodyWidthOf(n) === 1 ? n : `${n}[${i}]`)
   const constNets = new Map<string, 0 | 1 | 'x'>()
-  const bodyCtx: Ctx = { ...x, widthOf: bodyWidthOf, bitNet: bodyBitNet, constNets }
+  // A function-scoped `integer` is a SIGNED 32-bit variable (IEEE 1364-2005 §3.9). ONE scope, ONE signedness
+  // oracle: the same map goes to the loop unroller AND into the Ctx the body is synthesized under, so a
+  // function-scope read can no longer be typed one way while it is unrolled another.
+  const bodySignedOf = (n: string): boolean =>
+    n.startsWith(prefix) ? fn.integerLocals.has(n.slice(prefix.length)) : x.signedOf(n)
+  const bodyCtx: Ctx = {
+    ...x,
+    widthOf: bodyWidthOf,
+    bitNet: bodyBitNet,
+    constNets,
+    signedOf: bodySignedOf,
+  }
 
   // Materialize each argument at its formal's declared width, onto the renamed input net: a live bit is
   // buffered; a constant bit is recorded in constNets (so it flows as a real constant with no tie needed).
+  // Binding an actual to a formal is an ASSIGNMENT (§5.6), so a narrower signed actual SIGN-extends into the
+  // formal's declared width — it used to zero-extend, turning f(s) on a signed s into f(+8) at a = −8.
   for (let k = 0; k < fn.inputs.length; k++) {
     const inp = fn.inputs[k] as { name: string; width: number }
-    const bits = synthAt(args[k] as Expr, inp.width, false, x)
+    const actual = args[k] as Expr
+    const bits = resizeSigned(synthSelf(actual, x), inp.width, isSigned(actual, x.signedOf))
     for (let i = 0; i < inp.width; i++) {
       const dest = bodyBitNet(prefix + inp.name, i)
       const b = bits[i] as Bit
@@ -1074,18 +1213,24 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
   const bodyToks = fn.body.map((t) =>
     t.k === 'id' && fnWidth.has(t.v) ? { ...t, v: prefix + t.v } : t,
   )
-  const seq = parseProcedural(bodyToks, new Map(), true, bodyWidthOf)
+  const seq = parseProcedural(bodyToks, new Map(), true, bodyWidthOf, bodySignedOf)
   // These three fall-throughs are defensive — validateFunctions has already dropped any function with a bad
   // body / no return assignment / a bad nested call (a call to it then reports as "unknown function").
   if (seq.t === 'bad') return resize([{ c: 0 }], fn.retWidth)
   const written = new Set<string>()
-  const sizeOf = (name: string): number | undefined =>
-    name.startsWith(prefix) ? fnWidth.get(name.slice(prefix.length)) : undefined
-  const env = elaborate(seq, new Map(), written, sizeOf)
+  const declOf = (name: string): Decl | undefined => {
+    if (!name.startsWith(prefix)) return undefined
+    const local = name.slice(prefix.length)
+    const wd = fnWidth.get(local)
+    return wd === undefined ? undefined : { width: wd, signed: fn.integerLocals.has(local) }
+  }
+  const env = elaborate(seq, new Map(), written, declOf)
   const retExpr = env.get(prefix + fn.name)
   if (retExpr === undefined) return resize([{ c: 0 }], fn.retWidth)
   const bound = bindCalls(retExpr, x.funcs)
   if (firstBad(bound) !== undefined) return resize([{ c: 0 }], fn.retWidth)
+  // The return variable is unsigned — a `signed` function return is refused at import, so there is no signed
+  // return to lose here — and elaborate has already walled the store at the declared retWidth.
   return synthAt(bound, fn.retWidth, false, bodyCtx)
 }
 
@@ -1245,11 +1390,11 @@ function functionBodyError(fn: FuncDef, functions: Map<string, FuncDef>): string
   for (const [nm, wd] of fn.localWidths) fnWidth.set(nm, wd)
   fnWidth.set(fn.name, fn.retWidth)
   const widthOf = (n: string): number => fnWidth.get(n) ?? 1
-  const seq = parseProcedural(fn.body, new Map(), true, widthOf)
+  const seq = parseProcedural(fn.body, new Map(), true, widthOf, (n) => fn.integerLocals.has(n))
   if (seq.t === 'bad') return seq.why
   if (containsTaskCall(seq)) return 'a function cannot call a task'
   const written = new Set<string>()
-  const ret = elaborate(seq, new Map(), written).get(fn.name)
+  const ret = elaborate(seq, new Map(), written, () => undefined).get(fn.name)
   if (ret === undefined) return `it never assigns its return value "${fn.name}"`
   return firstBad(bindCalls(ret, functions))
 }
@@ -1280,31 +1425,34 @@ type TaskCtx = {
   comb: boolean
   callSeq: { n: number }
   widthOf: (n: string) => number
+  signedOf: (n: string) => boolean
   registerWidth: (name: string, w: number) => void
   /** Tasks currently being inlined (to reject direct/indirect task recursion). */
   stack: Set<string>
 }
 
-/** Wrap every blocking store to a task-scoped signal in a `sized` width wall so an intermediate local truncates
- *  to its declared width EXACTLY — the same guarantee the function inliner gets from elaborate's sizeOf, applied
- *  here at the statement level because the task body is spliced into the caller's (sizeOf-less) elaboration. */
-function wrapStores(stmt: ProcStmt, sizeOf: (n: string) => number | undefined): ProcStmt {
+/** Wrap every blocking store to a task-scoped signal in a `sized` type wall so an intermediate local takes its
+ *  declared width AND declared signedness EXACTLY — the same guarantee the function inliner gets from
+ *  elaborate's declOf, applied here because a task body is spliced into the caller's elaboration. */
+function wrapStores(stmt: ProcStmt, declOf: (n: string) => Decl | undefined): ProcStmt {
   switch (stmt.t) {
     case 'nb': {
-      const wd = sizeOf(stmt.lhs)
-      return wd === undefined ? stmt : { ...stmt, rhs: { t: 'sized', width: wd, of: stmt.rhs } }
+      const d = declOf(stmt.lhs)
+      return d === undefined
+        ? stmt
+        : { ...stmt, rhs: { t: 'sized', width: d.width, signed: d.signed, of: stmt.rhs } }
     }
     case 'nbsel':
       // The width wall belongs on the SELECTED width, which elaborate already applies — a wall at the
       // signal's full width here would zero-extend the slice value over bits it must not touch.
       return stmt
     case 'seq':
-      return { t: 'seq', body: stmt.body.map((s) => wrapStores(s, sizeOf)) }
+      return { t: 'seq', body: stmt.body.map((s) => wrapStores(s, declOf)) }
     case 'if': {
-      const conseq = wrapStores(stmt.conseq, sizeOf)
+      const conseq = wrapStores(stmt.conseq, declOf)
       return stmt.els === undefined
         ? { t: 'if', cond: stmt.cond, conseq }
-        : { t: 'if', cond: stmt.cond, conseq, els: wrapStores(stmt.els, sizeOf) }
+        : { t: 'if', cond: stmt.cond, conseq, els: wrapStores(stmt.els, declOf) }
     }
     default:
       return stmt
@@ -1357,15 +1505,21 @@ function expandTaskCall(name: string, argSpans: Tok[][], x: TaskCtx): ProcStmt {
   const bodyToks = task.body.map((t) =>
     t.k === 'id' && scopeWidth.has(t.v) ? { ...t, v: prefix + t.v } : t,
   )
-  const parsedBody = parseProcedural(bodyToks, x.mems, true, x.widthOf)
+  const bodySignedOf = (n: string): boolean =>
+    n.startsWith(prefix) ? task.integerLocals.has(n.slice(prefix.length)) : x.signedOf(n)
+  const parsedBody = parseProcedural(bodyToks, x.mems, true, x.widthOf, bodySignedOf)
   if (parsedBody.t === 'bad') return { t: 'bad', why: `task "${name}" body — ${parsedBody.why}` }
   // Inline any nested task call in the body (recursion-guarded); its top level is not conditional.
   const nested = expandTaskCalls(parsedBody, { ...x, stack: new Set([...x.stack, name]) }, false)
   if (nested.t === 'bad') return nested
   // Width walls on every intermediate local/arg store, exactly like the function inliner.
-  const sizeOf = (n: string): number | undefined =>
-    n.startsWith(prefix) ? scopeWidth.get(n.slice(prefix.length)) : undefined
-  const walledBody = wrapStores(nested, sizeOf)
+  const declOf = (n: string): Decl | undefined => {
+    if (!n.startsWith(prefix)) return undefined
+    const local = n.slice(prefix.length)
+    const wd = scopeWidth.get(local)
+    return wd === undefined ? undefined : { width: wd, signed: task.integerLocals.has(local) }
+  }
+  const walledBody = wrapStores(nested, declOf)
   const assigned = new Set<string>()
   collectAssigned(walledBody, assigned)
   const pre: ProcStmt[] = []
@@ -1379,7 +1533,7 @@ function expandTaskCall(name: string, argSpans: Tok[][], x: TaskCtx): ProcStmt {
       pre.push({
         t: 'nb',
         lhs: prefix + a.name,
-        rhs: { t: 'sized', width: a.width, of: argExpr },
+        rhs: { t: 'sized', width: a.width, signed: false, of: argExpr },
         blocking: true,
       })
     }
@@ -1395,7 +1549,12 @@ function expandTaskCall(name: string, argSpans: Tok[][], x: TaskCtx): ProcStmt {
       post.push({
         t: 'nb',
         lhs: (lhs[0] as Tok).v,
-        rhs: { t: 'sized', width: a.width, of: { t: 'net', name: prefix + a.name } },
+        rhs: {
+          t: 'sized',
+          width: a.width,
+          signed: false,
+          of: { t: 'net', name: prefix + a.name },
+        },
         blocking: true,
       })
     }
@@ -1452,6 +1611,14 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   // can never collide with a scalar net literally spelled `a0` (a real, silent-miscompile hazard otherwise).
   const bitNet = (name: string, i: number): string => (widthOf(name) === 1 ? name : `${name}[${i}]`)
   const signedOf = (name: string): boolean => mod.signed.has(name)
+  // A store into a declared signal takes that signal's own width and signedness (IEEE 1364-2005 §6.2), which
+  // is what makes a blocking intermediate a real WALL: `reg [3:0] t; t = a + 4'd1; y = t;` must truncate at t,
+  // and `reg signed [3:0] t; t = a; y = t;` must sign-extend out of t. A signal with no declared width (every
+  // 1-bit net) has nothing to wall, so it keeps the substituted expression exactly as before.
+  const declOf = (name: string): Decl | undefined => {
+    const wd = mod.widths.get(name)
+    return wd === undefined ? undefined : { width: wd, signed: signedOf(name) }
+  }
 
   // Expand declared bus ports into scalar bit-ports (a[3:0] → a[0]..a[3]), preserving direction + order.
   const newOrder: string[] = []
@@ -1555,6 +1722,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     comb,
     callSeq,
     widthOf,
+    signedOf,
     registerWidth: (name, wd) => {
       if (wd > 1) mod.widths.set(name, wd)
     },
@@ -1623,7 +1791,24 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     markUnbuilt(what, where, spans.flatMap(targetBits))
   }
 
-  const ledger = makeDriverLedger(inputs, (bit) => mod.resolution.has(baseNetOf(bit)))
+  // ── how many drivers the SOURCE wrote for each bit that is allowed more than one ──────────────────────
+  // A bit listed in either map is exempt from the contention refusal, so its drivers get built at all; the
+  // resolution itself happens on the finished netlist (resolveStrengthDrivers for a strength ladder,
+  // combineResolvedDrivers for a `wor`/`wand`), and each re-checks this count and refuses if a driver went
+  // missing on the way. Being too generous here can therefore cost a refusal but can never publish a value.
+  const declaredDrivers = countDeclaredDrivers(mod, {
+    inputs,
+    widthOf,
+    bitNet,
+    bitsNamedIn,
+    targetBits,
+  })
+  const strengthDriverCount = declaredDrivers.strengthResolved
+
+  const ledger = makeDriverLedger(
+    inputs,
+    (bit) => mod.resolution.has(baseNetOf(bit)) || strengthDriverCount.has(bit),
+  )
   const contendedBits = ledger.contendedBits
   const refusals: Refusal[] = []
   const reportRefusedBits = (
@@ -1642,9 +1827,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   for (const raw of mod.rawGates) {
     const where = `line ${raw.line}`
     const what = `a "${raw.prim}" gate terminal this importer cannot resolve`
-    const outSlices = N_OUTPUT_PRIMS.has(raw.prim)
-      ? raw.slices.slice(0, -1)
-      : raw.slices.slice(0, 1)
+    const outSlices = rawGateOutputSlices(raw)
     const inSlices = N_OUTPUT_PRIMS.has(raw.prim) ? raw.slices.slice(-1) : raw.slices.slice(1)
     const outNets: string[] = []
     let bad: string | undefined
@@ -1658,12 +1841,15 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     const inNets: string[] = []
     for (const sl of inSlices) {
       const ast = bindCalls(parseRhs(sl, mod.mems), mod.functions)
-      const why = firstBad(ast) ?? outOfRange(ast, widthOf)
+      const why = firstBad(ast) ?? outOfRange(ast, widthOf, signedOf)
       if (why !== undefined) {
         bad = why
         continue
       }
-      const bit = synthAt(ast, 1, false, synCtx(inGates))[0] as Bit
+      // A gate terminal takes the LSB of the terminal expression's own value (§5.4.1 — the expression is
+      // self-determined), not of a 1-bit-truncated evaluation of it: at width 1 an `s >>> 3` had nothing left
+      // to shift and read 0 on every input.
+      const bit = synthSelf(ast, synCtx(inGates))[0] ?? ({ c: 0 } as Bit)
       if (isX(bit)) {
         bad = 'a gate input reads x in Verilog'
         continue
@@ -1685,7 +1871,17 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       continue
     }
     mod.gates.push(...inGates)
-    mod.gates.push({ prim: raw.prim, terminals: [...outNets, ...inNets], line: raw.line })
+    // The strength written on the instance is the strength of THIS gate, and it was dropped here — so a
+    // `buf (strong1, strong0) g(y[1], a[0])` reached the ladder looking unannotated. MEASURED against Icarus
+    // Verilog 14.0: two strengths on one bit-select were then read as a plain contention and both drivers
+    // retracted, publishing the module with the y[1] PIN MISSING; and a lone `(strong1, highz0)` on a
+    // bit-select built as an ordinary buffer, answering 0 where Icarus floats the net at z.
+    mod.gates.push({
+      prim: raw.prim,
+      terminals: [...outNets, ...inNets],
+      line: raw.line,
+      strength: raw.strength,
+    })
   }
 
   // EVERY producer of a driver goes through ledger.claim, in source-visible order: structural primitives
@@ -1761,14 +1957,18 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     }
     // An out-of-range constant select reads x in Verilog — not representable in a 0/1 netlist, so report it
     // rather than silently substitute 0.
-    const oor = outOfRange(ast, widthOf)
+    const oor = outOfRange(ast, widthOf, signedOf)
     if (oor !== undefined) {
       warnings.push(`line ${a.line}: ${oor} reads x in Verilog — reported, not built`)
       markUnbuilt('a continuous assign that reads out of range', `line ${a.line}`, targets)
       continue
     }
     const gates: GateInst[] = []
-    const rhs = synthAt(ast, targets.length, isSigned(ast, signedOf), synCtx(gates))
+    const ctx = synCtx(gates)
+    const rhs =
+      a.portJoin === true
+        ? synthPortConnection(ast, targets.length, ctx)
+        : synthAt(ast, targets.length, isSigned(ast, signedOf), ctx)
     const wired: string[] = []
     for (let i = 0; i < targets.length; i++) {
       const tb = targets[i] as string
@@ -1783,7 +1983,9 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
         refused.set(tb, NEEDS_TIE) // a constant bit with no live net to tie it to
         continue
       }
-      gates.push({ prim: 'buf', terminals: [tb, from] })
+      // The buffer that lands the assignment on its target IS the assignment's driver, so it carries the
+      // source's drive strength — the one place a strength has to survive the trip from parse to netlist.
+      gates.push({ prim: 'buf', terminals: [tb, from], strength: a.strength })
       wired.push(tb)
     }
     if (refused.size > 0) reportRefusedBits(where, targets, refused)
@@ -1799,7 +2001,8 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   // it back on itself, which is a real combinational cycle — reported, not built. ──────────────────────────
   for (const blk of mod.alwaysBlocks) {
     if (blk.clk !== null) continue // clocked → flip-flops, handled after the loop guard
-    const parsed = parseProcedural(blk.body, mod.mems, true, widthOf) // comb: blocking `=` + full-case coverage
+    // comb: blocking `=` + full-case coverage
+    const parsed = parseProcedural(blk.body, mod.mems, true, widthOf, signedOf)
     // Inline any task call (inputs bound, outputs written back) before elaboration.
     const seq = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(true), false)
     if (seq.t === 'bad') {
@@ -1823,13 +2026,13 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       continue
     }
     const written = new Set<string>()
-    const env = elaborate(seq, new Map(), written)
+    const env = elaborate(seq, new Map(), written, declOf)
     for (const r of written) {
       const raw = env.get(r)
       if (raw === undefined) continue
       const ast = bindCalls(raw, mod.functions)
       const bad = firstBad(ast)
-      const oor = outOfRange(ast, widthOf)
+      const oor = outOfRange(ast, widthOf, signedOf)
       const w = widthOf(r)
       const targets = Array.from({ length: w }, (_, i) => bitNet(r, i))
       const where = `line ${blk.line}: combinational always block driving register "${r}"`
@@ -1934,7 +2137,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   }
   for (const blk of mod.alwaysBlocks) {
     if (blk.clk === null) continue // combinational — handled above as continuous drives, not flip-flops
-    const parsed = parseProcedural(blk.body, mod.mems, false, widthOf)
+    const parsed = parseProcedural(blk.body, mod.mems, false, widthOf, signedOf)
     // A task call in a clocked block is reported (expandTaskCalls with comb=false); a block without one passes.
     const expanded = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(false), false)
     // `@(posedge clk or posedge reset)` — split the reset branch off the body, so what is synthesized below is
@@ -1965,8 +2168,8 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     // would report the same fault `depth` times). A faulty store marks the whole memory not-built.
     for (const mw of collectMemWrites(seq)) {
       const bad = firstBad(mw.idx) ?? firstBad(mw.rhs)
-      const oor = outOfRange(mw.idx, widthOf) ?? outOfRange(mw.rhs, widthOf)
-      const v = foldConst(mw.idx, widthOf)
+      const oor = outOfRange(mw.idx, widthOf, signedOf) ?? outOfRange(mw.rhs, widthOf, signedOf)
+      const v = foldConst(mw.idx, widthOf, signedOf)
       const oob = v !== undefined && v >= mw.depth
       if (bad === undefined && oor === undefined && !oob) continue
       const why = bad ?? (oob ? `store address ${v} is out of range` : `${oor} reads x in Verilog`)
@@ -1979,7 +2182,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       badMem.add(mw.name)
     }
     const written = new Set<string>()
-    const env = elaborate(seq, new Map(), written)
+    const env = elaborate(seq, new Map(), written, declOf)
     for (const r of written) {
       const base = memBaseOf(r)
       if (base !== undefined && badMem.has(base)) continue // faulty store, already reported above
@@ -2010,7 +2213,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       if (raw === undefined) continue
       const ast = bindCalls(raw, mod.functions)
       const bad = firstBad(ast)
-      const oor = outOfRange(ast, widthOf)
+      const oor = outOfRange(ast, widthOf, signedOf)
       const w = widthOf(r)
       const qBits = Array.from({ length: w }, (_, i) => bitNet(r, i))
       // Driving an input port (scalar OR any bus bit) is illegal; a bit already sourced by a gate/assign is a
@@ -2095,12 +2298,24 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   // else is refused by name rather than quietly ignored. Read as a DRIVER instead, this used to contend with
   // the always block clocking the same register and cost both of them their drivers.
   for (const v of mod.powerOnValues) {
-    const bits = Array.from({ length: widthOf(v.name) }, (_, i) => bitNet(v.name, i))
-    if (v.value.value === 0n && registered.has(v.name)) continue
+    const width = widthOf(v.name)
+    const bits = Array.from({ length: width }, (_, i) => bitNet(v.name, i))
+    // An assignment is a CONTEXT, and here it is the register's declared width: IEEE 1364-2005 §5.5.2 pushes
+    // that width down into the expression, evaluates at max(it, the expression's own width), then TRUNCATES
+    // to the target. Both halves are load-bearing and were both missing. Folding context-free applied the
+    // lossless width a parameter value gets, and that width contains the shift wall, so `reg [7:0] r; initial
+    // r = 4'd8 << 1` wrapped to 0 at four bits, matched the flip-flop's power-up 0 and BUILT — where Icarus
+    // Verilog 14.0 powers it up holding 16. Without the truncation `reg [3:0] r; initial r = 8'd16` reads 16
+    // and is refused, where Icarus truncates it to 0 and the register builds.
+    const folded = evalConst(v.expr, undefined, width)
+    const powerOn = folded === undefined ? undefined : extendTo(folded, width, folded.signed)
+    if (powerOn === 0n && registered.has(v.name)) continue
     const why =
-      v.value.value === 0n
-        ? `nothing clocks it, so there is no flip-flop to hold that value`
-        : `the flip-flops this importer builds power up holding 0, and this asks for ${v.value.value}`
+      powerOn === undefined
+        ? `its value does not fold to a constant at the ${width}-bit width of "${v.name}"`
+        : powerOn === 0n
+          ? `nothing clocks it, so there is no flip-flop to hold that value`
+          : `the flip-flops this importer builds power up holding 0, and this asks for ${powerOn}`
     warnings.push(`line ${v.line}: initial value on "${v.name}" — ${why} — reported, not built`)
     markUnbuiltReason(
       `the power-on value of "${v.name}" (line ${v.line}) — ${why}`,
@@ -2125,9 +2340,33 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     mod.flops = mod.flops.filter((f) => !ledger.inputDrivenBits.has(f.q))
   }
 
+  /** One sentence per distinct reason, naming the nets it cost — and every one of them marked unbuilt, so
+   *  nothing that reads a net whose resolution was withheld can be published. */
+  const reportUnresolvedNets = (unresolved: { net: string; why: string }[]): void => {
+    for (const why of new Set(unresolved.map((r) => r.why))) {
+      const nets = unresolved.filter((r) => r.why === why).map((r) => r.net)
+      const subject = `${nets.length === 1 ? 'net' : 'nets'} ${bitList(nets)}`
+      warnings.push(`${subject} — ${why} — reported, not built`)
+      markUnbuiltReason(`${subject} — ${why}`, nets)
+    }
+  }
+
+  // Drive strengths settle their own net (see resolveStrengthDrivers). This runs BEFORE the wor/wand pass so
+  // a net that is both keeps the meaning of its net type: `wor` combines its drivers whatever their
+  // strengths, and resolving by strength first would drop the driver the OR needs.
+  const strengthRefused = resolveStrengthDrivers(
+    mod,
+    strengthDriverCount,
+    fresh,
+    ledger.inputDrivenBits.size > 0,
+  )
+  reportUnresolvedNets(strengthRefused)
+
   // `wor`/`wand` (and `trior`/`triand`) COMBINE their drivers. Treating a second driver on one as a
-  // contention states the opposite of what the net type means, and erased hardware Verilog resolves.
-  combineResolvedDrivers(mod, fresh)
+  // contention states the opposite of what the net type means, and erased hardware Verilog resolves. A bit
+  // the pass above already refused is dropped from the count first, so one fault is reported once.
+  for (const r of strengthRefused) declaredDrivers.wired.delete(r.net)
+  reportUnresolvedNets(combineResolvedDrivers(mod, declaredDrivers.wired, fresh))
 
   // A net reaches the same "no honest value" state WITHOUT any construct being skipped: nothing ever drove
   // it, or every driver of it was retracted just above (two drivers contending, a driver on an input port, a
@@ -2138,6 +2377,29 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   const drivenBits = new Set<string>()
   for (const g of mod.gates) for (const o of gateOutputs(g)) drivenBits.add(o)
   for (const f of mod.flops) drivenBits.add(f.q)
+
+  // A LOOP COUNTER is an elaboration-time value: the unroller substitutes it away and emits no driver for the
+  // counter itself, which is why one module-level `integer i` can serve every always block without the blocks
+  // contending over it. That is honest only while nothing ELSE drives the same name. A name used as a loop
+  // counter in one block and clocked as a register in another is two drivers on one variable — a race in
+  // Verilog, which no synthesis tool builds — and taking the register's value there would quietly report a
+  // count the loops also wrote to. So the counter's driven bits are marked unbuilt: nothing reads them and
+  // the design still builds; something reads them and it refuses, which is the honest answer for a race.
+  const loopCounters = new Set<string>()
+  for (const blk of mod.alwaysBlocks) collectLoopCounters(blk.body, loopCounters)
+  for (const fn of mod.functions.values()) collectLoopCounters(fn.body, loopCounters)
+  for (const tk of mod.tasks.values()) collectLoopCounters(tk.body, loopCounters)
+  for (const name of loopCounters) {
+    const bits = Array.from({ length: widthOf(name) }, (_, i) => bitNet(name, i)).filter((b) =>
+      drivenBits.has(b),
+    )
+    if (bits.length === 0) continue
+    markUnbuiltReason(
+      `${bits.length === 1 ? 'net' : 'nets'} ${bitList(bits)} — a loop counter, which a loop unrolls away, is also driven as a real signal here`,
+      bits,
+    )
+  }
+
   const undrivenRead = new Set<string>()
   const readsBit = (bit: string): void => {
     if (drivenBits.has(bit) || inputs.has(bit)) return
@@ -2187,7 +2449,11 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
 }
 
 /** The first out-of-range constant bit/part-select in the tree (Verilog x), or undefined. */
-function outOfRange(e: Expr, w: (n: string) => number): string | undefined {
+function outOfRange(
+  e: Expr,
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+): string | undefined {
   switch (e.t) {
     case 'bitsel':
       return e.index < 0 || e.index >= w(e.name)
@@ -2198,37 +2464,37 @@ function outOfRange(e: Expr, w: (n: string) => number): string | undefined {
         ? `part-select ${e.name}[${e.hi}:${e.lo}] is out of range on the ${w(e.name)}-bit net "${e.name}" —`
         : undefined
     case 'un':
-      return outOfRange(e.a, w)
+      return outOfRange(e.a, w, sgn)
     case 'bin':
-      return outOfRange(e.a, w) ?? outOfRange(e.b, w)
+      return outOfRange(e.a, w, sgn) ?? outOfRange(e.b, w, sgn)
     case 'tern':
-      return outOfRange(e.c, w) ?? outOfRange(e.a, w) ?? outOfRange(e.b, w)
+      return outOfRange(e.c, w, sgn) ?? outOfRange(e.a, w, sgn) ?? outOfRange(e.b, w, sgn)
     case 'concat':
       for (const p of e.parts) {
-        const r = outOfRange(p, w)
+        const r = outOfRange(p, w, sgn)
         if (r !== undefined) return r
       }
       return undefined
     case 'repl':
-      return outOfRange(e.of, w)
+      return outOfRange(e.of, w, sgn)
     case 'memread': {
-      const inner = outOfRange(e.idx, w)
+      const inner = outOfRange(e.idx, w, sgn)
       if (inner !== undefined) return inner
-      const v = foldConst(e.idx, w)
+      const v = foldConst(e.idx, w, sgn)
       return v !== undefined && v >= e.depth
         ? `memory read ${e.name}[${v}] is out of range on the ${e.depth}-word memory "${e.name}" —`
         : undefined
     }
     case 'call': {
       for (const a of e.args) {
-        const r = outOfRange(a, w)
+        const r = outOfRange(a, w, sgn)
         if (r !== undefined) return r
       }
       return undefined
     }
     case 'sized':
     case 'cast':
-      return outOfRange(e.of, w)
+      return outOfRange(e.of, w, sgn)
     default:
       return undefined
   }
@@ -2241,6 +2507,10 @@ const gateInputs = (g: GateInst): string[] =>
   N_OUTPUT_PRIMS.has(g.prim)
     ? [g.terminals[g.terminals.length - 1] as string]
     : g.terminals.slice(1)
+/** The terminal spans a not-yet-resolved gate primitive DRIVES. `buf`/`not` take their single input last and
+ *  may have any number of outputs; every other primitive drives its first terminal only. */
+const rawGateOutputSlices = (raw: RawGate): Tok[][] =>
+  N_OUTPUT_PRIMS.has(raw.prim) ? raw.slices.slice(0, -1) : raw.slices.slice(0, 1)
 
 /**
  * Take `nets` off the OUTPUT side of every gate. A single-output primitive that drives one of them goes away;
@@ -2258,7 +2528,7 @@ function retractOutputs(gates: GateInst[], nets: Set<string>): GateInst[] {
       continue
     }
     if (live.length === 0) continue
-    kept.push({ prim: g.prim, terminals: [...live, ...gateInputs(g)] })
+    kept.push({ ...g, terminals: [...live, ...gateInputs(g)] })
   }
   return kept
 }
@@ -2447,15 +2717,346 @@ function spreadUnbuilt(gates: GateInst[], flops: FlopInst[], unbuilt: Set<string
   }
 }
 
+/** IEEE 1364-2005 §7.9 orders the drive levels. `highz` sits at 0 not because it is the weakest drive but
+ *  because it is NOT a drive: a driver on its high-Z side has left the net entirely. */
+const STRENGTH_ORDER: Record<StrengthLevel, number> = {
+  highz: 0,
+  weak: 1,
+  pull: 2,
+  strong: 3,
+  supply: 4,
+}
+/** What an unannotated driver already has. A plain `assign` is strong/strong — never "unknown", never
+ *  "weakest" — or `assign (weak1,weak0) y = b;` would out-drive `assign y = a;` and invert the answer. */
+const DEFAULT_DRIVE: DriveStrength = { one: 'strong', zero: 'strong' }
+
+/**
+ * Resolve n drivers of one net over EVERY combination of the values they could be driving, and return the
+ * answer as a truth table indexed by those values (driver i is bit i of the index). `null` means at least one
+ * combination lands on x (two active drivers tie at the top level and disagree) or z (no driver is active at
+ * all) — neither of which a two-valued netlist can carry, so the net must be refused.
+ *
+ * ENUMERATING IS WHAT MAKES THIS EXACT. A driver's level is the one for the side it is currently driving, so
+ * two drivers can have no winner at all until their values are known: `(strong1, weak0)` against
+ * `(weak1, strong0)` reads 0, x, x, 1 over the four combinations (MEASURED against Icarus Verilog 14.0).
+ * Any rule that ranks the drivers once — by the stronger side, by the weaker side, by which was written
+ * first — keeps that order for all four and publishes a value on the two that are x.
+ *
+ * The all-high-Z hole is the other thing only enumeration finds: two real open-drain drivers
+ * `(highz1, strong0)` are defined on three combinations and high-Z on the fourth, so a pass that concludes
+ * "these drivers have a strict order, therefore this resolves" publishes a value on that fourth one.
+ */
+function resolveStrengthTable(strengths: DriveStrength[]): boolean[] | null {
+  const table: boolean[] = []
+  for (let tuple = 0; tuple < 1 << strengths.length; tuple++) {
+    let bestLevel = 0
+    let bestValue = false
+    let tied = false
+    for (let i = 0; i < strengths.length; i++) {
+      const value = ((tuple >> i) & 1) === 1
+      const side = strengths[i] as DriveStrength
+      const level = STRENGTH_ORDER[value ? side.one : side.zero]
+      if (level === 0) continue // in high-Z on the side it is driving: absent, not out-driven
+      if (level > bestLevel) {
+        bestLevel = level
+        bestValue = value
+        tied = false
+        continue
+      }
+      if (level === bestLevel && value !== bestValue) tied = true
+    }
+    if (bestLevel === 0 || tied) return null
+    table.push(bestValue)
+  }
+  return table
+}
+
+/**
+ * Build real primitives computing `table` over `drivers` (driver i is bit i of the table index) onto `net`.
+ * Only the drivers the function actually depends on are wired, so strong-beats-weak comes out as a single
+ * buffer rather than a sum of products over both.
+ */
+function lowerTruthTable(
+  table: boolean[],
+  drivers: string[],
+  net: string,
+  fresh: () => string,
+): GateInst[] {
+  const gates: GateInst[] = []
+  const inverted = new Map<number, string>()
+  const literal = (driver: number, positive: boolean): string => {
+    const straight = drivers[driver] as string
+    if (positive) return straight
+    const had = inverted.get(driver)
+    if (had !== undefined) return had
+    const inv = fresh()
+    inverted.set(driver, inv)
+    gates.push({ prim: 'not', terminals: [inv, straight] })
+    return inv
+  }
+  const support = drivers
+    .map((_, i) => i)
+    .filter((i) => table.some((v, k) => v !== table[k ^ (1 << i)]))
+  if (support.length === 0) {
+    // The resolution is a constant: every combination of driver values gives the same answer. `p & ~p` is 0
+    // and `p | ~p` is 1, built from real cells over a net this resolution already owns — no tie plumbing.
+    const first = drivers[0] as string
+    gates.push({
+      prim: table[0] === true ? 'or' : 'and',
+      terminals: [net, first, literal(0, false)],
+    })
+    return gates
+  }
+  const minterms: string[] = []
+  for (let m = 0; m < 1 << support.length; m++) {
+    let index = 0
+    support.forEach((driver, k) => {
+      if (((m >> k) & 1) === 1) index |= 1 << driver
+    })
+    if (table[index] !== true) continue
+    const literals = support.map((driver, k) => literal(driver, ((m >> k) & 1) === 1))
+    if (literals.length === 1) {
+      minterms.push(literals[0] as string)
+      continue
+    }
+    const out = fresh()
+    gates.push({ prim: 'and', terminals: [out, ...literals] })
+    minterms.push(out)
+  }
+  gates.push(
+    minterms.length === 1
+      ? { prim: 'buf', terminals: [net, minterms[0] as string] }
+      : { prim: 'or', terminals: [net, ...minterms] },
+  )
+  return gates
+}
+
+/**
+ * HOW MANY DRIVERS THE SOURCE WROTE FOR EACH BIT, for the two passes that resolve a bit with more than one.
+ *
+ * Both need the same fact and neither can read it off the netlist, because by the time the netlist exists a
+ * driver may already have gone missing — which is exactly the thing they have to notice. So the count is
+ * taken from the SOURCE here, before any driver claims, and each pass re-checks it against what it finally
+ * finds.
+ *
+ * `strengthResolved` holds the bits a drive-strength ladder may settle. Resolvability there is a property of
+ * a bit's WHOLE driver set, not of its declaration — unlike `wor`/`wand`, where the net type says so up front
+ * — so exempting a bit from the contention check on the strength of one driver would let whichever driver
+ * claimed last silently own a bit whose real answer is x.
+ *
+ * `wired` holds the bits of a `wor`/`wand` net. It is computed UNCONDITIONALLY: a wired net loses a driver
+ * the same way whether or not anything in the design carries a drive strength, and keying it on strengths
+ * being present would leave `wor t; buf g(t, b); assign t = 1'bx;` publishing an answer Icarus reads as x.
+ *
+ * A bit whose driver count cannot be trusted is left out of BOTH maps: a driver this importer refused, an
+ * always block, a register's power-on value, a port join the flattener minted, an assign whose target cannot
+ * be read as an lvalue. Leaving out too much costs a design that could have been built; leaving out too
+ * little publishes the wrong value.
+ *
+ * A GATE WHOSE TERMINALS ARE STILL TOKEN SPANS (`buf (strong1, strong0) g(y[1], a[0])`) is counted here at
+ * exactly the bit it drives, because widths are known by now and its output slice reads as an lvalue like any
+ * other. Every net such an instance merely NAMED used to be struck off the ladder wholesale, which took the
+ * exemption away from the very bit the strengths were written on — so the pair became an ordinary contention
+ * and both drivers were retracted, publishing the module with that pin missing.
+ */
+function countDeclaredDrivers(
+  mod: SynthModule,
+  scope: {
+    inputs: Set<string>
+    widthOf: (name: string) => number
+    bitNet: (name: string, index: number) => string
+    bitsNamedIn: (span: Tok[]) => string[]
+    targetBits: (span: Tok[]) => string[]
+  },
+): { strengthResolved: Map<string, number>; wired: Map<string, number> } {
+  const strengthResolved = new Map<string, number>()
+  const wired = new Map<string, number>()
+  const annotated = (list: { strength?: DriveStrength | undefined }[]): boolean =>
+    list.some((one) => one.strength !== undefined)
+  // With no strength written anywhere, every driver is strong/strong and no pair of them can resolve — so a
+  // design without strengths keeps exactly the ladder path it had before strengths existed.
+  const anyStrength = annotated(mod.assigns) || annotated(mod.gates) || annotated(mod.rawGates)
+  if (!anyStrength && mod.resolution.size === 0) return { strengthResolved, wired }
+
+  const opaque = new Set<string>()
+  for (const refused of mod.refusedDrivers)
+    for (const term of refused.terms) for (const bit of scope.targetBits(term)) opaque.add(bit)
+  for (const block of mod.alwaysBlocks) {
+    // What an always block WRITES, not what it names: a block that merely reads a resolved net is an ordinary
+    // consumer of it, and poisoning that would refuse every flip-flop fed by one. When the targets cannot be
+    // read at all, every net the body names is poisoned instead.
+    const targets = assignmentTargets(block.body)
+    const bits =
+      targets === null ? scope.bitsNamedIn(block.body) : targets.flatMap(scope.targetBits)
+    for (const bit of bits) opaque.add(bit)
+  }
+  for (const powerOn of mod.powerOnValues)
+    for (let i = 0; i < scope.widthOf(powerOn.name); i++) opaque.add(scope.bitNet(powerOn.name, i))
+
+  const strengths = new Map<string, DriveStrength[]>()
+  const addDriver = (bit: string, strength: DriveStrength | undefined): void => {
+    const list = strengths.get(bit)
+    if (list === undefined) strengths.set(bit, [strength ?? DEFAULT_DRIVE])
+    else list.push(strength ?? DEFAULT_DRIVE)
+  }
+  for (const gate of mod.gates) for (const out of gateOutputs(gate)) addDriver(out, gate.strength)
+  for (const raw of mod.rawGates)
+    for (const slice of rawGateOutputSlices(raw)) {
+      // A gate whose terminals are still token spans drives exactly what the synthesizer will read them as,
+      // and it is built only when EVERY output slice reads as one bit. When one does not, the instance is
+      // refused whole and its targets are marked unbuilt there, so counting them here would say a driver was
+      // lost on a net already poisoned for the same reason.
+      const lb = lhsBits(slice, scope.widthOf, scope.bitNet)
+      if ('bits' in lb && lb.bits.length === 1) addDriver(lb.bits[0] as string, raw.strength)
+      else for (const bit of scope.targetBits(slice)) opaque.add(bit)
+    }
+  for (const assign of mod.assigns) {
+    const target = assign.lhs[0]
+    if (assign.portJoin === true || (target?.k === 'id' && mod.mems.has(target.v))) {
+      for (const bit of scope.bitsNamedIn(assign.lhs)) opaque.add(bit)
+      continue
+    }
+    const lb = lhsBits(assign.lhs, scope.widthOf, scope.bitNet)
+    if ('bad' in lb) {
+      for (const bit of scope.bitsNamedIn(assign.lhs)) opaque.add(bit)
+      continue
+    }
+    for (const bit of lb.bits) addDriver(bit, assign.strength)
+  }
+
+  for (const [bit, list] of strengths) {
+    if (opaque.has(bit) || scope.inputs.has(bit)) continue
+    if (mod.resolution.has(baseNetOf(bit))) {
+      wired.set(bit, list.length)
+      continue
+    }
+    if (!anyStrength) continue
+    // Two is the smallest set worth resolving; four keeps the enumeration at sixteen combinations, and past
+    // that this refuses rather than growing a table no real source asks for.
+    if (list.length < 2 || list.length > 4) continue
+    if (resolveStrengthTable(list) === null) continue
+    strengthResolved.set(bit, list.length)
+  }
+  return { strengthResolved, wired }
+}
+
+/**
+ * TWO DRIVERS ON ONE NET ARE NOT ALWAYS A CONTENTION.
+ *
+ * `assign (strong1, strong0) y = a; assign (weak1, weak0) y = b;` is ordinary Verilog that resolves to `a`,
+ * and the whole design used to be refused over it. This resolves such a net on the FINISHED netlist, which is
+ * the only moment its complete driver set is known: each driver keeps its gate but writes a private net, and
+ * a tree of real primitives computes the resolved value from those private nets onto the declared net — the
+ * same shape combineResolvedDrivers uses for `wor`/`wand`.
+ *
+ * `expected` is the driver count the exemption pass counted for a bit it let through. If the finished netlist
+ * disagrees, a driver was dropped somewhere between (an x-valued right-hand side, a combinational loop, a
+ * gate retracted for driving an input port) and the survivors no longer describe what the source wrote — so
+ * the bit is refused rather than resolved among whoever is left.
+ *
+ * `inputIsDriven` vetoes the whole pass for a module where something drives an input port. That is illegal
+ * Verilog and reads x ON THE PORT (see DRIVES_INPUT), which this netlist cannot represent — it keeps the
+ * value applied to the pin instead. Resolving strengths in such a module publishes answers worked out from
+ * that kept value, so the resolution is withheld and the design refuses rather than agreeing by luck.
+ *
+ * A net that does not resolve gets NO driver: its gates are retracted here and the bit is returned with the
+ * reason, for the caller to report and mark unbuilt so nothing downstream of it may be published.
+ */
+function resolveStrengthDrivers(
+  mod: SynthModule,
+  expected: Map<string, number>,
+  fresh: () => string,
+  inputIsDriven: boolean,
+): { net: string; why: string }[] {
+  const byNet = new Map<string, number[]>()
+  const wiredNetWithHighZ = new Set<string>()
+  mod.gates.forEach((g, i) => {
+    for (const out of gateOutputs(g)) {
+      // A `wor`/`wand` net COMBINES its drivers whatever their strengths — that is what the net type means —
+      // so the ladder must not run on it: resolving by strength first would drop the driver the OR needs and
+      // turn a correct `a | b` into `a`. HIGH-Z is the exception, because it is not a strength: a driver on
+      // its high-Z side has left the net, and a wired-OR that includes it anyway answers for a driver that
+      // is not there. That net is refused rather than combined.
+      if (mod.resolution.has(baseNetOf(out))) {
+        const side = g.strength
+        if (side !== undefined && (side.one === 'highz' || side.zero === 'highz'))
+          wiredNetWithHighZ.add(out)
+        continue
+      }
+      if (g.strength === undefined && !expected.has(out)) continue
+      const list = byNet.get(out)
+      if (list === undefined) byNet.set(out, [i])
+      else list.push(i)
+    }
+  })
+  const refused = [...wiredNetWithHighZ].map((net) => ({ net, why: STRENGTH_ON_WIRED_NET }))
+  const joins: GateInst[] = []
+  for (const [net, indexes] of byNet) {
+    const strengths = indexes.map((i) => (mod.gates[i] as GateInst).strength ?? DEFAULT_DRIVE)
+    const want = expected.get(net)
+    const lostADriver =
+      mod.flops.some((f) => f.q === net) || (want !== undefined && want !== indexes.length)
+    const only = strengths.length === 1 ? (strengths[0] as DriveStrength) : undefined
+    // A LONE driver puts out its own value at whatever strength it has, so there is nothing to resolve — the
+    // exceptions being a high-Z side (the net floats and Verilog reads z) and a net that is down to one
+    // driver only because the others were dropped, which is not the same net at all.
+    if (!lostADriver && only !== undefined && only.one !== 'highz' && only.zero !== 'highz')
+      continue
+    const table = inputIsDriven || lostADriver ? null : resolveStrengthTable(strengths)
+    if (table === null) {
+      refused.push({
+        net,
+        why: inputIsDriven
+          ? STRENGTH_AFTER_INPUT_DRIVEN
+          : lostADriver
+            ? STRENGTH_DRIVER_LOST
+            : STRENGTH_UNSETTLED,
+      })
+      continue
+    }
+    const privates = indexes.map((i) => {
+      const g = mod.gates[i] as GateInst
+      const priv = fresh()
+      mod.gates[i] = {
+        ...g,
+        terminals: [...gateOutputs(g).map((o) => (o === net ? priv : o)), ...gateInputs(g)],
+      }
+      return priv
+    })
+    joins.push(...lowerTruthTable(table, privates, net, fresh))
+  }
+  mod.gates.push(...joins)
+  if (refused.length > 0) {
+    const gone = new Set(refused.map((r) => r.net))
+    mod.gates = retractOutputs(mod.gates, gone)
+    mod.flops = mod.flops.filter((f) => !gone.has(f.q))
+  }
+  return refused
+}
+
 /**
  * Combine the drivers of a `wor`/`wand` net into the OR/AND the net type means, instead of calling the
  * second driver a conflict. Each driver keeps its gate but writes a private net; a tree of real 2-input
  * primitives joins those onto the declared net, so the result is ordinary gates like everything else.
  *
  * Runs after every driver exists, which is the only moment the full set of them is known.
+ *
+ * `expected` is the driver count the source wrote for each bit (countDeclaredDrivers). A resolution net
+ * DELIBERATELY allows several drivers, so the contention check that guards a plain `wire` is switched off for
+ * it and nothing else notices when one of them fails to appear — an x-valued right-hand side builds no gate,
+ * a combinational loop retracts one, a driver on an input port is taken back. The wired OR/AND was then
+ * formed over the survivors and answered as if the missing driver had never been written. MEASURED against
+ * Icarus Verilog 14.0 over seven such designs × eight input vectors: 24 of those 56 output bits were
+ * published here where Icarus reads x. The count is re-checked instead, and a net that is short a driver gets
+ * NO driver at all: its gates are retracted and the bit is returned with the reason, for the caller to report
+ * and mark unbuilt. A wired net cannot carry the x its lost driver puts there, so a refusal is the answer.
  */
-function combineResolvedDrivers(mod: SynthModule, fresh: () => string): void {
-  if (mod.resolution.size === 0) return
+function combineResolvedDrivers(
+  mod: SynthModule,
+  expected: Map<string, number>,
+  fresh: () => string,
+): { net: string; why: string }[] {
+  if (mod.resolution.size === 0) return []
   const driverIndexes = new Map<string, number[]>()
   mod.gates.forEach((g, i) => {
     for (const out of gateOutputs(g)) {
@@ -2465,6 +3066,12 @@ function combineResolvedDrivers(mod: SynthModule, fresh: () => string): void {
       else list.push(i)
     }
   })
+  const refused: { net: string; why: string }[] = []
+  for (const [net, want] of expected) {
+    if ((driverIndexes.get(net) ?? []).length === want) continue
+    refused.push({ net, why: WIRED_DRIVER_LOST })
+    driverIndexes.delete(net)
+  }
   const joins: GateInst[] = []
   for (const [net, indexes] of driverIndexes) {
     if (indexes.length < 2) continue
@@ -2487,6 +3094,12 @@ function combineResolvedDrivers(mod: SynthModule, fresh: () => string): void {
     }
   }
   mod.gates.push(...joins)
+  if (refused.length > 0) {
+    const gone = new Set(refused.map((r) => r.net))
+    mod.gates = retractOutputs(mod.gates, gone)
+    mod.flops = mod.flops.filter((f) => !gone.has(f.q))
+  }
+  return refused
 }
 
 /**
@@ -2559,6 +3172,32 @@ const NEEDS_TIE =
  * shape rather than one bit of it.
  */
 const DRIVES_INPUT = 'drives an input port — illegal, reported and left unbuilt'
+/** The three ways a net whose drivers carry drive strengths ends up with no honest value (see
+ *  resolveStrengthDrivers). They are kept apart because they are different faults in the source. */
+const STRENGTH_UNSETTLED =
+  'the drive strengths of its drivers leave it x or high-Z for at least one combination of what they drive, and a two-valued netlist carries neither'
+const STRENGTH_DRIVER_LOST =
+  'a driver the source wrote for it was not built, so the drivers left are not the set its drive strengths describe'
+const STRENGTH_AFTER_INPUT_DRIVEN =
+  'something in this module drives an input port, which Verilog reads as x on that port and this netlist cannot, so no drive-strength resolution here can be trusted'
+/**
+ * A `wor`/`wand` net one of whose drivers can go to HIGH-Z. The wired OR/AND this importer builds combines
+ * every driver unconditionally, which is right for a strength ladder it is meant to ignore but wrong for a
+ * driver that is ABSENT: the combination then answers for a driver that has left the net.
+ *
+ * MEASURED against Icarus Verilog 14.0 on 600 randomly generated wired/strength designs: fifteen of them
+ * published a value here where Icarus reads x or z. They are refused rather than fixed, because combining a
+ * wired net by strength is a change to what `wor`/`wand` MEAN and belongs with that construct, not this one.
+ */
+const STRENGTH_ON_WIRED_NET =
+  'it is a "wor"/"wand" net with a driver that can go to high-Z — the wired OR/AND this importer builds combines every driver unconditionally, so a driver that has left the net would still be answered for'
+/**
+ * A `wor`/`wand` net that is short a driver. Same fault as STRENGTH_DRIVER_LOST and worded to match, but it
+ * reaches a resolution net through a door the ladder is deliberately blind to: a wired net is EXEMPT from the
+ * contention check, so nothing else in synthesis ever compares its driver count to what the source wrote.
+ */
+const WIRED_DRIVER_LOST =
+  'it is a "wor"/"wand" net and a driver the source wrote for it was not built, so the wired OR/AND would combine a set of drivers the source never wrote'
 
 /** Nets on a combinational cycle in a `net → driver-input-nets` graph (path-based; a feed-forward net that
  *  merely READS a looped net is not flagged). The depth-first walk carries its own stack: a chain of 12,000
@@ -2624,21 +3263,46 @@ type ProcStmt =
   | { t: 'taskcall'; name: string; argSpans: Tok[][]; line: number }
   | { t: 'bad'; why: string }
 
+/** Everything the procedural-statement parsers need besides the token stream. It is one object rather than a
+ *  row of positional parameters because a loop unrolls AT ELABORATION TIME, which needs two more things than
+ *  the rest of the parse does: the declared type of the loop counter, and an iteration budget shared by every
+ *  loop in the body at every nesting depth. */
+type ProcParse = {
+  mems: MemTable
+  /** a combinational always block (@*) — it permits blocking `=` (the conventional comb form), and lets a case
+   *  with no default but full selector coverage build instead of inferring a latch. A clocked block leaves it
+   *  false, so blocking `=` there stays reported (it would build the wrong hardware). */
+  comb: boolean
+  /** declared bit widths — present only when synthesizing, where the width table exists */
+  widthOf: ((name: string) => number) | undefined
+  /** declared signedness — a loop counter is counted at its exact declared type, and `integer` is SIGNED */
+  signedOf: ((name: string) => boolean) | undefined
+  /** unrolled loop iterations still allowed in this body */
+  budget: { left: number }
+}
+
+/** Total unrolled iterations allowed in ONE always block / function body — the sum across every loop and every
+ *  nesting depth, not a per-loop count, so a triple nest cannot expand to billions of statements and freeze the
+ *  app. Past it the loop is REFUSED, never truncated: unrolling the first N iterations of a longer loop builds
+ *  a design that computes a different function with nothing said. */
+const MAX_UNROLLED_ITERATIONS = 4096
+/** A loop counter wider than this is not counted: each iteration folds the condition bit-by-bit at the
+ *  counter's declared width, so an unbounded width is unbounded work per step. */
+const MAX_COUNTER_WIDTH = 64
+
 /** Parse a clocked always body (its inner statements, no wrapping begin/end) into one procedural statement. */
-// `comb` = a combinational always block (@*); it permits blocking `=` (the conventional comb form). A clocked
-// block leaves it false, so blocking `=` there stays reported (it would build the wrong hardware).
-// `widthOf` (present only when synthesizing, where the width table exists) lets a COMBINATIONAL case with no
-// default but full selector coverage build instead of inferring a latch.
 function parseProcedural(
   body: Tok[],
   mems: MemTable,
   comb = false,
   widthOf?: (n: string) => number,
+  signedOf?: (n: string) => boolean,
 ): ProcStmt {
   const ts = new TokStream(body)
+  const p: ProcParse = { mems, comb, widthOf, signedOf, budget: { left: MAX_UNROLLED_ITERATIONS } }
   const stmts: ProcStmt[] = []
   while (ts.peek() !== undefined) {
-    const s = parseStmt(ts, mems, comb, widthOf)
+    const s = parseStmt(ts, p)
     if (s.t === 'bad') return s
     stmts.push(s)
   }
@@ -2646,19 +3310,23 @@ function parseProcedural(
   return stmts.length === 1 ? (stmts[0] as ProcStmt) : { t: 'seq', body: stmts }
 }
 
-function parseStmt(
-  ts: TokStream,
-  mems: MemTable,
-  comb: boolean,
-  widthOf?: (n: string) => number,
-): ProcStmt {
+function parseStmt(ts: TokStream, p: ProcParse): ProcStmt {
   const t = ts.peek()
   if (t === undefined) return { t: 'bad', why: 'unexpected end of the always block' }
   if (t.v === 'begin') {
     ts.next()
+    // A named block `begin : label` is the only thing `disable` (Verilog's way out of a loop) can name, and
+    // the two decide what a loop COMPUTES: the same priority encoder returns the last set bit without a
+    // disable and the first set bit with one. Neither is built, and they are refused together — building
+    // named blocks alone would make every disable-break loop silently compute the wrong function.
+    if (ts.peek()?.v === ':')
+      return {
+        t: 'bad',
+        why: 'a named block (begin : label), and the `disable` that breaks out of one, are a later increment',
+      }
     const body: ProcStmt[] = []
     while (ts.peek() !== undefined && ts.peek()?.v !== 'end') {
-      const s = parseStmt(ts, mems, comb, widthOf)
+      const s = parseStmt(ts, p)
       if (s.t === 'bad') return s
       body.push(s)
     }
@@ -2669,24 +3337,33 @@ function parseStmt(
   if (t.v === 'if') {
     ts.next()
     if (ts.peek()?.v !== '(') return { t: 'bad', why: 'if is missing its "("' }
-    const cond = parseRhs(readParenToks(ts), mems)
+    const cond = parseRhs(readParenToks(ts), p.mems)
     if (cond.t === 'bad') return { t: 'bad', why: `if condition — ${cond.why}` }
-    const conseq = parseStmt(ts, mems, comb, widthOf)
+    const conseq = parseStmt(ts, p)
     if (conseq.t === 'bad') return conseq
     if (ts.peek()?.v !== 'else') return { t: 'if', cond, conseq }
     ts.next()
-    const els = parseStmt(ts, mems, comb, widthOf)
+    const els = parseStmt(ts, p)
     if (els.t === 'bad') return els
     return { t: 'if', cond, conseq, els }
   }
-  if (t.v === 'case') return parseCase(ts, mems, comb, widthOf)
-  if (t.v === 'casex' || t.v === 'casez')
+  if (t.v === 'case' || t.v === 'casex' || t.v === 'casez') return parseCase(ts, p, t.v)
+  if (t.v === 'for' || t.v === 'repeat') return unrollLoop(ts, p, t.v)
+  if (t.v === 'while')
     return {
       t: 'bad',
-      why: `${t.v} (x/z don't-care matching) is not representable in a 0/1 netlist`,
+      why: "a `while` loop's condition is a signal this importer only knows as gates, so it has no elaboration-time iteration count — a later increment",
     }
-  if (t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever')
-    return { t: 'bad', why: `procedural loops (${t.v}) are a later increment` }
+  if (t.v === 'forever')
+    return {
+      t: 'bad',
+      why: 'a `forever` loop never ends, so there is no finite set of statements to build from it',
+    }
+  if (t.v === 'disable')
+    return {
+      t: 'bad',
+      why: "`disable` (Verilog's way out of a loop) names a block, and named blocks are a later increment",
+    }
   // A statement `name ( … ) ;` is a task call (the only id-then-paren statement form); expandTaskCalls inlines
   // it. An assignment starts `name =`/`name[i] =`/`{…} =` instead, so this never shadows one.
   if (t.k === 'id' && ts.peek(1)?.v === '(') {
@@ -2695,7 +3372,293 @@ function parseStmt(
     if (ts.peek()?.v === ';') ts.next()
     return { t: 'taskcall', name: t.v, argSpans, line: t.line }
   }
-  return parseAssignStmt(ts, mems, comb, widthOf)
+  return parseAssignStmt(ts, p)
+}
+
+/** Take the raw tokens of ONE complete statement off the stream (the same span verilog-import's always-block
+ *  capture uses), so a loop body can be re-parsed per iteration with its counter substituted. */
+function takeStatementToks(ts: TokStream): Tok[] {
+  const start = ts.i
+  ts.i = statementSpanEnd(ts.ts, ts.i)
+  return ts.ts.slice(start, ts.i)
+}
+
+/**
+ * Replace every read of the loop counter with a sized literal token. The span is then RE-PARSED, so `a[i]`
+ * becomes an ordinary constant bit-select and meets the existing constant-select and out-of-range rules
+ * unchanged — the unroller never resolves an index into a net itself.
+ *
+ * A select OF THE COUNTER (`i[1:0]`, the ordinary way to narrow a loop variable down to a bus) is the one
+ * thing that cannot be left to the re-parse: a select of a bare literal is not Verilog. Those bits are folded
+ * here, unsigned (IEEE 1364-2005 §5.5.1 makes every part-select unsigned), and a select reaching past the
+ * counter's declared width reads x in Verilog, so it is refused rather than zero-filled.
+ */
+function substituteCounter(toks: Tok[], counter: LoopCounter): Tok[] | { bad: string } {
+  const out: Tok[] = []
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i] as Tok
+    if (t.k !== 'id' || t.v !== counter.name) {
+      out.push(t)
+      continue
+    }
+    if ((toks[i + 1] as Tok | undefined)?.v !== '[') {
+      out.push({ k: 'num', v: counter.literal(), line: t.line })
+      continue
+    }
+    const close = closingBracket(toks, i + 1)
+    if (close === -1)
+      return { bad: `a select of the loop variable "${counter.name}" is missing "]"` }
+    const sel = counterSelect(toks.slice(i + 2, close), counter)
+    if ('bad' in sel) return sel
+    out.push({ k: 'num', v: sel.literal, line: t.line })
+    i = close
+  }
+  return out
+}
+
+/** The index of the `]` closing the `[` at `open`, or -1 if it is never closed. */
+function closingBracket(toks: Tok[], open: number): number {
+  let depth = 0
+  for (let i = open; i < toks.length; i++) {
+    const v = (toks[i] as Tok).v
+    if (v === '[' || v === '(' || v === '{') depth += 1
+    else if (v === ']' || v === ')' || v === '}') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/** The literal for `i[hi:lo]` / `i[k]` on a counter holding a known value. */
+function counterSelect(inner: Tok[], counter: LoopCounter): { literal: string } | { bad: string } {
+  const parts = splitOnColon(inner)
+  const hi = parts === undefined ? constInt(inner) : constInt(parts[0])
+  const lo = parts === undefined ? hi : constInt(parts[1])
+  if (hi === undefined || lo === undefined)
+    return {
+      bad: `a select of the loop variable "${counter.name}" that is not a constant bit/part-select is a later increment`,
+    }
+  if (lo > hi || hi >= counter.width)
+    return {
+      bad: `${counter.name}[${hi}:${lo}] is outside the ${counter.width}-bit loop variable "${counter.name}", which reads x in Verilog`,
+    }
+  const width = hi - lo + 1
+  const value = (counter.value >> BigInt(lo)) & ((1n << BigInt(width)) - 1n)
+  return { literal: `${width}'h${value.toString(16)}` }
+}
+
+/** Every `for ( <name> = …` header target in a token span — the names a loop unrolls away, which therefore
+ *  end up with no driver of their own. */
+function collectLoopCounters(body: Tok[], out: Set<string>): void {
+  for (let i = 0; i + 3 < body.length; i++) {
+    if ((body[i] as Tok).v !== 'for' || (body[i + 1] as Tok).v !== '(') continue
+    const name = body[i + 2] as Tok
+    if (name.k === 'id' && (body[i + 3] as Tok).v === '=') out.add(name.v)
+  }
+}
+
+/** Split a for header's inner tokens at its two top-level ';' into init / condition / step. */
+function splitForHeader(inner: Tok[]): [Tok[], Tok[], Tok[]] | undefined {
+  const cuts: number[] = []
+  let depth = 0
+  for (let i = 0; i < inner.length; i++) {
+    const v = (inner[i] as Tok).v
+    if (v === '(' || v === '[' || v === '{') depth += 1
+    else if (v === ')' || v === ']' || v === '}') depth -= 1
+    else if (v === ';' && depth === 0) cuts.push(i)
+  }
+  if (cuts.length !== 2) return undefined
+  const [a, b] = cuts as [number, number]
+  return [inner.slice(0, a), inner.slice(a + 1, b), inner.slice(b + 1)]
+}
+
+/** A header assignment `i = <expr>` → its target name and right-hand tokens. A bit-select target, a
+ *  nonblocking `<=`, or anything that is not a bare identifier gives undefined (and is then reported). */
+function splitCounterAssign(toks: Tok[]): { name: string; rhs: Tok[] } | undefined {
+  const name = toks[0]
+  if (name === undefined || name.k !== 'id' || toks[1]?.v !== '=') return undefined
+  return { name: name.v, rhs: toks.slice(2) }
+}
+
+/**
+ * PROCEDURAL LOOPS — unrolled at elaboration time, because hardware has no loop: `for (i = 0; i < 4; i = i +
+ * 1) y[i] = a[i];` is four statements written once, and the unrolled four are what a hand-written design
+ * would have said. The counter is substituted as a SIZED LITERAL and the body is RE-PARSED per iteration, so
+ * every existing rule still decides the result — a constant bit-select goes through parseSelect, an index the
+ * unroll pushes off the end of a bus meets the same out-of-range refusal a hand-written `a[5]` meets, and a
+ * nonblocking `<=` still lowers to an 'nb' node that binds to the pre-block value (measured against Icarus
+ * Verilog 14.0: four `y <= y + 1` in one clocked block increment y by ONE, and the unrolled form does too).
+ *
+ * The counter is evaluated at its DECLARED width and signedness, never as a JavaScript number. Icarus on
+ * `reg [3:0] i; for (i = 0; i <= 15; i = i + 1)` was still looping after 101 iterations at simulation time 0,
+ * because i + 1 wraps 15 → 0 and `i <= 15` is therefore always true: that source is not synthesizable at all,
+ * and an unroller counting in JavaScript would emit sixteen iterations and publish a design for it. A counter
+ * that returns to a value it already held can never terminate and is refused by name.
+ */
+function unrollLoop(ts: TokStream, p: ProcParse, kind: 'for' | 'repeat'): ProcStmt {
+  ts.next() // 'for' / 'repeat'
+  if (ts.peek()?.v !== '(') return { t: 'bad', why: `${kind} is missing its "("` }
+  const header = readParenToks(ts)
+  const bodyToks = takeStatementToks(ts)
+  const widthOf = p.widthOf
+  if (widthOf === undefined)
+    return { t: 'bad', why: `a ${kind} loop needs the declared signal widths to unroll` }
+  if (kind === 'repeat') {
+    const count = foldSpan(header, p, widthOf)
+    if (count === undefined)
+      return {
+        t: 'bad',
+        why: 'a repeat count that is not an elaboration-time constant has no iteration count to unroll',
+      }
+    return unrollRepeat(bodyToks, p, count)
+  }
+  const counter = forCounter(header, p, widthOf)
+  if ('bad' in counter) return { t: 'bad', why: counter.bad }
+  return unrollFor(bodyToks, p, widthOf, counter)
+}
+
+const seqOf = (body: ProcStmt[]): ProcStmt =>
+  body.length === 1 ? (body[0] as ProcStmt) : { t: 'seq', body }
+
+/** Charge one unrolled iteration to the body's shared budget, or return the refusal once it is spent. */
+function spendIteration(p: ProcParse): ProcStmt | undefined {
+  if (p.budget.left <= 0)
+    return {
+      t: 'bad',
+      why: `unrolling this loop needs more than ${MAX_UNROLLED_ITERATIONS} iterations in one block — reported`,
+    }
+  p.budget.left -= 1
+  return undefined
+}
+
+/** `repeat (n) stmt` — n copies of the body, with no counter to substitute. A count that is zero or NEGATIVE
+ *  under its own signedness executes the statement zero times (IEEE 1364-2005 §9.6), which is what Icarus
+ *  Verilog 14.0 does with `parameter signed [3:0] R = -2; repeat (R) …` — it leaves the target untouched. */
+function unrollRepeat(bodyToks: Tok[], p: ProcParse, n: ConstVal): ProcStmt {
+  const count = asInteger(n)
+  const body: ProcStmt[] = []
+  for (let k = 0n; k < count; k++) {
+    const spent = spendIteration(p)
+    if (spent !== undefined) return spent
+    const one = parseStmt(new TokStream(bodyToks), p)
+    if (one.t === 'bad') return one
+    body.push(one)
+  }
+  return seqOf(body)
+}
+
+function unrollFor(
+  bodyToks: Tok[],
+  p: ProcParse,
+  widthOf: (n: string) => number,
+  counter: LoopCounter,
+): ProcStmt {
+  const body: ProcStmt[] = []
+  const visited = new Set<bigint>()
+  for (;;) {
+    const cond = substituteCounter(counter.cond, counter)
+    if ('bad' in cond) return { t: 'bad', why: cond.bad }
+    const keepGoing = foldSpan(cond, p, widthOf)
+    if (keepGoing === undefined)
+      return {
+        t: 'bad',
+        why: `the condition of the for loop over "${counter.name}" is not an elaboration-time constant`,
+      }
+    if (keepGoing.value === 0n) break
+    if (visited.has(counter.value))
+      return {
+        t: 'bad',
+        why: `the for loop over "${counter.name}" returns to a counter value it already had, so at its declared ${counter.width}-bit width it never ends`,
+      }
+    visited.add(counter.value)
+    const spent = spendIteration(p)
+    if (spent !== undefined) return spent
+    const iteration = substituteCounter(bodyToks, counter)
+    if ('bad' in iteration) return { t: 'bad', why: iteration.bad }
+    const one = parseStmt(new TokStream(iteration), p)
+    if (one.t === 'bad') return one
+    body.push(one)
+    const step = substituteCounter(counter.step, counter)
+    if ('bad' in step) return { t: 'bad', why: step.bad }
+    const stepped = foldSpan(step, p, widthOf)
+    if (stepped === undefined)
+      return {
+        t: 'bad',
+        why: `the step of the for loop over "${counter.name}" is not an elaboration-time constant`,
+      }
+    counter.value = extendTo(stepped, counter.width, stepped.signed)
+  }
+  return seqOf(body)
+}
+
+type LoopCounter = {
+  name: string
+  width: number
+  value: bigint
+  cond: Tok[]
+  step: Tok[]
+  /** the current value as a sized literal carrying the counter's DECLARED signedness */
+  literal: () => string
+}
+
+/** The loop counter a `for` header describes, modelled at its declared width and signedness, or the reason it
+ *  cannot be modelled. */
+function forCounter(
+  header: Tok[],
+  p: ProcParse,
+  widthOf: (n: string) => number,
+): LoopCounter | { bad: string } {
+  // Without the declared signedness the counter cannot be modelled: `integer` is SIGNED 32-bit, and
+  // `for (i = 3; i >= 0; i = i - 1)` runs four times signed and never ends unsigned.
+  const signedOf = p.signedOf
+  if (signedOf === undefined)
+    return { bad: 'a for loop needs the declared signedness of its loop variable to unroll' }
+  const parts = splitForHeader(header)
+  if (parts === undefined) return { bad: 'a for header must read (init; condition; step)' }
+  const [initToks, cond, stepToks] = parts
+  const init = splitCounterAssign(initToks)
+  if (init === undefined)
+    return { bad: 'a for loop must start by assigning a loop variable — for (i = 0; …' }
+  const step = splitCounterAssign(stepToks)
+  if (step === undefined || step.name !== init.name)
+    return { bad: `a for loop's step must assign its own loop variable "${init.name}"` }
+  const width = widthOf(init.name)
+  // An UNDECLARED loop variable reads as one bit here, and Icarus Verilog 14.0 rejects that source outright
+  // ("register ``i'' unknown in m"). A genuinely 1-bit counter can only ever hold 0 and 1, so nothing that
+  // counts is lost by naming this case instead of unrolling one or two iterations of it.
+  if (width < 2)
+    return {
+      bad: `the loop variable "${init.name}" reads as a single bit — an undeclared loop variable, or one declared as a 1-bit reg, cannot count a loop`,
+    }
+  if (width > MAX_COUNTER_WIDTH)
+    return {
+      bad: `loop variable "${init.name}" is ${width} bits, wider than this importer counts`,
+    }
+  const start = foldSpan(init.rhs, p, widthOf)
+  if (start === undefined)
+    return { bad: `the start value of the for loop over "${init.name}" is not a constant` }
+  const signed = signedOf(init.name)
+  const counter: LoopCounter = {
+    name: init.name,
+    width,
+    // Assigning the start into the counter is an assignment (§5.6): a SIGNED start sign-extends into the
+    // counter's declared width, so `for (i = 4'she; …)` starts an `integer` at −2 and not at +14.
+    value: extendTo(start, width, start.signed),
+    cond,
+    step: step.rhs,
+    literal: () => `${width}'${signed ? 's' : ''}h${counter.value.toString(16)}`,
+  }
+  return counter
+}
+
+/** Fold a token span to its exact constant value AND its type, or undefined if it is not an elaboration
+ *  constant — or if the scope has no declared signedness, without which no fold can be typed. */
+function foldSpan(toks: Tok[], p: ProcParse, widthOf: (n: string) => number): ConstVal | undefined {
+  if (p.signedOf === undefined) return undefined
+  const e = parseRhs(toks, p.mems)
+  if (e.t === 'bad') return undefined
+  return foldConstBits(e, widthOf, p.signedOf)
 }
 
 /** Read a parenthesized group's inner tokens; cursor must be AT '('; leaves it just past the matching ')'. */
@@ -2717,12 +3680,8 @@ function readParenToks(ts: TokStream): Tok[] {
 
 /** Parse `lhs <= rhs ;` (nonblocking). Whole-signal (`reg <= …`) and memory (`mem[addr] <= …`) targets build;
  *  blocking `=`, bit/part-select and concat targets are reported. */
-function parseAssignStmt(
-  ts: TokStream,
-  mems: MemTable,
-  comb: boolean,
-  widthOf?: (n: string) => number,
-): ProcStmt {
+function parseAssignStmt(ts: TokStream, p: ProcParse): ProcStmt {
+  const { mems, comb, widthOf } = p
   const toks: Tok[] = []
   while (ts.peek() !== undefined && ts.peek()?.v !== ';') toks.push(ts.next() as Tok)
   if (ts.peek()?.v === ';') ts.next()
@@ -2763,6 +3722,11 @@ function parseAssignStmt(
   }
   if (lhs.length > 1 && lhs[0]?.k === 'id' && lhs[1]?.v === '[' && widthOf !== undefined)
     return selectTarget(lhs, rhs, (toks[opIdx] as Tok).v === '=', widthOf)
+  if (lhs.length === 1 && lhs[0]?.k === 'num')
+    return {
+      t: 'bad',
+      why: `a constant ("${lhs[0].v}") cannot be an assignment target — a for loop's own loop variable is substituted away by unrolling, so its body must not assign it`,
+    }
   if (lhs.length !== 1 || lhs[0]?.k !== 'id')
     return {
       t: 'bad',
@@ -2843,25 +3807,126 @@ function substBlocking(e: Expr, env: Map<string, Expr>): Expr {
   }
 }
 
+/** A `casez`/`casex` item label read as a DON'T-CARE MASK: `pattern[i]` is the value the selector must carry
+ *  at bit i, and `care[i]` false means bit i matches anything. Both LSB-first. */
+type WildcardLabel = { pattern: (0 | 1)[]; care: boolean[] }
+const WILDCARD_DIGIT = /[?zZxX]/
+
+/**
+ * A `casez`/`casex` item label as a don't-care mask — `undefined` when the label carries no wildcard digit
+ * (it is then an ordinary equality, which is exactly what a 0/1 net can answer), `{ bad }` for a wildcard
+ * spelling this refuses to build.
+ *
+ * Deliberately NOT routed through constExpr: that refuses every z/? outright and folds an x to the single
+ * `'x'` ConstBit, which erases the casez-vs-casex difference the semantics turn on.
+ *
+ * `x` is where the two forms genuinely differ, and having it backwards is a silent wrong answer. Under CASEX
+ * an x digit is a don't-care. Under CASEZ it is a LITERAL x, which no two-valued net can ever equal, so the
+ * whole item is dead: Icarus Verilog 14.0 on `casez (op) 4'b1xxx: y=0; default: y=3;` returns 3 for all 16
+ * values of a 4-bit `op`. Rather than build a branch that can never be taken, a casez x is refused BY NAME
+ * here — which is also what lets everything below treat every remaining wildcard digit alike.
+ */
+function wildcardCaseLabel(
+  span: Tok[],
+  kind: 'casex' | 'casez',
+): WildcardLabel | { bad: string } | undefined {
+  const only = span.length === 1 ? (span[0] as Tok) : undefined
+  if (only === undefined || only.k !== 'num') return undefined
+  const based = only.v.match(/^(\d*)'([sS]?)([bBoOdDhH])([0-9a-fA-FxXzZ?_]+)$/)
+  if (based === null) return undefined
+  const digits = (based[4] as string).replace(/_/g, '')
+  if (!WILDCARD_DIGIT.test(digits)) return undefined
+  if (kind === 'casez' && /[xX]/.test(digits))
+    return {
+      bad: `a casez item with an x digit ("${only.v}") — under casez an x is a literal x, which no two-valued net can equal, so the item is dead`,
+    }
+  if (based[2] !== '')
+    return { bad: `a signed wildcard case item ("${only.v}") is a later increment` }
+  const perDigit = { b: 1, o: 3, d: 0, h: 4 }[(based[3] as string).toLowerCase()] as number
+  if (perDigit === 0)
+    return { bad: `a decimal wildcard case item ("${only.v}") has no per-digit bit mask` }
+  const pattern: (0 | 1)[] = []
+  const care: boolean[] = []
+  for (let i = digits.length - 1; i >= 0; i--) {
+    const digit = digits[i] as string
+    const wild = WILDCARD_DIGIT.test(digit)
+    const value = wild ? 0 : Number.parseInt(digit, 16)
+    for (let b = 0; b < perDigit; b++) {
+      pattern.push(wild ? 0 : (((value >> b) & 1) as 0 | 1))
+      care.push(!wild)
+    }
+  }
+  // IEEE 1364-2005 §3.2 pads a based literal out to its DECLARED width with its most significant DIGIT when
+  // that digit is x or z, else with 0 — so `4'b?1` is `4'bzzz1` (Icarus: matches every odd value of a 4-bit
+  // op) while `2'b??` stops after two bits (Icarus: matches 0..3 only). This is the literal's OWN width;
+  // widening it to the selector is a separate step and is care-and-zero, never a don't-care.
+  const width = based[1] === '' ? 32 : Number.parseInt(based[1] as string, 10)
+  const msbWild = WILDCARD_DIGIT.test(digits[0] as string)
+  while (pattern.length < width) {
+    pattern.push(0)
+    care.push(!msbWild)
+  }
+  return { pattern: pattern.slice(0, width), care: care.slice(0, width) }
+}
+
+/**
+ * The 1-bit "this item matches" condition for a wildcard case label — an AND-reduce, over the CARE positions
+ * only, of xnor(selector bit, pattern bit). Built from ORDINARY operators so it shares the one equality and
+ * x-folding algebra every other comparison uses; the don't-care lives purely in the two constants:
+ *
+ *     &( (selector ~^ VALUE) | NOT_CARE )
+ *
+ * At a don't-care position VALUE is 1 (the xnor folds to a pass-through, no gate) and NOT_CARE is 1 (the OR
+ * folds to a constant 1, and the selector bit is never examined). At a care position NOT_CARE is 0, the OR
+ * folds away, and what is left is exactly the xnor that `==` builds.
+ *
+ * A label NARROWER than the selector is widened HERE with care-and-zero bits, never with don't-cares:
+ * Icarus 14.0 on a 4-bit `op` matches `casez (op) 2'b1?` against {2,3} and `2'b?1` against {1,3} — op[3:2]
+ * must be 00 in both. The enclosing reduction also makes the region unsigned, so a wider label zero-extends
+ * the selector even when it is declared `signed` (measured: Icarus never matched `8'b1111_10??`).
+ */
+function wildcardMatch(sel: Expr, label: WildcardLabel, selWidth: number): Expr {
+  const width = Math.max(selWidth, label.pattern.length)
+  const value: ConstBit[] = []
+  const notCare: ConstBit[] = []
+  for (let i = 0; i < width; i++) {
+    const cared = label.care[i] ?? true
+    value.push(cared ? (label.pattern[i] ?? 0) : 1)
+    notCare.push(cared ? 0 : 1)
+  }
+  return {
+    t: 'un',
+    op: '&',
+    a: {
+      t: 'bin',
+      op: '|',
+      a: { t: 'bin', op: '~^', a: sel, b: { t: 'const', bits: value } },
+      b: { t: 'const', bits: notCare },
+    },
+  }
+}
+
 /** Parse a `case (sel) … endcase` and desugar it to a nested if/else chain (label match via `sel == label`,
- *  multiple labels OR'd). casex/casez are rejected upstream. */
-function parseCase(
-  ts: TokStream,
-  mems: MemTable,
-  comb: boolean,
-  widthOf?: (n: string) => number,
-): ProcStmt {
-  ts.next() // 'case'
-  if (ts.peek()?.v !== '(') return { t: 'bad', why: 'case is missing its "("' }
+ *  multiple labels OR'd). `casez`/`casex` take the same chain — item order and first-match-wins are the whole
+ *  point of a wildcard decoder — with each wildcard label matched through `wildcardMatch` instead of `==`. */
+function parseCase(ts: TokStream, p: ProcParse, kind: 'case' | 'casex' | 'casez'): ProcStmt {
+  const { mems, comb, widthOf } = p
+  ts.next() // 'case' / 'casex' / 'casez'
+  if (ts.peek()?.v !== '(') return { t: 'bad', why: `${kind} is missing its "("` }
   const sel = parseRhs(readParenToks(ts), mems)
-  if (sel.t === 'bad') return { t: 'bad', why: `case selector — ${sel.why}` }
-  const items: { labels: Expr[]; stmt: ProcStmt }[] = []
+  if (sel.t === 'bad') return { t: 'bad', why: `${kind} selector — ${sel.why}` }
+  if (kind !== 'case' && hasUnknownConst(sel))
+    return {
+      t: 'bad',
+      why: `${kind} selector — an x folded into the case expression decides which item matches (under casex it matches anything, under casez it matches nothing), and this importer does not model that`,
+    }
+  const items: { labels: Expr[]; conds: Expr[]; stmt: ProcStmt }[] = []
   let dflt: ProcStmt | undefined
   while (ts.peek() !== undefined && ts.peek()?.v !== 'endcase') {
     if (ts.peek()?.v === 'default') {
       ts.next()
       if (ts.peek()?.v === ':') ts.next()
-      const s = parseStmt(ts, mems, comb, widthOf)
+      const s = parseStmt(ts, p)
       if (s.t === 'bad') return s
       dflt = s
       continue
@@ -2885,16 +3950,32 @@ function parseCase(
     }
     labelToks.push(cur)
     const labels: Expr[] = []
+    const conds: Expr[] = []
     for (const lt of labelToks) {
+      const wild = kind === 'case' ? undefined : wildcardCaseLabel(lt, kind)
+      if (wild !== undefined && 'bad' in wild)
+        return { t: 'bad', why: `${kind} label — ${wild.bad}` }
+      if (wild !== undefined) {
+        if (widthOf === undefined)
+          return {
+            t: 'bad',
+            why: `${kind} label — a wildcard item needs the declared signal widths`,
+          }
+        conds.push(wildcardMatch(sel, wild, selfWidth(sel, widthOf)))
+        continue
+      }
+      // No wildcard digit (or a label that is not a single literal — `casez (op) k:` with k a signal is legal
+      // Verilog). A ChipBlocks net can never carry x or z, so plain equality is the exact answer there.
       const le = parseRhs(lt, mems)
-      if (le.t === 'bad') return { t: 'bad', why: `case label — ${le.why}` }
+      if (le.t === 'bad') return { t: 'bad', why: `${kind} label — ${le.why}` }
       labels.push(le)
+      conds.push({ t: 'bin', op: '==', a: sel, b: le })
     }
-    const s = parseStmt(ts, mems, comb, widthOf)
+    const s = parseStmt(ts, p)
     if (s.t === 'bad') return s
-    items.push({ labels, stmt: s })
+    items.push({ labels, conds, stmt: s })
   }
-  if (ts.peek()?.v !== 'endcase') return { t: 'bad', why: 'case is missing its "endcase"' }
+  if (ts.peek()?.v !== 'endcase') return { t: 'bad', why: `${kind} is missing its "endcase"` }
   ts.next()
 
   // A COMBINATIONAL case with NO default that fully covers the selector's value space has no latch — the
@@ -2902,32 +3983,46 @@ function parseCase(
   // item's condition so it becomes the unconditional terminal branch, rather than a self-holding latch that
   // the loop guard would (correctly, for an INCOMPLETE case) reject. A clocked case keeps its hold — there a
   // register that isn't reassigned simply holds through its flip-flop.
+  //
+  // WILDCARD forms are left out of this on purpose. Dropping the last item's guard is sound ONLY when the
+  // coverage is computed exactly, and counting the values a mask covers is a second, riskier calculation
+  // whose over-claim would turn a latch into an invented value. A defaultless casez that genuinely covers
+  // everything therefore infers a hold and is refused by the combinational-loop guard — an over-refusal, not
+  // a wrong answer. (A single ALL-don't-care item still builds: its condition folds to a constant 1, so the
+  // ternary drops the hold on its own.)
+  // Without the declared signedness a label cannot be folded at all (a signed label extends differently from
+  // an unsigned one), so coverage stays unproven and the case keeps its guard — an over-refusal, never a
+  // dropped condition claimed on a guess.
   let full = false
-  if (comb && dflt === undefined && widthOf !== undefined && items.length > 0) {
+  const labelSignedOf = p.signedOf
+  if (
+    kind === 'case' &&
+    comb &&
+    dflt === undefined &&
+    widthOf !== undefined &&
+    labelSignedOf !== undefined &&
+    items.length > 0
+  ) {
     const w = selfWidth(sel, widthOf)
     if (w <= 12) {
       const covered = new Set<number>()
       let allConst = true
       for (const it of items)
         for (const lab of it.labels) {
-          const v = foldConst(lab, widthOf)
+          const v = foldConst(lab, widthOf, labelSignedOf)
           if (v === undefined) allConst = false
           else covered.add(v % 2 ** w)
         }
       full = allConst && covered.size === 2 ** w
     }
   }
-  const lastItem = full
-    ? (items[items.length - 1] as { labels: Expr[]; stmt: ProcStmt })
-    : undefined
+  const lastItem = full ? (items[items.length - 1] as (typeof items)[number]) : undefined
   let chain: ProcStmt = lastItem ? lastItem.stmt : (dflt ?? { t: 'seq', body: [] }) // no default ⇒ hold
   for (let i = items.length - (full ? 2 : 1); i >= 0; i--) {
-    const it = items[i] as { labels: Expr[]; stmt: ProcStmt }
+    const it = items[i] as (typeof items)[number]
     let cond: Expr | undefined
-    for (const lab of it.labels) {
-      const eq: Expr = { t: 'bin', op: '==', a: sel, b: lab }
-      cond = cond === undefined ? eq : { t: 'bin', op: '||', a: cond, b: eq }
-    }
+    for (const one of it.conds)
+      cond = cond === undefined ? one : { t: 'bin', op: '||', a: cond, b: one }
     if (cond === undefined) return { t: 'bad', why: 'a case item has no label' }
     chain = { t: 'if', cond, conseq: it.stmt, els: chain }
   }
@@ -2959,14 +4054,14 @@ function elaborate(
   stmt: ProcStmt,
   env: Map<string, Expr>,
   written: Set<string>,
-  // Optional per-signal declared width — when a function body is inlined, each assignment to a width-declared
-  // local/return is wrapped in a `sized` wall so its truncation is EXACT (not lost to symbolic substitution).
-  // The always-block callers pass nothing, so their behavior is unchanged.
-  sizeOf?: (name: string) => number | undefined,
+  // Each assignment to a declared signal is wrapped in a `sized` TYPE wall, so the value a later read sees is
+  // the value the VARIABLE holds — truncated to its declared width and read at its declared signedness — and
+  // not whatever expression happened to be substituted for it (IEEE 1364-2005 §6.2 + §5.5.1).
+  declOf: (name: string) => Decl | undefined,
 ): Map<string, Expr> {
   const store = (sig: string, expr: Expr): Expr => {
-    const wd = sizeOf?.(sig)
-    return wd !== undefined ? { t: 'sized', width: wd, of: expr } : expr
+    const d = declOf(sig)
+    return d === undefined ? expr : { t: 'sized', width: d.width, signed: d.signed, of: expr }
   }
   switch (stmt.t) {
     case 'nb': {
@@ -2993,6 +4088,7 @@ function elaborate(
         a: {
           t: 'sized',
           width: stmt.hi - stmt.lo + 1,
+          signed: false, // a part-write target is a slice of bits, never a signed number (§5.5.1)
           of: stmt.blocking === true ? substBlocking(stmt.rhs, env) : stmt.rhs,
         },
         b: bitsOf(BigInt(stmt.lo), 32),
@@ -3003,7 +4099,7 @@ function elaborate(
         a: { t: 'bin', op: '&', a: prior, b: { t: 'const', bits: keep } },
         b: placed,
       }
-      e.set(stmt.lhs, store(stmt.lhs, { t: 'sized', width: stmt.width, of: next }))
+      e.set(stmt.lhs, store(stmt.lhs, { t: 'sized', width: stmt.width, signed: false, of: next }))
       written.add(stmt.lhs)
       return e
     }
@@ -3024,14 +4120,14 @@ function elaborate(
     }
     case 'seq': {
       let e = env
-      for (const s of stmt.body) e = elaborate(s, e, written, sizeOf)
+      for (const s of stmt.body) e = elaborate(s, e, written, declOf)
       return e
     }
     case 'if': {
       const wThen = new Set<string>()
       const wElse = new Set<string>()
-      const eThen = elaborate(stmt.conseq, env, wThen, sizeOf)
-      const eElse = stmt.els !== undefined ? elaborate(stmt.els, env, wElse, sizeOf) : env
+      const eThen = elaborate(stmt.conseq, env, wThen, declOf)
+      const eElse = stmt.els !== undefined ? elaborate(stmt.els, env, wElse, declOf) : env
       const merged = new Map(env)
       for (const sig of new Set([...wThen, ...wElse])) {
         const hold: Expr = env.get(sig) ?? { t: 'net', name: sig }

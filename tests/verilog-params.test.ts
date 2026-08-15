@@ -239,10 +239,14 @@ describe('parameters — review hardening', () => {
     )
   })
 
+  // The reason changed once a folded bound is read through asInteger: `W-1` with W=0 is −1, and −1 is now
+  // SEEN as −1 instead of as the pattern 4 294 967 295, so the refusal names the real fault (a negative msb)
+  // rather than an invented multi-gigabit width. Both refuse; Icarus Verilog 14.0 rejects this source outright
+  // ("Unable to bind parameter `W'"), so no answer is lost either way.
   test('a parameter underflow [W-1:0] with W=0 is reported, not built as a multi-gigabit bus', () => {
     reported(
       'module m(a, y); input a; output [W-1:0] y; parameter W = 0; assign y = a; endmodule',
-      'unreasonably large',
+      'range [-1:0] must be [N:0]',
     )
   })
 

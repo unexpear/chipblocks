@@ -189,3 +189,72 @@ describe('signed — review hardening (context propagation)', () => {
     expect(warnings.some((w) => /signed/i.test(w))).toBe(true)
   })
 })
+
+/**
+ * `/` and `%` by a divisor that folds to a CONSTANT ZERO. IEEE 1364-2005 §5.1.5 gives the expression no value,
+ * and Icarus Verilog 14.0 returns x on every row — measured, `assign y = a / 4'd0` prints xxxxxxxx for all
+ * sixteen values of a. The restoring divider would hand back an all-ones quotient and the dividend as the
+ * remainder, so the design used to publish a fabricated number where Verilog has none; the result bits are
+ * UNKNOWN instead and the driver's x-guard refuses them by name.
+ *
+ * A divisor that is merely CAPABLE of being zero at run time is deliberately NOT covered: a ChipBlocks net is
+ * only ever 0 or 1, so a run-time x has no representation and refusing every `a / b` would refuse ordinary RTL.
+ */
+describe('signed — divide/modulo by a constant zero has no value, so it is refused', () => {
+  const refusesEveryBit = (verilog: string) => {
+    const { block, warnings } = importVerilog(verilog)
+    const said = warnings.join(' | ')
+    expect(said, `expected an x-refusal; got: ${said}`).toMatch(/stays x/)
+    const ports = (block as BlockData | null)?.ports ?? []
+    expect(
+      ports.filter((p) => (p.name ?? '').startsWith('y')),
+      'no y bit may be published from a divide that has no value',
+    ).toEqual([])
+  }
+
+  test('unsigned divide by a constant zero publishes nothing', () => {
+    refusesEveryBit("module m(a, y); input [3:0] a; output [7:0] y; assign y = a / 4'd0; endmodule")
+  })
+
+  test('unsigned modulo by a constant zero publishes nothing', () => {
+    refusesEveryBit("module m(a, y); input [3:0] a; output [7:0] y; assign y = a % 4'd0; endmodule")
+  })
+
+  test('signed divide by a constant zero publishes nothing', () => {
+    refusesEveryBit(
+      "module m(a, y); input [3:0] a; output [7:0] y; wire signed [3:0] s = a; assign y = s / 4'sd0; endmodule",
+    )
+  })
+
+  test('the refusal spreads through the expression it feeds', () => {
+    refusesEveryBit(
+      "module m(a, y); input [3:0] a; output [7:0] y; assign y = (a / 4'd0) + 8'd1; endmodule",
+    )
+  })
+
+  // Icarus 14.0 over a = 0..15: a/2 = 0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7 and a%3 = 0,1,2,0,1,2,0,1,2,0,1,2,0,1,2,0
+  test('an ordinary non-zero divisor is untouched — unsigned', () => {
+    assertBus(
+      "module m(a, y); input [3:0] a; output [7:0] y; assign y = a / 4'd2; endmodule",
+      busIn('a', 4),
+      busIn('y', 8),
+      (b) => numBits(Math.floor(num(b) / 2), 8),
+    )
+    assertBus(
+      "module m(a, y); input [3:0] a; output [7:0] y; assign y = a % 4'd3; endmodule",
+      busIn('a', 4),
+      busIn('y', 8),
+      (b) => numBits(num(b) % 3, 8),
+    )
+  })
+
+  // Icarus 14.0 over a = 0..15, s = $signed(a): s/2 = 0,0,1,1,2,2,3,3,−4,−3,−3,−2,−2,−1,−1,0
+  test('an ordinary non-zero divisor is untouched — signed truncates toward zero', () => {
+    assertBus(
+      "module m(a, y); input [3:0] a; output [7:0] y; wire signed [3:0] s = a; assign y = s / 4'sd2; endmodule",
+      busIn('a', 4),
+      busIn('y', 8),
+      (b) => numBits(Math.trunc(sval(b, 4) / 2), 8),
+    )
+  })
+})
