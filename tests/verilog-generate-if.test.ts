@@ -1035,9 +1035,26 @@ describe('what a conditional generate cannot decide, it says rather than guesses
     ).toContain('"generate" inside a generate block has no scope')
   })
 
-  test('a localparam inside the taken branch is refused, as it is inside a loop', () => {
+  test('a PARAMETER inside the taken branch is refused, as it is inside a loop', () => {
+    // A `localparam` in a branch folds per copy (see verilog-generate-loop.test.ts); a `parameter` does not —
+    // Icarus Verilog 14.0 rejects one inside a generate block outright.
     expect(
       refused(
+        probe(`  wire [7:0] r;
+  generate
+    if (1) begin : g
+      parameter K = 8'h3c;
+      assign r = a ^ K;
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('"parameter" inside a generate block has no scope')
+  })
+
+  test('a localparam inside the taken branch folds — Icarus: 136, 102', () => {
+    expect(
+      icarus(
         probe(`  wire [7:0] r;
   generate
     if (1) begin : g
@@ -1047,7 +1064,7 @@ describe('what a conditional generate cannot decide, it says rather than guesses
   endgenerate
   assign y = {24'd0, r};`),
       ),
-    ).toContain('"localparam" inside a generate block has no scope')
+    ).toEqual([136n, 102n])
   })
 
   test('a function defined inside a branch is refused', () => {

@@ -40,7 +40,7 @@ import {
   MAX_WIDTH,
   splitOnColon,
 } from './verilog-const.ts'
-import { elaborateGenerate } from './verilog-generate.ts'
+import { elaborateGenerate, generateRegionInfo } from './verilog-generate.ts'
 import { chooseTopModule, flattenHierarchy } from './verilog-hierarchy.ts'
 import { synthesizeBehavioral } from './verilog-synth.ts'
 
@@ -798,7 +798,7 @@ type ParamCollector = {
 /** Consume one comma-separated parameter list starting just past the `parameter`/`localparam` keyword. Folds
  *  each item into `params` (in source order, so a later item may reference an earlier one). Returns the index
  *  just past the list (at its `;`, or at the `)` that closes a `#(…)` header). */
-function readParamList(
+export function readParamList(
   toks: Tok[],
   start: number,
   params: Map<string, ConstVal>,
@@ -866,7 +866,7 @@ function readParamList(
         return
       }
       if ('bad' in declaredRange) {
-        warnings.push(`parameter "${nameTok.v}" range — ${declaredRange.bad} — reported`)
+        warnings.push(`${kind} "${nameTok.v}" range — ${declaredRange.bad} — reported`)
         return
       }
       // A declared range resizes the value in BOTH directions through the one widening rule: a too-wide value
@@ -882,7 +882,7 @@ function readParamList(
     }
     if ((toks[i] as Tok | undefined)?.v !== '=') {
       if (forced !== undefined) store(forced)
-      else warnings.push(`parameter "${nameTok.v}" has no default value — reported, not elaborated`)
+      else warnings.push(`${kind} "${nameTok.v}" has no default value — reported, not elaborated`)
       // skip to the next separator so the scan resyncs
       while (i < toks.length && ![',', ';', ')'].includes((toks[i] as Tok).v)) i += 1
     } else {
@@ -910,7 +910,7 @@ function readParamList(
         )
         if (val === undefined)
           warnings.push(
-            `parameter "${nameTok.v}" default is not a constant expression — reported, not elaborated`,
+            `${kind} "${nameTok.v}" default is not a constant expression — reported, not elaborated`,
           )
         else store(val)
       }
@@ -932,10 +932,15 @@ function headerParamListEnd(span: Tok[]): number {
   return matchBracket(span, 3)
 }
 
-/** Fold every parameter/localparam default in the module's token span into a value table. */
+/** Fold every parameter/localparam default in the module's token span into a value table. A constant declared
+ *  inside a GENERATE region is skipped: it belongs to a generate block's own scope, is per-iteration
+ *  (`localparam LSB = i*8` is a different number in every copy), and two blocks may each declare one of the
+ *  same name with different values. `elaborateGenerate` folds those per copy; folding one of them here would
+ *  write a single value over every block. */
 function collectParams(
   span: Tok[],
   warnings: string[],
+  regions: Array<{ from: number; to: number }>,
   overrides?: Map<string, ConstVal>,
   decls?: ParamDecl[],
   applied?: Set<string>,
@@ -944,6 +949,11 @@ function collectParams(
   const headerEnd = headerParamListEnd(span)
   let i = 0
   while (i < span.length) {
+    const region = regions.find((r) => i >= r.from && i < r.to)
+    if (region !== undefined) {
+      i = region.to
+      continue
+    }
     const t = span[i] as Tok
     if (t.k === 'kw' && (t.v === 'parameter' || t.v === 'localparam')) {
       i = readParamList(span, i + 1, params, warnings, {
@@ -959,6 +969,24 @@ function collectParams(
   return params
 }
 
+/** The token indices where a generate region's own constant shadows a module parameter of the same name. The
+ *  module's value stops at the region's edge there, so `localparam K` inside a block means the block's K —
+ *  IEEE 1364-2005 §12.1.3 makes each generate block a scope, and Icarus Verilog 14.0 reads it that way. */
+function generateScopedIndices(
+  span: Tok[],
+  regions: Array<{ from: number; to: number }>,
+  constants: Set<string>,
+): Set<number> {
+  const out = new Set<number>()
+  if (constants.size === 0) return out
+  for (const region of regions)
+    for (let i = region.from; i < region.to; i++) {
+      const t = span[i] as Tok
+      if (t.k === 'id' && constants.has(t.v)) out.add(i)
+    }
+  return out
+}
+
 /** The sized literal a parameter substitutes to. A SIGNED parameter keeps the `'s` marker, or the literal it
  *  becomes carries a different type than the parameter did and every comparison against it silently flips to
  *  unsigned (IEEE 1364-2005 §5.5.1: one unsigned operand makes the whole comparison unsigned). Both directions
@@ -972,11 +1000,17 @@ function paramLiteral(p: ConstVal): string {
 
 /** Replace every identifier token that names a parameter with its sized literal (`W` → `8'd8`). An identifier
  *  written straight after a `.` is a PORT or PARAMETER name being connected by name (`.W(4)`), never a
- *  reference to this module's own parameter — rewriting that one to a literal would destroy the connection. */
-function substituteParams(span: Tok[], params: Map<string, ConstVal>): Tok[] {
+ *  reference to this module's own parameter — rewriting that one to a literal would destroy the connection.
+ *  `scoped` names the indices where an inner scope has taken the name back and this value does not reach. */
+export function substituteParams(
+  span: Tok[],
+  params: Map<string, ConstVal>,
+  scoped?: Set<number>,
+): Tok[] {
   return span.map((t, i) => {
     if (t.k !== 'id') return t
     if ((span[i - 1] as Tok | undefined)?.v === '.') return t
+    if (scoped?.has(i) === true) return t
     const p = params.get(t.v)
     return p === undefined ? t : { k: 'num', v: paramLiteral(p), line: t.line }
   })
@@ -1052,7 +1086,8 @@ function elaborateModule(
     }
   }
   const span = toks.slice(start, end)
-  const params = collectParams(span, warnings, overrides, decls, applied)
+  const generate = generateRegionInfo(span)
+  const params = collectParams(span, warnings, generate.spans, overrides, decls, applied)
   const moduleParams: ModuleParams = { decls, hasHeader: headerParamListEnd(span) !== -1 }
   // A parameter whose name collides with a declared net/port/instance is an illegal redeclaration — report it
   // and DON'T substitute (so the gate/port keeps its real name and survives, instead of being silently mangled).
@@ -1064,8 +1099,9 @@ function elaborateModule(
     applied.delete(name)
   }
   if (params.size === 0) return { toks, params: moduleParams, unapplied: unappliedNames() }
+  const scoped = generateScopedIndices(span, generate.spans, generate.constants)
   return {
-    toks: [...toks.slice(0, start), ...substituteParams(span, params), ...toks.slice(end)],
+    toks: [...toks.slice(0, start), ...substituteParams(span, params, scoped), ...toks.slice(end)],
     params: moduleParams,
     unapplied: unappliedNames(),
   }

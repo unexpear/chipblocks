@@ -695,23 +695,23 @@ ${probe(`  wire [7:0] r;
     ).toContain('needs more than 4096 iterations')
   })
 
-  test('a per-iteration LOCALPARAM has no per-iteration scope yet, so nothing is built', () => {
-    // This is the one shared-name shape with no safety net downstream: two `localparam K` flattened into one
-    // module scope publish silently at the LAST value, with no undriven net and no driver contention to catch
-    // it. Until the name is scoped per iteration it is named here instead.
+  test('a PARAMETER inside a generate block stays refused — Icarus rejects that source too', () => {
+    // A `localparam` is per-iteration and is folded (see the block-constant suite below). A `parameter` is not:
+    // Icarus Verilog 14.0 answers this same source with "parameter declarations are not permitted in generate
+    // blocks", so building it would be building something no conforming tool will compile.
     expect(
       refused(
         probe(`  wire [7:0] r;
   genvar i;
   generate
     for (i = 0; i < 8; i = i + 1) begin : g
-      localparam K = i;
+      parameter K = 7 - i;
       assign r[i] = a[K];
     end
   endgenerate
   assign y = {24'd0, r};`),
       ),
-    ).toContain('"localparam" inside a generate block has no scope')
+    ).toContain('"parameter" inside a generate block has no scope')
   })
 
   test('a hierarchical read into a generated scope (g[3].t) is named, not resolved', () => {
@@ -813,5 +813,661 @@ ${probe(`  wire [7:0] r;
   zsub u [7:0] (.p(a), .z(r));
   assign y = {24'd0, r};`)}`),
     ).toContain('an instance array')
+  })
+})
+
+/**
+ * A `localparam` declared INSIDE a generate block is the per-copy constant real RTL is written with:
+ * `localparam LSB = i*8` says "this copy handles bits 8 through 15", and in iteration 3 of `localparam K = 7-i`
+ * the value of K is 4. IEEE 1364-2005 §12.1.3 makes each generate block a scope, so the name is folded at
+ * ELABORATION with the genvar already substituted, and two blocks may each declare one of the same name with a
+ * different value without either reaching the other.
+ *
+ * Every expected number below is Icarus Verilog 14.0 on the same source at a = 8'hb4 then a = 8'h5a.
+ */
+describe('a localparam inside a generate block folds per iteration', () => {
+  test('as a bit index, one wire per copy — Icarus: 45, 90', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam K = 7 - i;
+      wire t;
+      assign t = a[K];
+      assign r[i] = t;
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([45n, 90n])
+  })
+
+  test('inside a larger expression — Icarus: 110, 119', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  assign r[7] = a[7] & a[0];
+  generate
+    for (i = 0; i < 7; i = i + 1) begin : g
+      localparam K = i;
+      assign r[i] = a[K + 1] ^ a[K];
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([110n, 119n])
+  })
+
+  test('as BOTH bounds of a part-select, on each side of the assign — Icarus: 120, 165', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 4; i = i + 1) begin : g
+      localparam LSB = i * 2;
+      wire [1:0] pair;
+      assign pair = a[LSB+1:LSB];
+      assign r[LSB+1:LSB] = {pair[0], pair[1]};
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([120n, 165n])
+  })
+
+  test('one of the same name in EACH arm of a generate if — Icarus: 75, 165', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      if (i < 4) begin : lo
+        localparam K = i + 4;
+        assign r[i] = a[K];
+      end else begin : hi
+        localparam K = i - 4;
+        assign r[i] = a[K];
+      end
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([75n, 165n])
+  })
+
+  test('inside the chosen arm of a generate case — Icarus: 136, 102', () => {
+    expect(
+      icarus(
+        probe(`  parameter MODE = 2;
+  wire [7:0] r;
+  generate
+    case (MODE)
+      1: begin : g
+        localparam K = 8'h0f;
+        assign r = a ^ K;
+      end
+      2: begin : g
+        localparam K = 8'h3c;
+        assign r = a ^ K;
+      end
+      default: begin : g
+        assign r = 8'd0;
+      end
+    endcase
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([136n, 102n])
+  })
+
+  test('SEVERAL localparams in one block — Icarus: 240, 240', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 4; i = i + 1) begin : g
+      localparam LO = i;
+      localparam HI = i + 4;
+      wire t;
+      assign t = a[LO] & a[HI];
+      assign r[LO] = t;
+      assign r[HI] = a[LO] | a[HI];
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([240n, 240n])
+  })
+
+  test('one localparam DEPENDING on another — Icarus: 120, 165', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 4; i = i + 1) begin : g
+      localparam BASE = i * 2;
+      localparam NEXT = BASE + 1;
+      assign r[BASE] = a[NEXT];
+      assign r[NEXT] = a[BASE];
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([120n, 165n])
+  })
+
+  test('one SHADOWING a module-level localparam of the same name — Icarus: 301, 90', () => {
+    // The module's own K is 2 and still reads a[2] outside the region (bit 8 of y, set at 8'hb4 and clear at
+    // 8'h5a); inside the block K is 7−i and reverses the byte. One value written over both would move both.
+    expect(
+      icarus(
+        probe(`  localparam K = 2;
+  wire [7:0] r;
+  wire outer;
+  genvar i;
+  assign outer = a[K];
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam K = 7 - i;
+      assign r[i] = a[K];
+    end
+  endgenerate
+  assign y = {23'd0, outer, r};`),
+      ),
+    ).toEqual([301n, 90n])
+  })
+
+  test('two blocks each declaring K with a DIFFERENT value — Icarus: 17595, 43605', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r0;
+  wire [7:0] r1;
+  generate
+    if (1) begin : g
+      localparam K = 8'h0f;
+      assign r0 = a ^ K;
+    end
+  endgenerate
+  generate
+    if (1) begin : h
+      localparam K = 8'hf0;
+      assign r1 = a ^ K;
+    end
+  endgenerate
+  assign y = {16'd0, r1, r0};`),
+      ),
+    ).toEqual([17595n, 43605n])
+  })
+
+  test('inside a NESTED loop, reading the enclosing block own — Icarus: 45, 90', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  genvar j;
+  generate
+    for (i = 0; i < 4; i = i + 1) begin : g
+      localparam BASE = i * 2;
+      for (j = 0; j < 2; j = j + 1) begin : h
+        localparam BIT = BASE + j;
+        wire t;
+        assign t = a[7 - BIT];
+        assign r[BIT] = t;
+      end
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([45n, 90n])
+  })
+
+  test('deciding a nested generate if — Icarus: 75, 165', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam K = i;
+      if (K < 4) begin : lo
+        assign r[K] = a[K + 4];
+      end else begin : hi
+        assign r[K] = a[K - 4];
+      end
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([75n, 165n])
+  })
+
+  test('sizing a wire range inside the block — Icarus: 75, 165', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 4; i = i + 1) begin : g
+      localparam W = 2;
+      wire [W-1:0] pair;
+      assign pair = a[2*i+1 : 2*i];
+      assign r[2*i+1 : 2*i] = ~pair;
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([75n, 165n])
+  })
+
+  test('at generate-region level, outside any begin/end — Icarus: 136, 102', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  generate
+    localparam K = 8'h3c;
+    assign r = a ^ K;
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([136n, 102n])
+  })
+
+  test('a SIGNED localparam keeps its sign — Icarus: 180, 90', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam signed [7:0] K = i - 8;
+      assign r[i] = a[K + 8];
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([180n, 90n])
+  })
+
+  test('the copies still do NOT share nets — every bit moves alone — Icarus: 180, 90', () => {
+    // Two nets per copy behind the constant, each copy reading a different input bit. A shared t or u would
+    // make all eight outputs the last copy's answer, which neither probe vector can hide: 8'hb4 and 8'h5a
+    // would both read 0 or 255.
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam K = i;
+      wire t;
+      wire u;
+      assign t = a[K];
+      assign u = t;
+      assign r[K] = u;
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([180n, 90n])
+  })
+
+  test('as the parameter override of a per-copy instance — Icarus: 45, 90', () => {
+    expect(
+      icarus(`module picker(input [7:0] p, output q);
+  parameter SEL = 0;
+  assign q = p[SEL];
+endmodule
+${probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam K = 7 - i;
+      picker #(.SEL(K)) u (.p(a), .q(r[i]));
+    end
+  endgenerate
+  assign y = {24'd0, r};`)}`),
+    ).toEqual([45n, 90n])
+  })
+})
+
+describe('a block constant that will not fold is named, never guessed', () => {
+  const refused = (source: string): string => {
+    const { block, warnings } = importVerilog(source)
+    expect(block, said(warnings)).toBeNull()
+    return said(warnings)
+  }
+
+  test('a localparam this folder cannot prove constant is refused by name', () => {
+    expect(
+      refused(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam K = $clog2(8) + i - 3;
+      assign r[i] = a[K];
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('localparam "K" default is not a constant expression')
+  })
+
+  test('a nested block that takes the name back as a wire is refused by name', () => {
+    // The inner block is its own scope, so its `wire K` is not the outer constant. Folding the constant into it
+    // would bind a literal where the source names a net — refused instead of risked.
+    expect(
+      refused(
+        probe(`  wire [7:0] r;
+  genvar i;
+  generate
+    for (i = 0; i < 8; i = i + 1) begin : g
+      localparam K = i;
+      if (1) begin : h
+        wire K;
+        assign K = a[7];
+        assign r[i] = K;
+      end
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('"K" is more than a constant later in this generate block')
+  })
+})
+
+/**
+ * A GENERATE BLOCK'S LABEL IS ITS SCOPE, and the `generate … endgenerate` keywords are not a scope of their
+ * own (IEEE 1364-2005 §12.1.3). So two regions written one after the other put their blocks in the SAME
+ * place, and two blocks there called `g` are one set of nets that both regions drive and read — a circuit
+ * that computes something else and never says so. Icarus Verilog 14.0 rejects every such source outright
+ * ("'g' has already been declared in this scope" — measured), so there is no right answer to build and the
+ * only safe answer is to refuse by name.
+ *
+ * The mirror of that rule is what must keep BUILDING: a label is taken within ONE scope only, so `g` inside
+ * `g`, `k` under two different parents, `g` in two sub-modules, `g` in a module instantiated twice, and `g`
+ * on both arms of one `if` are all legal, and every one of them is measured against Icarus below.
+ */
+describe('a generate label is taken in one scope, and only in that scope', () => {
+  const refused = (source: string): string => {
+    const { block, warnings } = importVerilog(source)
+    expect(block, said(warnings)).toBeNull()
+    return said(warnings)
+  }
+
+  test('two regions sharing a label would share their nets — Icarus rejects the source outright', () => {
+    // Measured before this rule reached across regions: it elaborated, region 2 read region 1's `t`, and the
+    // design answered 1 2 4 0 4 10 to a one-hot sweep — the second half of the output following the first
+    // half's nets instead of its own input bits.
+    expect(
+      refused(
+        probe(`  genvar i;
+  wire [7:0] r;
+  generate for (i = 0; i < 4; i = i + 1) begin : g
+    wire t;
+    assign t = a[i];
+    assign r[i] = t;
+  end endgenerate
+  generate for (i = 0; i < 4; i = i + 1) begin : g
+    assign r[i+4] = t & a[i+4];
+  end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('are both labelled "g"')
+  })
+
+  test('the same collision with NO generate wrapper round either region is refused too', () => {
+    expect(
+      refused(
+        probe(`  genvar i;
+  wire [7:0] r;
+  for (i = 0; i < 4; i = i + 1) begin : g
+    wire t;
+    assign t = a[i];
+    assign r[i] = t;
+  end
+  for (i = 0; i < 4; i = i + 1) begin : g
+    assign r[i+4] = t & a[i+4];
+  end
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('are both labelled "g"')
+  })
+
+  test('two generate IF regions sharing a label are refused', () => {
+    expect(
+      refused(
+        probe(`  wire [7:0] r;
+  generate if (1) begin : g
+    wire t;
+    assign t = a[0];
+    assign r[3:0] = {3'b000, t};
+  end endgenerate
+  generate if (1) begin : g
+    assign r[7:4] = {3'b000, t};
+  end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('are both labelled "g"')
+  })
+
+  test('a loop region and an if region sharing a label are refused', () => {
+    expect(
+      refused(
+        probe(`  genvar i;
+  wire [7:0] r;
+  generate for (i = 0; i < 4; i = i + 1) begin : g
+    wire t;
+    assign t = a[i];
+    assign r[i] = t;
+  end endgenerate
+  generate if (1) begin : g
+    assign r[7:4] = a[7:4];
+  end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('are both labelled "g"')
+  })
+
+  test('THREE regions sharing a label are refused', () => {
+    expect(
+      refused(
+        probe(`  genvar i;
+  wire [7:0] r;
+  generate for (i = 0; i < 2; i = i + 1) begin : g wire t; assign t = a[i];   assign r[i]   = t; end endgenerate
+  generate for (i = 0; i < 2; i = i + 1) begin : g wire u; assign u = a[i+2]; assign r[i+2] = u; end endgenerate
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire v; assign v = a[i+4]; assign r[i+4] = v; end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('are both labelled "g"')
+  })
+
+  test('two regions sharing a label are refused even when each declares its own nets', () => {
+    // Nothing is read across the two here, so the label is the ONLY thing wrong with it — and Icarus rejects
+    // it all the same, which is why this refuses on the label rather than waiting for the sharing to show.
+    expect(
+      refused(
+        probe(`  genvar i;
+  wire [7:0] r;
+  generate for (i = 0; i < 4; i = i + 1) begin : g
+    wire t;
+    assign t = a[i];
+    assign r[i] = t;
+  end endgenerate
+  generate for (i = 0; i < 4; i = i + 1) begin : g
+    wire t;
+    assign t = a[i+4];
+    assign r[i+4] = t;
+  end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toContain('are both labelled "g"')
+  })
+
+  test('two regions with DIFFERENT labels build — Icarus: 180, 90', () => {
+    expect(
+      icarus(
+        probe(`  genvar i;
+  wire [7:0] r;
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire t; assign t = a[i];   assign r[i]   = t; end endgenerate
+  generate for (i = 0; i < 4; i = i + 1) begin : h wire t; assign t = a[i+4]; assign r[i+4] = t; end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([180n, 90n])
+  })
+
+  test('a label reused under two DIFFERENT parents builds — Icarus: 180, 90', () => {
+    expect(
+      icarus(
+        probe(`  genvar i;
+  wire [7:0] r;
+  generate
+    if (1) begin : g
+      for (i = 0; i < 4; i = i + 1) begin : k wire t; assign t = a[i];   assign r[i]   = t; end
+    end
+    if (1) begin : h
+      for (i = 0; i < 4; i = i + 1) begin : k wire t; assign t = a[i+4]; assign r[i+4] = t; end
+    end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([180n, 90n])
+  })
+
+  test('a block labelled g NESTED inside a block labelled g builds — Icarus: 180, 90', () => {
+    expect(
+      icarus(
+        probe(`  genvar i, j;
+  wire [7:0] r;
+  generate for (i = 0; i < 2; i = i + 1) begin : g
+    for (j = 0; j < 4; j = j + 1) begin : g
+      wire t;
+      assign t = a[i*4+j];
+      assign r[i*4+j] = t;
+    end
+  end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([180n, 90n])
+  })
+
+  test('two SUB-MODULES each with a block called g build — Icarus: 68, 170', () => {
+    expect(
+      icarus(`module lo(input [3:0] a, output [3:0] o);
+  genvar i;
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire t; assign t = a[i]; assign o[i] = t; end endgenerate
+endmodule
+module hi(input [3:0] a, output [3:0] o);
+  genvar i;
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire t; assign t = ~a[i]; assign o[i] = t; end endgenerate
+endmodule
+module top(input [7:0] a, output [31:0] y);
+  wire [3:0] p, q;
+  lo u1(.a(a[3:0]), .o(p));
+  hi u2(.a(a[7:4]), .o(q));
+  assign y = {24'd0, q, p};
+endmodule
+`),
+    ).toEqual([68n, 170n])
+  })
+
+  test('ONE module holding a block g, instantiated TWICE, builds — Icarus: 180, 90', () => {
+    expect(
+      icarus(`module unitx(input [3:0] a, output [3:0] o);
+  genvar i;
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire t; assign t = a[i]; assign o[i] = t; end endgenerate
+endmodule
+module top(input [7:0] a, output [31:0] y);
+  wire [3:0] p, q;
+  unitx u1(.a(a[3:0]), .o(p));
+  unitx u2(.a(a[7:4]), .o(q));
+  assign y = {24'd0, q, p};
+endmodule
+`),
+    ).toEqual([180n, 90n])
+  })
+
+  test('a label g in a sub-module and a label g at top level build — Icarus: 187, 85', () => {
+    expect(
+      icarus(`module unitx(input [3:0] a, output [3:0] o);
+  genvar i;
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire t; assign t = ~a[i]; assign o[i] = t; end endgenerate
+endmodule
+module top(input [7:0] a, output [31:0] y);
+  genvar i;
+  wire [3:0] p;
+  wire [3:0] q;
+  unitx u1(.a(a[3:0]), .o(p));
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire t; assign t = a[i+4]; assign q[i] = t; end endgenerate
+  assign y = {24'd0, q, p};
+endmodule
+`),
+    ).toEqual([187n, 85n])
+  })
+
+  test('both ARMS of one if sharing the label g build — Icarus: 187, 85', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  generate
+    if (1) begin : g assign r = a ^ 8'h0f; end
+    else   begin : g assign r = a; end
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([187n, 85n])
+  })
+
+  test('every ARM of a generate case sharing the label g builds — Icarus: 75, 165', () => {
+    expect(
+      icarus(
+        probe(`  wire [7:0] r;
+  generate
+    case (2)
+      1: begin : g assign r = a; end
+      2: begin : g assign r = a ^ 8'hff; end
+      default: begin : g assign r = 8'h00; end
+    endcase
+  endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([75n, 165n])
+  })
+
+  test('two UNLABELLED regions build — there is no label to collide — Icarus: 180, 90', () => {
+    expect(
+      icarus(
+        probe(`  genvar i;
+  wire [7:0] r;
+  generate for (i = 0; i < 4; i = i + 1) begin wire t; assign t = a[i];   assign r[i]   = t; end endgenerate
+  generate for (i = 0; i < 4; i = i + 1) begin wire t; assign t = a[i+4]; assign r[i+4] = t; end endgenerate
+  assign y = {24'd0, r};`),
+      ),
+    ).toEqual([180n, 90n])
+  })
+
+  test('iterations across two regions do not share nets — one-hot in, one-hot out', () => {
+    // The failure this whole rule exists to stop is SHARING, and a uniform input cannot see it. Every
+    // iteration is driven by a DIFFERENT bit here, so a shared `t` could not make the output follow the
+    // input one bit at a time. Icarus Verilog 14.0 answers 1 2 4 8 16 32 64 128 to this sweep — y == a.
+    const { block, warnings } = importVerilog(
+      probe(`  genvar i;
+  wire [7:0] r;
+  generate for (i = 0; i < 4; i = i + 1) begin : g wire t; assign t = a[i];   assign r[i]   = t; end endgenerate
+  generate for (i = 0; i < 4; i = i + 1) begin : h wire t; assign t = a[i+4]; assign r[i+4] = t; end endgenerate
+  assign y = {24'd0, r};`),
+    )
+    expect(block, said(warnings)).not.toBeNull()
+    for (let bit = 0; bit < 8; bit++)
+      expect(readY(block as BlockData, 1 << bit), `bit ${bit} moved something else`).toBe(
+        BigInt(1 << bit),
+      )
   })
 })

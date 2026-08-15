@@ -27,6 +27,11 @@
  * fires on it unchanged and the nets it would have driven are poisoned out to the module pins as before.
  * There is no new refusal path here — a region either becomes real module items or stays the construct this
  * importer already declines to build.
+ *
+ * A `localparam` DECLARED INSIDE A BLOCK is scoped the other way round: it is not a net to rename but a value
+ * to fold, per copy, with the genvar already substituted, and then to delete. Because a block's constant is the
+ * block's own, the module's parameter pass must not reach into a generate region at all — `generateRegionInfo`
+ * is what tells it where to stop.
  */
 
 import {
@@ -46,7 +51,9 @@ import {
   GATE_WORDS,
   NET_TYPES,
   NON_NET_DECLS,
+  readParamList,
   statementSpanEnd,
+  substituteParams,
   type Tok,
 } from './verilog-import.ts'
 
@@ -67,12 +74,18 @@ const GENVAR_WIDTH = 32
 const declaresSomething = (word: string): boolean =>
   word === 'reg' || NET_TYPES.has(word) || NON_NET_DECLS.includes(word)
 
+/** The keywords that introduce a name a block constant could collide with, beyond the net/reg/genvar set
+ *  `declaresSomething` already answers for. */
+const DECLARING_WORDS = new Set(['parameter', 'localparam', 'input', 'output', 'inout'])
+
 /** Module items a generate body may legally hold and this pass knows how to copy out of it. Anything else —
- *  a parameter, a function, a nested `generate … endgenerate` (which IEEE 1364-2005 does not allow and Icarus
- *  Verilog 14.0 rejects outright) — leaves the region unelaborated. */
+ *  a `parameter` (which Icarus Verilog 14.0 rejects inside a generate block), a function, a nested
+ *  `generate … endgenerate` (which IEEE 1364-2005 does not allow and Icarus Verilog 14.0 rejects outright) —
+ *  leaves the region unelaborated. */
 const ELABORATABLE = new Set([
   'empty',
   'decl',
+  'localparam',
   'assign',
   'always',
   'gate',
@@ -89,6 +102,7 @@ const REGION_KINDS = new Set(['generate', 'for', 'if', 'case'])
 type ItemKind =
   | 'empty'
   | 'decl'
+  | 'localparam'
   | 'assign'
   | 'always'
   | 'gate'
@@ -261,8 +275,12 @@ function readItem(toks: Tok[], start: number, to: number): Item | { bad: string 
         declares: gateInstanceName(toks, start + 1, Math.max(end - 1, start)),
       })
     }
-    // `parameter`, `localparam`, `defparam`, `input`, `output`, `inout` — legal module items this pass copies
-    // at module level and refuses inside a generate body, because none of them is scoped per iteration.
+    // A `localparam` IS scoped per iteration (IEEE 1364-2005 §12.1.3) and is folded away by this pass. A
+    // `parameter` is not: Icarus Verilog 14.0 rejects one inside a generate block outright, so it stays a
+    // refusal here rather than becoming a constant the language does not admit.
+    if (t.v === 'localparam') return item('localparam', pastSemicolon(toks, start, to))
+    // `parameter`, `defparam`, `input`, `output`, `inout` — legal module items this pass copies at module
+    // level and refuses inside a generate body, because none of them is scoped per iteration.
     return item('other', pastSemicolon(toks, start, to))
   }
   if (t.k !== 'id') return bad(`line ${t.line}: "${t.v}" does not start a module item`)
@@ -385,6 +403,78 @@ function levelNames(items: Item[]): { declares: Set<string>; moduleNames: Set<st
     if (item.moduleName !== undefined) moduleNames.add(item.moduleName)
   }
   return { declares, moduleNames }
+}
+
+/** Every name a declaration introduces anywhere in this span, at any nesting depth. Over-collecting is safe:
+ *  the only use is to refuse folding a block constant whose name something later takes back. */
+function namesDeclaredWithin(toks: Tok[], from: number, to: number): Set<string> {
+  const out = new Set<string>()
+  for (let i = from; i < to; i++) {
+    const t = toks[i] as Tok
+    if (t.k !== 'kw') continue
+    if (!declaresSomething(t.v) && !DECLARING_WORDS.has(t.v)) continue
+    const end = pastSemicolon(toks, i, to)
+    if (end === -1) break
+    for (const name of declaredNames(toks, i + 1, end - 1)) out.add(name)
+    i = end - 1
+  }
+  return out
+}
+
+/**
+ * Is every later mention of this name a plain VALUE, so folding a literal over it changes nothing else? A name
+ * that is declared again — here or in a nested block, which is its own scope — or that names an instance or a
+ * generate block, is not one: substituting there would bind the wrong object or destroy the structure. Both are
+ * refused rather than risked. A `.name` is a port or parameter being connected by name and never this constant,
+ * so it is stepped over exactly as the module's own parameter substitution steps over it.
+ */
+function foldingIsSafe(toks: Tok[], from: number, to: number, name: string): boolean {
+  if (namesDeclaredWithin(toks, from, to).has(name)) return false
+  for (let i = from; i < to; i++) {
+    const t = toks[i] as Tok
+    if (t.k !== 'id' || t.v !== name) continue
+    const before = toks[i - 1] as Tok | undefined
+    if (before?.v === '.') continue
+    if ((toks[i + 1] as Tok | undefined)?.v === '(') return false
+    const beforeThat = toks[i - 2] as Tok | undefined
+    if (before?.v === ':' && beforeThat?.k === 'kw' && beforeThat.v === 'begin') return false
+  }
+  return true
+}
+
+/**
+ * ONE `localparam` declared inside a generate block, folded into the rest of the block and dropped.
+ *
+ * This is the per-copy constant real RTL is written with — `localparam LSB = i*8` means "this copy handles bits
+ * 8 through 15", and in iteration 3 of `localparam K = 7-i` the value of K is 4. The genvar is already a
+ * literal by the time this runs (`substituteCounter` put it there), so the declaration is an ordinary
+ * elaboration constant and is folded with the SAME reader the module's own parameters use: the IEEE 1364-2005
+ * §12.2 width and signedness rules are measured in one place and must not be measured twice. What comes out is
+ * substituted into the tokens that FOLLOW the declaration — Verilog requires a constant to be declared before
+ * it is used, and Icarus Verilog 14.0 refuses a forward reference — and the declaration itself never reaches
+ * the parser, exactly as a module-level parameter never does.
+ *
+ * The span is rewritten IN PLACE. Substituting one identifier for one literal cannot move an item boundary, so
+ * the item list read before the fold still describes the tokens after it; `foldingIsSafe` is what keeps that
+ * true, by refusing the two shapes where a name is more than a value.
+ */
+function foldBlockConstant(work: Tok[], item: Item): { ok: true } | { bad: string } {
+  const line = (work[item.start] as Tok).line
+  const values = new Map<string, ConstVal>()
+  const reported: string[] = []
+  const consumed = readParamList(work, item.start + 1, values, reported)
+  const firstReport = reported[0]
+  if (firstReport !== undefined) return bad(`line ${line}: ${firstReport}`)
+  if (consumed !== item.end || values.size === 0)
+    return bad(`line ${line}: a "localparam" this importer cannot read`)
+  for (const name of values.keys())
+    if (!foldingIsSafe(work, item.end, work.length, name))
+      return bad(
+        `line ${line}: "${name}" is more than a constant later in this generate block — it is declared again, or it names a block or an instance`,
+      )
+  const tail = substituteParams(work.slice(item.end, work.length), values)
+  for (let i = 0; i < tail.length; i++) work[item.end + i] = tail[i] as Tok
+  return { ok: true }
 }
 
 /** One branch of a conditional generate — the `begin … end` or single item a chosen arm generates. */
@@ -551,6 +641,11 @@ function chooseBranch(toks: Tok[], item: Item): { taken: Branch | undefined } | 
  * through unchanged. This is the recursion — a loop body and a chosen branch are each themselves a span of
  * module items, so a nested construct is elaborated by the same code with the outer counter already
  * substituted into its bounds and the outer condition already decided.
+ *
+ * `siblings` is the set of block labels ALREADY TAKEN in the scope this span belongs to, and it is the
+ * caller's, not this function's, because a scope and a span are not the same thing: every generate region in
+ * one module stands in that one module scope, so all of them share one set, while a block's body opens a new
+ * scope and gets a fresh one.
  */
 function elaborateItems(
   toks: Tok[],
@@ -558,8 +653,12 @@ function elaborateItems(
   to: number,
   scope: Scope,
   outer: Set<string>,
+  siblings: Set<string>,
 ): Tok[] | { bad: string } {
-  const items = readItems(toks, from, to)
+  // A block constant is folded INTO the tokens that follow it, so this span is rewritten as it is walked and
+  // cannot be the caller's own array.
+  const work = toks.slice(from, to)
+  const items = readItems(work, 0, work.length)
   if ('bad' in items) return items
   // A name declared BESIDE a loop belongs to the scope the loop sits in, not to the loop: a `wire [7:0] wn`
   // written straight inside a generate region is an ordinary module net, and an enclosing block's wire is
@@ -567,32 +666,32 @@ function elaborateItems(
   // enclosing scope's own rename (if any) place it — scoping it twice lands it on a net nothing drives.
   const visible = new Set([...outer, ...levelNames(items).declares])
   const out: Tok[] = []
-  // Sibling scope names, checked at THIS level only: two generate blocks in one scope may not share a label
-  // (Icarus Verilog 14.0 rejects that source), because the two would elaborate to one set of net names and
-  // silently share them. A nested block reached once per outer iteration is not a sibling of itself, which is
-  // why the set cannot be one shared set for the whole module.
-  const siblings = new Set<string>()
   for (const item of items) {
     if (!ELABORATABLE.has(item.kind))
       return bad(
-        `line ${(toks[item.start] as Tok).line}: "${(toks[item.start] as Tok).v}" inside a generate block has no scope this importer can give it`,
+        `line ${(work[item.start] as Tok).line}: "${(work[item.start] as Tok).v}" inside a generate block has no scope this importer can give it`,
       )
+    if (item.kind === 'localparam') {
+      const folded = foldBlockConstant(work, item)
+      if ('bad' in folded) return folded
+      continue
+    }
     if (item.kind === 'for') {
-      const unrolled = unrollGenerateFor(toks, item, scope, visible, siblings)
+      const unrolled = unrollGenerateFor(work, item, scope, visible, siblings)
       if ('bad' in unrolled) return unrolled
       out.push(...unrolled.toks)
       continue
     }
     if (item.kind !== 'if' && item.kind !== 'case') {
-      out.push(...toks.slice(item.start, item.end))
+      out.push(...work.slice(item.start, item.end))
       continue
     }
-    const chosen = chooseBranch(toks, item)
+    const chosen = chooseBranch(work, item)
     if ('bad' in chosen) return chosen
     // A false `if` with no `else`, and a `case` that matches no arm and has no `default`, generate nothing at
     // all. That is the construct doing its job, not a failure — the region simply contributes no hardware.
     if (chosen.taken === undefined) continue
-    const built = elaborateBranch(toks, chosen.taken, scope, visible, siblings)
+    const built = elaborateBranch(work, chosen.taken, scope, visible, siblings)
     if ('bad' in built) return built
     out.push(...built.toks)
   }
@@ -616,9 +715,12 @@ function elaborateBranch(
 }
 
 /** Take a generate block's name. Two blocks in ONE scope may not share a label — Icarus Verilog 14.0 rejects
- *  that source, and elaborating it would give the two one set of net names and silently share them. The two
- *  arms of one `if` are not two blocks in one scope: only the taken one is ever elaborated, and sharing a
- *  label across them is legal (measured), which is why the claim happens after the branch is chosen. */
+ *  that source, and elaborating it would give the two one set of net names and silently share them. What
+ *  counts as one scope is the caller's `siblings` set: every region in a module shares the module's, while a
+ *  block body, each loop iteration, and each sub-module get their own, so `g` in two sub-modules, `g` inside
+ *  `g`, and `k` under two different parents are all legal and all still build. The two arms of one `if` are
+ *  not two blocks in one scope either: only the taken one is ever elaborated, and sharing a label across them
+ *  is legal (measured), which is why the claim happens after the branch is chosen. */
 function claimLabel(
   label: string | undefined,
   line: number,
@@ -644,7 +746,9 @@ function elaborateBlock(
   scope: Scope,
   outer: Set<string>,
 ): { toks: Tok[] } | { bad: string } {
-  const elaborated = elaborateItems(bodyToks, 0, bodyToks.length, scope, outer)
+  // A block's body is a NEW scope, so it starts with no labels taken: a block called `k` inside `g[0]` and
+  // another called `k` inside `g[1]` are two different objects, and so are `g.k` and `h.k`.
+  const elaborated = elaborateItems(bodyToks, 0, bodyToks.length, scope, outer, new Set())
   if ('bad' in elaborated) return elaborated
   const final = readItems(elaborated, 0, elaborated.length)
   if ('bad' in final) return final
@@ -759,27 +863,67 @@ function addNames(toks: Tok[], from: number, to: number, out: Set<string>): void
   for (let i = from; i < to; i++) if ((toks[i] as Tok).k === 'id') out.add((toks[i] as Tok).v)
 }
 
+/** Where one module's generate regions are. */
+type ModuleGenerate = { moduleStart: number; moduleEnd: number; regions: Item[] }
+
+/** Find one module's generate regions, or nothing when the module cannot be walked. A generate construct
+ *  written WITHOUT the `generate … endgenerate` wrapper is legal and common (measured against Icarus Verilog
+ *  14.0 for all three forms) and is found here too: left alone, a bare `for (` at module-item position reaches
+ *  the instance reader and is reported as an instantiation of a module called "for". */
+function findGenerate(toks: Tok[]): ModuleGenerate | undefined {
+  const moduleStart = toks.findIndex((t) => t.k === 'kw' && t.v === 'module')
+  if (moduleStart === -1) return undefined
+  const endIndex = toks.findIndex((t, i) => i > moduleStart && t.k === 'kw' && t.v === 'endmodule')
+  const moduleEnd = endIndex === -1 ? toks.length : endIndex
+  const bodyStart = moduleBodyStart(toks, moduleStart, moduleEnd)
+  if (bodyStart === -1) return undefined
+  const items = readItems(toks, bodyStart, moduleEnd)
+  // A module holding an item this walk cannot span is left whole: resuming in the middle of one would read an
+  // inner `for` as a module-level generate loop, which is how a procedural loop becomes hardware nobody wrote.
+  if ('bad' in items) return undefined
+  return { moduleStart, moduleEnd, regions: items.filter((item) => REGION_KINDS.has(item.kind)) }
+}
+
+/**
+ * What the module's OWN parameter pass has to know about its generate regions: where they are, and which names
+ * they declare as constants of their own.
+ *
+ * A `localparam` inside a generate block belongs to that block's scope (IEEE 1364-2005 §12.1.3), not to the
+ * module. It is per-iteration — `localparam LSB = i*8` is a different number in every copy — and two blocks may
+ * each declare one of the same name with different values. Folding those at module level would pick one value
+ * and write it over every block, which builds a circuit that computes something else and says nothing about it,
+ * so the module's pass steps over the regions and this pass folds them per copy instead.
+ */
+export function generateRegionInfo(toks: Tok[]): {
+  spans: Array<{ from: number; to: number }>
+  constants: Set<string>
+} {
+  const found = findGenerate(toks)
+  if (found === undefined || found.regions.length === 0) return { spans: [], constants: new Set() }
+  const spans = found.regions.map((region) => ({ from: region.start, to: region.end }))
+  const constants = new Set<string>()
+  for (const span of spans) {
+    for (let i = span.from; i < span.to; i++) {
+      const t = toks[i] as Tok
+      if (t.k !== 'kw' || (t.v !== 'localparam' && t.v !== 'parameter')) continue
+      const end = pastSemicolon(toks, i, span.to)
+      if (end === -1) break
+      for (const name of declaredNames(toks, i + 1, end - 1)) constants.add(name)
+      i = end - 1
+    }
+  }
+  return { spans, constants }
+}
+
 /**
  * Replace every generate region in one module's token span with the ordinary module items it elaborates to.
  * A region this pass cannot elaborate is left exactly as it was — the importer's existing refusal then names
  * it and poisons the nets it would have driven, which is what happens to every generate region today.
  */
 export function elaborateGenerate(toks: Tok[], warnings: string[]): Tok[] {
-  const moduleStart = toks.findIndex((t) => t.k === 'kw' && t.v === 'module')
-  if (moduleStart === -1) return toks
-  const endIndex = toks.findIndex((t, i) => i > moduleStart && t.k === 'kw' && t.v === 'endmodule')
-  const moduleEnd = endIndex === -1 ? toks.length : endIndex
-  const bodyStart = moduleBodyStart(toks, moduleStart, moduleEnd)
-  if (bodyStart === -1) return toks
-  const items = readItems(toks, bodyStart, moduleEnd)
-  // A module holding an item this walk cannot span is left whole: resuming in the middle of one would read an
-  // inner `for` as a module-level generate loop, which is how a procedural loop becomes hardware nobody wrote.
-  if ('bad' in items) return toks
-  // A generate construct written WITHOUT the `generate … endgenerate` wrapper is legal and common (measured
-  // against Icarus Verilog 14.0 for all three forms), and must be recognised here: left alone, a bare `for (`
-  // at module-item position reaches the instance reader and is reported as an instantiation of a module
-  // called "for".
-  const regions = items.filter((item) => REGION_KINDS.has(item.kind))
+  const found = findGenerate(toks)
+  if (found === undefined) return toks
+  const { moduleStart, moduleEnd, regions } = found
   if (regions.length === 0) return toks
 
   const scope: Scope = {
@@ -796,6 +940,13 @@ export function elaborateGenerate(toks: Tok[], warnings: string[]): Tok[] {
   // gathered from the whole module would build a circuit for source no conforming tool will compile.
   const outer = new Set<string>()
   let seen = moduleStart
+  // The labels taken in the MODULE's own scope, across every region in it. IEEE 1364-2005 §12.1.3 gives the
+  // `generate … endgenerate` keywords no scope of their own, so two regions written one after the other put
+  // their blocks in the same place: `begin : g` in the second region collides with `begin : g` in the first,
+  // Icarus Verilog 14.0 rejects that source outright ("'g' has already been declared in this scope" —
+  // measured), and elaborating it anyway would give the two regions ONE set of net names to share silently.
+  // One set for the whole module is what makes that collision visible; a set made per region never sees it.
+  const moduleSiblings = new Set<string>()
 
   const out: Tok[] = toks.slice(0, regions[0]?.start ?? 0)
   regions.forEach((region, n) => {
@@ -804,7 +955,7 @@ export function elaborateGenerate(toks: Tok[], warnings: string[]): Tok[] {
     const before = scope.labels.size
     const from = region.kind === 'generate' ? region.start + 1 : region.start
     const to = region.kind === 'generate' ? region.end - 1 : region.end
-    const elaborated = elaborateItems(toks, from, to, scope, outer)
+    const elaborated = elaborateItems(toks, from, to, scope, outer, moduleSiblings)
     const added = [...scope.labels].slice(before)
     const referenced = added.find(
       (label) => !labelIsOnlyDeclared(toks, moduleStart, moduleEnd, label),
