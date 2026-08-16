@@ -536,8 +536,12 @@ export function flattenBlocks(
     }))
     // Recurse — a block inside a block flattens the same way (carrying the same stop predicate).
     const expanded = flattenBlocks(innerNodes, innerEdges, stopAt)
-    flatNodes.push(...expanded.nodes)
-    flatEdges.push(...expanded.edges)
+    // Appended one at a time, not spread: `push(...arr)` passes every element as a separate argument, and a
+    // real design overruns the argument limit. Measured — a flattened Intel 8080 (10,068 gates, ~57,000 parts
+    // once expanded) threw "Maximum call stack size exceeded" here and the whole editor fell back to its
+    // error page, while a 3,525-gate design a third the size flattened fine.
+    for (const inner of expanded.nodes) flatNodes.push(inner)
+    for (const inner of expanded.edges) flatEdges.push(inner)
     for (const port of block.ports) {
       // If the inner endpoint is itself a nested block's port, chain through the recursion's
       // resolution so the outer port lands on the real terminal, not the now-flattened block.

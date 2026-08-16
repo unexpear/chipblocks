@@ -348,7 +348,7 @@ declare global {
         reason?: string
       }>
       scanProjects?: () => Promise<{ path: string; name: string; savedAt: number }[]>
-      onNetlistOpened?: (callback: (text: string) => void) => () => void
+      onNetlistOpened?: (callback: (files: { name: string; text: string }[]) => void) => () => void
       onBitstreamOpened?: (
         callback: (file: { name: string; bytes: Uint8Array }) => void,
       ) => () => void
@@ -3177,16 +3177,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // Import (rung 1b): a SPICE netlist arrives as raw text; parse it to a CircuitFile, drop it on the
   // canvas exactly the way Open does, and surface the report — what converted, what didn't, what we
   // assumed. A netlist carries no board ambient, so it loads at the standard 25 °C.
-  useEffect(() => {
-    if (!active) return
-    const bridge = window.chipblocks
-    if (bridge?.onNetlistOpened === undefined) return
-    return bridge.onNetlistOpened((text) => {
+  const openNetlistFiles = useCallback(
+    (files: { name: string; text: string }[]) => {
+      if (files.length === 0) return
       // SPICE, KiCad, and Verilog all arrive on this channel; tell them apart by the file's own shape.
+      // Only Verilog is a multi-file language here, so the other two read the first file chosen.
+      const text = (files[0] as { name: string; text: string }).text
       const isKicad = text.trimStart().startsWith('(kicad_sch')
       const isVerilog = !isKicad && isVerilogText(text)
       const { circuit, unsupported, warnings } = isVerilog
-        ? parseVerilogText(text)
+        ? parseVerilogText(files)
         : isKicad
           ? parseKicadSchematic(text)
           : parseSpiceNetlist(text)
@@ -3229,8 +3229,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         warnings,
         ...(isVerilog ? { format: 'verilog' as const } : {}),
       })
-    })
-  }, [active, setNodes, setEdges, fitView, checkpointAction])
+    },
+    [setNodes, setEdges, fitView, checkpointAction],
+  )
+
+  useEffect(() => {
+    if (!active) return
+    const bridge = window.chipblocks
+    if (bridge?.onNetlistOpened === undefined) return
+    return bridge.onNetlistOpened(openNetlistFiles)
+  }, [active, openNetlistFiles])
 
   // Read an FPGA Chip File. A programmed chip's bytes are decoded back into the logic that was put into it and
   // dropped on the canvas by the SAME path an imported netlist takes — a recovered chip design is a circuit, so
@@ -8970,6 +8978,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // directly and everything after that — decode, canvas, report — is the real path.
       readChipFile(fileName: string, data: number[], files: { name: string; text: string }[]) {
         readBitstream({ name: fileName, bytes: Uint8Array.from(data) }, files)
+      },
+      // Import a netlist through the SAME handler the File menu calls, for the same reason: the menu's own
+      // step is a native file dialog that cannot be driven from here. A Verilog design may be several files.
+      importNetlistFiles(files: { name: string; text: string }[]) {
+        openNetlistFiles(files)
       },
       // and each wire's drawn end-point — so the AI can assert e.g. a wire's end sits ON its pin.
       dom() {

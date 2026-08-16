@@ -49,8 +49,10 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // Auto-discover saved .chipblocks projects in the usual folders (so My Projects finds them itself).
   scanProjects: (): Promise<{ path: string; name: string; savedAt: number }[]> =>
     ipcRenderer.invoke('circuit:scan'),
-  // Import Netlist (rung 1b): a netlist file's raw text arrives; the renderer parses it.
-  onNetlistOpened: (callback: (text: string) => void) => subscribe('file:netlist-opened', callback),
+  // Import Netlist (rung 1b): the chosen files' raw text arrives; the renderer parses them. A Verilog design
+  // may span several files, so this is always a list — SPICE and KiCad read the first one.
+  onNetlistOpened: (callback: (files: { name: string; text: string }[]) => void) =>
+    subscribe('file:netlist-opened', callback),
   // Read an FPGA Chip File: a programmed chip's BYTES arrive (binary — utf8 would corrupt it) and the
   // renderer decodes them back into a circuit. Decoding also needs the open-source description of the chip
   // itself, which is megabytes and is not shipped, so the renderer asks for it by chip; main remembers where

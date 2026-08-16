@@ -32,6 +32,7 @@ import {
   XOR_BLOCK,
 } from './builtin-blocks.ts'
 import { POWER_PORT_IDS } from './logic-sim.ts'
+import { YOSYS_CELLS } from './verilog-cells.ts'
 import {
   asInteger,
   type ConstVal,
@@ -49,6 +50,9 @@ export type ImportResult = {
   warnings: string[]
   moduleName: string | null
 }
+
+/** One file of a design that spans several. `name` is what a warning about this file calls it. */
+export type VerilogSource = { name: string; text: string }
 
 // ── Verilog keyword tables ───────────────────────────────────────────────────
 /** The 6 n_input primitives → the 2-input ChipBlocks base gate, its native 2-input form, and whether the
@@ -640,31 +644,41 @@ function readRange(c: Cursor): { width: number } | { bad: string } {
   return rangeWidth(inner)
 }
 
-/** A memory depth range `[0 : W-1]` (ascending, zero-based) → its word count W. Bounds fold as SELF-DETERMINED
- *  constant expressions, the same reading `rangeWidth` uses: `reg [7:0] m [0:(4'd10 + 4'd10)]` is FIVE words
- *  in Icarus Verilog 14.0, and building twenty-one of them made an out-of-range address answer where the real
- *  memory has no word. Descending / nonzero-based ranges are reported: the synthesizer maps word k ↔ address
- *  k, so it needs `[0:W-1]`. */
+/** A memory depth range → its word count W. Bounds fold as SELF-DETERMINED constant expressions, the same
+ *  reading `rangeWidth` uses: `reg [7:0] m [0:(4'd10 + 4'd10)]` is FIVE words in Icarus Verilog 14.0, and
+ *  building twenty-one of them made an out-of-range address answer where the real memory has no word.
+ *
+ *  BOTH zero-based spellings are the same memory. Measured on Icarus Verilog 14.0: `reg [7:0] d [3:0]` and
+ *  `reg [7:0] a [0:3]` filled by the same loop both read `01 12 23 34` at indices 0,1,2,3 — an unpacked array
+ *  is indexed by the value, not by the declaration's direction, so the synthesizer's word k ↔ address k
+ *  mapping holds either way. `[3:0]` is how a real 6502 spells its register file, and refusing it cost the
+ *  whole CPU. A NONZERO-based range is a different memory and stays reported: Icarus reads x below its low
+ *  bound (`reg [7:0] nz [2:5]` reads xx at nz[0] and nz[1]), which needs an address offset we do not build. */
 function depthRange(
   inner: Tok[],
   params?: Map<string, ConstVal>,
 ): { depth: number } | { bad: string } {
   const parts = splitOnColon(inner)
   if (parts === undefined) return { bad: 'non-constant or malformed array range' }
-  const lo = evalConst(parts[0], params, 'self')
-  const hi = evalConst(parts[1], params, 'self')
-  if (lo === undefined || hi === undefined)
+  const left = evalConst(parts[0], params, 'self')
+  const right = evalConst(parts[1], params, 'self')
+  if (left === undefined || right === undefined)
     return { bad: 'non-constant array range (bounds must fold to a constant)' }
   // Same reading as rangeWidth: a negative word bound must READ as negative, not as a 4-billion-word memory.
-  const loN = Number(asInteger(lo))
-  const hiN = Number(asInteger(hi))
-  if (loN !== 0 || hiN < loN)
-    return { bad: `array range [${loN}:${hiN}] must be [0:N-1] (ascending, zero-based)` }
-  if (hiN + 1 > MAX_WIDTH)
+  const leftN = Number(asInteger(left))
+  const rightN = Number(asInteger(right))
+  const lowest = Math.min(leftN, rightN)
+  const highest = Math.max(leftN, rightN)
+  if (lowest < 0) return { bad: `array range [${leftN}:${rightN}] has a negative word index` }
+  if (lowest !== 0)
     return {
-      bad: `memory depth ${hiN + 1} is unreasonably large (a parameter underflow?) — reported`,
+      bad: `array range [${leftN}:${rightN}] does not start at word 0 — this importer stores word k at address k, so a nonzero-based array would need an address offset it does not build`,
     }
-  return { depth: hiN + 1 }
+  if (highest + 1 > MAX_WIDTH)
+    return {
+      bad: `memory depth ${highest + 1} is unreasonably large (a parameter underflow?) — reported`,
+    }
+  return { depth: highest + 1 }
 }
 
 /**
@@ -1401,7 +1415,17 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     if (t.k === 'kw' && (t.v === 'reg' || NET_TYPES.has(t.v))) {
       // `reg [n:0] x;` captures a width like `wire`; `reg [d:0] m [0:w-1];` captures a memory
-      parseNetDecl(c, widths, mems, signed, assigns, resolution, refusedDrivers, warnings)
+      parseNetDecl(
+        c,
+        widths,
+        mems,
+        signed,
+        assigns,
+        resolution,
+        refusedDrivers,
+        warnings,
+        powerOnValues,
+      )
       continue
     }
     if (t.k === 'kw' && t.v === 'assign') {
@@ -2404,6 +2428,7 @@ function parseNetDecl(
   resolution: Map<string, 'or' | 'and'>,
   refusedDrivers: RefusedDriver[],
   warnings: string[],
+  powerOnValues: PowerOnValue[],
 ): void {
   const kind = (c.peek() as Tok).v
   const isNet = kind !== 'reg'
@@ -2463,22 +2488,26 @@ function parseNetDecl(
       c.next()
       const rhs = readDeclInitializer(c)
       // On a NET this is exactly `assign name = expr;` (IEEE 1364 §6.1.2) — build it. On a `reg` the same
-      // syntax is an initial VALUE, not a permanent drive; building it as one would wrongly hold the register
-      // for ever, so it stays reported.
+      // syntax is a variable declaration assignment: IEEE 1364-2005 §6.2.1 makes it EQUIVALENT to an `initial`
+      // block assigning the same value, so it is routed to the same power-on path and gets the same answer.
+      // Measured on Icarus Verilog 14.0: `reg q = 0;` and `reg r; initial r = 0;` clocked by one always block
+      // read identically at power-on and on every edge after it. Building it as a continuous drive instead
+      // would wrongly hold the register for ever, which is why it used to be refused outright.
       if (isNet && lastId !== undefined)
         assigns.push({ lhs: [lastId], rhs, line: t.line, strength: declStrength })
-      else {
+      else if (lastId !== undefined && !mems.has(lastId.v))
+        powerOnValues.push({ name: lastId.v, expr: rhs, line: t.line })
+      else if (lastId !== undefined) {
+        // An initializer on an ARRAY is not a power-on value for one register — there is no single width to
+        // fold it at and no one word it belongs to, so it stays refused by name.
         warnings.push(
-          `line ${t.line}: an initial value on a "reg" declaration is not a continuous drive and is not modeled — reported, not built`,
+          `line ${t.line}: an initial value on the memory "${lastId.v}" is not modeled — reported, not built`,
         )
-        // The register really does hold that value from time zero, and nothing here produces it, so every
-        // reader of it is reading a value this importer does not have.
-        if (lastId !== undefined)
-          refusedDrivers.push({
-            where: `line ${t.line}`,
-            what: 'an initial value on a "reg" declaration',
-            terms: [[lastId]],
-          })
+        refusedDrivers.push({
+          where: `line ${t.line}`,
+          what: `an initial value on the memory "${lastId.v}"`,
+          terms: [[lastId]],
+        })
       }
       if (c.is(',')) {
         c.next()
@@ -2990,8 +3019,41 @@ function place(nodes: BlockInnerNode[], endpoints: Map<string, Pin[]>): void {
 /**
  * Import structural Verilog into a placed ChipBlocks gate design. Returns the composite block (null if the
  * text has no buildable gate primitives) plus every honest warning about what could not be represented.
+ *
+ * A real design is several files — a CPU core in one, the system that instantiates it in another — so this
+ * takes either one source or the list. The files are read as one stream, exactly as a compiler reads them
+ * together, and every warning is then relabelled with the file and the line WITHIN that file: a reader given
+ * "line 980" for what is line 24 of the second file cannot find what the warning is about.
  */
-export function importVerilog(text: string): ImportResult {
+export function importVerilog(source: string | VerilogSource[]): ImportResult {
+  if (typeof source === 'string') return importOneStream(source)
+  if (source.length === 0)
+    return { block: null, warnings: ['no Verilog source was given'], moduleName: null }
+  const only = source[0] as VerilogSource
+  if (source.length === 1) return importOneStream(only.text)
+  const result = importOneStream(source.map((file) => file.text).join('\n'))
+  return { ...result, warnings: nameSourceLines(result.warnings, source) }
+}
+
+/** Rewrite every `line N` in a warning to `<file> line <n>`, N being the line of the joined stream. */
+function nameSourceLines(warnings: string[], sources: VerilogSource[]): string[] {
+  const startsAt: number[] = []
+  let next = 1
+  for (const file of sources) {
+    startsAt.push(next)
+    next += file.text.split('\n').length
+  }
+  const locate = (streamLine: number): string => {
+    let k = 0
+    while (k + 1 < startsAt.length && (startsAt[k + 1] as number) <= streamLine) k += 1
+    return `${(sources[k] as VerilogSource).name} line ${streamLine - (startsAt[k] as number) + 1}`
+  }
+  return warnings.map((warning) =>
+    warning.replace(/\bline (\d+)\b/g, (_whole, digits: string) => locate(Number(digits))),
+  )
+}
+
+function importOneStream(text: string): ImportResult {
   const { tokens, warnings } = lex(text)
   const modules = new Map<string, ParsedModule>()
   const spans = new Map<string, Tok[]>()
@@ -3015,10 +3077,15 @@ export function importVerilog(text: string): ImportResult {
     warnings.push(...reports)
     if (mod === null) continue
     if (modules.has(mod.name)) {
+      // Keeping the first definition and reporting the second is how this silently built the WRONG design:
+      // two files each defining `leaf`, one `assign y = a` and one `assign y = ~a`, published a block that
+      // computes the opposite of the second definition with nothing but a warning to say so. Reading several
+      // files at once makes that ordinary — a shared cell file listed twice, two revisions of a core in one
+      // folder — so two definitions of one module is a refusal, not a note.
       warnings.push(
-        `module "${mod.name}" is declared more than once — the later one is not imported`,
+        `module "${mod.name}" is declared more than once — two definitions of one module cannot both be built, and building the first would mean publishing a design its own source contradicts, so no design is published`,
       )
-      continue
+      return { block: null, warnings, moduleName: mod.name }
     }
     modules.set(mod.name, mod)
     spans.set(mod.name, span)
@@ -3030,6 +3097,13 @@ export function importVerilog(text: string): ImportResult {
     warnings.push('no module declaration found')
     return { block: null, warnings, moduleName: null }
   }
+  // Supplied AFTER the source's own modules and never added to `order`: a definition the source itself gives
+  // always wins, and a cell nothing instantiates can never become the module chosen as the design.
+  const supplied = supplyYosysCells(modules, spans, declaredParams, defaultReports)
+  if (supplied.length > 0)
+    warnings.push(
+      `${supplied.length} gate ${supplied.length === 1 ? 'cell' : 'cells'} this netlist instantiates but does not define (${supplied.join(', ')}) came from the built-in yosys cell library`,
+    )
   const topName = chooseTopModule(modules, order, warnings)
   // A port of the module being PUBLISHED that this importer cannot represent has nowhere honest to go. On a
   // sub-module it is merely dropped (a connection to it is refused, an unconnected one costs nothing), but
@@ -3082,6 +3156,42 @@ export function importVerilog(text: string): ImportResult {
   const block = lower(mod, warnings)
   if (block === null) warnings.push(`module "${mod.name}" has no gate primitives to build`)
   return { block, warnings, moduleName: mod.name }
+}
+
+/**
+ * Give the collected modules a definition for every yosys gate cell the design instantiates and no file
+ * defines (verilog-cells.ts). A cell that does not read back exactly as the library wrote it is NOT supplied:
+ * the instance keeps refusing as a module this source does not define, which is the honest answer, rather
+ * than a whole CPU being built on a cell this importer got wrong. Returns the names actually supplied.
+ */
+function supplyYosysCells(
+  modules: Map<string, ParsedModule>,
+  spans: Map<string, Tok[]>,
+  declaredParams: Map<string, ModuleParams>,
+  defaultReports: Map<string, Set<string>>,
+): string[] {
+  const wanted = new Set<string>()
+  // hasOwn, not a plain lookup: a module named `constructor` or `toString` would otherwise find one
+  // of Object's own properties and be treated as a cell.
+  for (const mod of modules.values())
+    for (const inst of mod.instances)
+      if (!modules.has(inst.moduleName) && Object.hasOwn(YOSYS_CELLS, inst.moduleName))
+        wanted.add(inst.moduleName)
+  const supplied: string[] = []
+  for (const name of [...wanted].sort()) {
+    const reports: string[] = []
+    const span = splitModuleSpans(lex(YOSYS_CELLS[name] as string).tokens)[0]
+    if (span === undefined) continue
+    const elaborated = elaborateModule(span, reports)
+    const cell = parseModule(elaborateGenerate(elaborated.toks, reports), reports)
+    if (cell === null || cell.name !== name || reports.length > 0) continue
+    modules.set(name, cell)
+    spans.set(name, span)
+    declaredParams.set(name, elaborated.params)
+    defaultReports.set(name, new Set())
+    supplied.push(name)
+  }
+  return supplied
 }
 
 /**

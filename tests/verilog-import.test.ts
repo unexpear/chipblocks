@@ -322,12 +322,61 @@ describe('Verilog import — regressions from the adversarial review', () => {
     expect(block).not.toBeNull()
   })
 
-  test('an initial value on a REG declaration is not a continuous drive and is reported', () => {
+  // IEEE 1364-2005 §6.2.1 makes `reg r = <v>;` EQUIVALENT to `reg r; initial r = <v>;`, so it takes the same
+  // power-on path and gets the same answer. Measured on Icarus Verilog 14.0: both spellings, clocked by one
+  // always block, read `q=0 r=0` at power-on and `q=1 r=1` on every edge after it. Nothing clocks `r` here,
+  // so there is no flip-flop to hold the value and it is still reported — by that reason, not as a "drive".
+  test('an initial value on an UNCLOCKED reg declaration is reported (no flip-flop holds it)', () => {
     expect(
       has(
         importVerilog("module m(a,b,o); input a,b; output o; reg r = 1'b0; buf g(o,a); endmodule")
           .warnings,
-        'initial value on a "reg" declaration',
+        'nothing clocks it',
+      ),
+    ).toBe(true)
+  })
+
+  test('a zero initial value on a CLOCKED reg declaration builds — the flip-flop powers up holding it', () => {
+    const { block, warnings } = importVerilog(
+      "module m(clk,en,q); input clk,en; output q; reg q = 1'b0; always @(posedge clk) if (en) q <= 1'b1; endmodule",
+    )
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
+    expect(block).not.toBeNull()
+  })
+
+  // The flip-flops this importer builds power up holding 0, so a NONZERO initial value is refused by name
+  // rather than quietly built at 0 — the same answer the `initial` spelling has always given.
+  test('a nonzero initial value on a reg declaration is refused by name, like the initial spelling', () => {
+    const decl = importVerilog(
+      "module m(clk,en,q); input clk,en; output [7:0] q; reg [7:0] q = 8'd5; always @(posedge clk) if (en) q <= q + 8'd3; endmodule",
+    )
+    const initial = importVerilog(
+      "module m(clk,en,q); input clk,en; output [7:0] q; reg [7:0] q; initial q = 8'd5; always @(posedge clk) if (en) q <= q + 8'd3; endmodule",
+    )
+    expect(decl.block).toBeNull()
+    expect(initial.block).toBeNull()
+    expect(has(decl.warnings, 'power up holding 0, and this asks for 5')).toBe(true)
+    expect(decl.warnings).toEqual(initial.warnings)
+  })
+
+  // An assignment is a CONTEXT: the declared width truncates the value before it is compared against the
+  // flip-flop's power-up 0. Measured on Icarus Verilog 14.0, `reg [3:0] t = 8'd16;` powers up holding 0 and
+  // counts 1,2,3 on the next three edges — so this BUILDS, where an untruncated read would refuse at 16.
+  test('a declaration initializer truncates to the declared width before it is judged', () => {
+    const { block, warnings } = importVerilog(
+      "module m(clk,en,t); input clk,en; output [3:0] t; reg [3:0] t = 8'd16; always @(posedge clk) if (en) t <= t + 4'd1; endmodule",
+    )
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
+    expect(block).not.toBeNull()
+  })
+
+  test('an initial value on a MEMORY declaration is reported by name', () => {
+    expect(
+      has(
+        importVerilog(
+          'module m(clk,q); input clk; output [7:0] q; reg [7:0] s; reg [7:0] mem [3:0] = 0; always @(posedge clk) s <= mem[0]; assign q = s; endmodule',
+        ).warnings,
+        'an initial value on the memory "mem"',
       ),
     ).toBe(true)
   })

@@ -148,22 +148,25 @@ async function openCircuit(window: BrowserWindow): Promise<void> {
 }
 
 async function importNetlist(window: BrowserWindow): Promise<void> {
+  // Several files at once, because a real Verilog design IS several files — a CPU core in one, the system
+  // that instantiates it in another. Picking only the system file made the core look like a module nobody
+  // defined, and the whole design was refused for a definition sitting in the folder beside it.
   const picked = await dialog.showOpenDialog(window, {
     filters: NETLIST_FILTERS,
-    properties: ['openFile'],
+    properties: ['openFile', 'multiSelections'],
   })
-  const path = picked.filePaths[0]
-  if (picked.canceled || path === undefined) return
-  let text: string
-  try {
-    text = await readFile(path, 'utf8')
-  } catch (error) {
-    dialog.showErrorBox('Could not import netlist', `Reading the file failed: ${String(error)}`)
+  if (picked.canceled || picked.filePaths.length === 0) return
+  const files = await readAllAsText(picked.filePaths)
+  if (files === null) {
+    dialog.showErrorBox(
+      'Could not import netlist',
+      'One of the files you chose could not be read. Nothing has been changed.',
+    )
     return
   }
   // The renderer parses the netlist and shows the conversion report. An import is a NEW unsaved
   // circuit (not the opened .chipblocks file), so clear the current path → Save asks for a location.
-  window.webContents.send('file:netlist-opened', text)
+  window.webContents.send('file:netlist-opened', files)
   setCircuitPath(window, null)
 }
 

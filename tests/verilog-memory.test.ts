@@ -4,8 +4,10 @@
  * one-hot address decoder + read mux and a clocked write `m[addr] <= x` synthesizes per-word write-enables —
  * exactly the gate Data RAM's construction, but authored in Verilog. Proven by CLOCKING the built block on the
  * real logic engine: store a word, read it back, confirm persistence and nonblocking (read-old-value) timing.
- * Anything out of the supported subset (out-of-range address, unclocked array write, bit-select on a read,
- * memory-as-vector, non-`[0:W-1]` range) is REPORTED, never faked.
+ * Both zero-based spellings of the range are the same memory (`[0:W-1]` and `[W-1:0]`) — an unpacked array is
+ * indexed by the value, not by the declaration's direction. Anything out of the supported subset (out-of-range
+ * address, unclocked array write, bit-select on a read, memory-as-vector, a NONZERO-based range) is REPORTED,
+ * never faked.
  */
 
 import { describe, expect, test } from 'vitest'
@@ -222,14 +224,74 @@ describe('memory synthesis — honest reporting of what cannot be built', () => 
     expect(warnings.some((x) => /used as a plain value/i.test(x))).toBe(true)
   })
 
-  test('a descending / nonzero-based array range is reported (needs [0:W-1])', () => {
+  // A DESCENDING zero-based array is the same memory as the ascending spelling — an unpacked array is indexed
+  // by the value, not by the declaration's direction. Measured on Icarus Verilog 14.0: `reg [7:0] d [3:0]` and
+  // `reg [7:0] a [0:3]` filled by one `for (i=0;i<4;i=i+1)` loop both read `01 12 23 34` at indices 0,1,2,3.
+  // `[3:0]` is how a real 6502 spells its A/X/Y/S register file, and refusing it cost the whole CPU.
+  const descRam = (range: string) =>
+    `module dm(input clk, input we, input [1:0] waddr, input [7:0] wdata, input [1:0] raddr, output [7:0] q);
+       reg [7:0] mem ${range};
+       always @(posedge clk) if (we) mem[waddr] <= wdata;
+       assign q = mem[raddr];
+     endmodule`
+
+  test('a descending zero-based array range builds the same memory as the ascending one', () => {
+    const desc = build(descRam('[3:0]'))
+    const asc = build(descRam('[0:3]'))
+    expect(desc.nodes.length).toBe(asc.nodes.length)
+    expect(desc.ports.map((p) => p.id).sort()).toEqual(asc.ports.map((p) => p.id).sort())
+  })
+
+  // Golden from Icarus Verilog 14.0 on the same module + a testbench writing 0x07,0x18,0x29,0x3a to words
+  // 0..3 and reading them back: `q[0] = 07  q[1] = 18  q[2] = 29  q[3] = 3a`.
+  test('a descending zero-based array reads back what Icarus reads back', () => {
+    const ram = build(descRam('[3:0]'))
+    const state = new Map<string, boolean>()
+    const written = [0x07, 0x18, 0x29, 0x3a]
+    for (const [word, value] of written.entries())
+      tick(
+        ram,
+        { we: true, ...bus('waddr', word, 2), ...bus('wdata', value, 8), ...bus('raddr', 0, 2) },
+        state,
+      )
+    const readBack = written.map((_, word) =>
+      readReg(
+        solve(
+          ram,
+          {
+            we: false,
+            clk: false,
+            ...bus('waddr', 0, 2),
+            ...bus('wdata', 0, 8),
+            ...bus('raddr', word, 2),
+          },
+          state,
+        ),
+        'q',
+        8,
+      ),
+    )
+    expect(readBack).toEqual(written)
+  })
+
+  // A NONZERO-based array is a different memory and stays reported: Icarus Verilog 14.0 reads x below its low
+  // bound (`reg [7:0] nz [2:5]` reads xx at nz[0] and nz[1]), which needs an address offset we do not build.
+  test.each([
+    ['[2:5]', /does not start at word 0/],
+    ['[5:2]', /does not start at word 0/],
+    ['[1:4]', /does not start at word 0/],
+    ['[-1:2]', /has a negative word index/],
+  ])('a %s array range is still reported by name', (range, said) => {
     const warnings = warnOf(
       `module m(input clk, input [3:0] din, output [3:0] q);
-         reg [3:0] mem [15:0];
+         reg [3:0] mem ${range};
          assign q = din;
        endmodule`,
     )
-    expect(warnings.some((x) => /array range/i.test(x) && /\[0:N-1\]/.test(x))).toBe(true)
+    expect(
+      warnings.some((x) => /array range/.test(x) && said.test(x)),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
   })
 
   test('a memory read but never written is reported (write before read)', () => {
