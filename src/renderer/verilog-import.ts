@@ -38,8 +38,12 @@ import {
   type ConstVal,
   evalConst,
   extendTo,
+  loopAdvance,
+  loopContinues,
+  loopCounter,
   MAX_WIDTH,
   splitOnColon,
+  substituteCounter,
 } from './verilog-const.ts'
 import { elaborateGenerate, generateRegionInfo } from './verilog-generate.ts'
 import { chooseTopModule, flattenHierarchy } from './verilog-hierarchy.ts'
@@ -448,8 +452,13 @@ export type Assign = {
  *  `growWidth` that belongs to a parameter value, and that width contains the shift wall: `reg [7:0] r;
  *  initial r = 4'd8 << 1;` folded to 0 at four bits, matched the flip-flop's power-up 0, and BUILT — where
  *  Icarus Verilog 14.0 powers the register up holding 16. Truncating the folded value cannot repair it (0
- *  truncated to eight bits is still 0); the width has to reach the fold, so the tokens go instead. */
-export type PowerOnValue = { name: string; expr: Tok[]; line: number }
+ *  truncated to eight bits is still 0); the width has to reach the fold, so the tokens go instead.
+ *
+ *  `index` is the WORD an array power-on loads — `initial m[2] = 8'h33;`, which is how every real ROM is
+ *  written. It is absent for the ordinary scalar form. The word number is resolved here (a loop over the
+ *  array has to be unrolled to know which words it names at all) while the VALUE still travels unfolded, for
+ *  the same reason: its context is the word's declared width, and only the synthesizer knows that. */
+export type PowerOnValue = { name: string; expr: Tok[]; line: number; index?: number }
 /** An always block captured as token spans; the synthesizer elaborates the body. `clk` is the clock net for a
  *  `@(posedge clk)` block (→ flip-flops) or null for a combinational `@(*)`/`@*`/`@(a or b)` block (→ gates). */
 export type AlwaysBlock = {
@@ -1222,30 +1231,155 @@ function collectStatement(c: Cursor): Tok[] {
  * of a register. Anything else an `initial` block does happens at time zero in a simulator and has no image
  * in a netlist at all.
  */
-function initialPowerOnValues(span: Tok[]): PowerOnValue[] | null {
-  let i = 1 // past `initial`
-  let end = span.length
-  if (span[i]?.k === 'kw' && span[i]?.v === 'begin') {
-    if (span[end - 1]?.k !== 'kw' || span[end - 1]?.v !== 'end') return null
-    i += 1
-    end -= 1
-  }
+function initialPowerOnValues(
+  span: Tok[],
+  widths: Map<string, number>,
+  signed: Set<string>,
+): PowerOnValue[] | null {
   const out: PowerOnValue[] = []
-  while (i < end) {
-    const name = span[i]
-    if (name === undefined || name.k !== 'id') return null
-    if (span[i + 1]?.v !== '=') return null
-    let j = i + 2
-    while (j < end && span[j]?.v !== ';') j += 1
-    const expr = span.slice(i + 2, j)
-    // Fold once here only to prove the expression IS a constant — an `initial` whose value is not constant is
-    // not a power-on value at all, and the whole block goes back to being an unbuildable construct. The value
-    // itself is deliberately discarded: it is the synthesizer that folds it, at the register's own width.
-    if (evalConst(expr) === undefined) return null
-    out.push({ name: name.v, expr, line: name.line })
-    i = j + 1
-  }
+  const budget = { left: MAX_INITIAL_ITERATIONS }
+  const body = span.slice(1) // past `initial`
+  if (readPowerOnStatement(body, 0, { widths, signed, budget, out }) !== body.length) return null
   return out.length === 0 ? null : out
+}
+
+/** How many array words ONE `initial` block may load through unrolled loops. A ROM fill is the whole reason
+ *  the loop is unrolled at all, so the bound is a real memory's worth of words rather than a token count. */
+const MAX_INITIAL_ITERATIONS = 65536
+
+type PowerOnScan = {
+  widths: Map<string, number>
+  signed: Set<string>
+  budget: { left: number }
+  out: PowerOnValue[]
+}
+
+/** The index just past the statement starting at `from`: past its `;`, or past the `end` closing a `begin`.
+ *  Returns -1 for a `begin` that is never closed. A statement that simply runs out of tokens (the last one in
+ *  a block written without a trailing `;`) ends at the end of the span. */
+function powerOnStatementEnd(toks: Tok[], from: number): number {
+  if (toks[from]?.k === 'kw' && toks[from]?.v === 'begin') {
+    let level = 0
+    for (let i = from; i < toks.length; i++) {
+      const t = toks[i] as Tok
+      if (t.k !== 'kw') continue
+      if (t.v === 'begin') level += 1
+      else if (t.v === 'end') {
+        level -= 1
+        if (level === 0) return i + 1
+      }
+    }
+    return -1
+  }
+  let depth = 0
+  for (let i = from; i < toks.length; i++) {
+    const t = toks[i] as Tok
+    if (t.v === '(' || t.v === '[' || t.v === '{') depth += 1
+    else if (t.v === ')' || t.v === ']' || t.v === '}') depth -= 1
+    else if (depth === 0 && t.v === ';') return i + 1
+    else if (depth === 0 && t.k === 'kw' && t.v === 'end') return i
+  }
+  return toks.length
+}
+
+/**
+ * One power-on statement — a constant load (`phase = 1'b0;`, `m[2] = 8'h33;`), a `begin … end` of them, or a
+ * `for` loop that writes them. Returns the index just past it, or -1 for anything else, which puts the whole
+ * `initial` back on the ordinary not-built path.
+ */
+function readPowerOnStatement(toks: Tok[], from: number, scan: PowerOnScan): number {
+  const t = toks[from]
+  if (t === undefined) return -1
+  if (t.k === 'kw' && t.v === 'begin') {
+    // `begin : name` — a named block's label is scope, not a statement.
+    let i = toks[from + 1]?.v === ':' ? from + 3 : from + 1
+    while (!(toks[i]?.k === 'kw' && toks[i]?.v === 'end')) {
+      const next = readPowerOnStatement(toks, i, scan)
+      if (next === -1 || next <= i) return -1
+      i = next
+    }
+    return i + 1
+  }
+  if (t.k === 'id' && t.v === 'for') return readPowerOnFor(toks, from, scan)
+  if (t.k !== 'id') return -1
+  const past = powerOnStatementEnd(toks, from)
+  if (past === -1) return -1
+  const stop = toks[past - 1]?.v === ';' ? past - 1 : past
+  let at = from + 1
+  let indexToks: Tok[] | undefined
+  if (toks[at]?.v === '[') {
+    const close = matchBracket(toks, at)
+    if (close === -1 || close >= stop) return -1
+    indexToks = toks.slice(at + 1, close)
+    at = close + 1
+  }
+  if (toks[at]?.v !== '=') return -1
+  const expr = toks.slice(at + 1, stop)
+  // Fold once here only to prove the expression IS a constant — an `initial` whose value is not constant is
+  // not a power-on value at all, and the whole block goes back to being an unbuildable construct. The value
+  // itself is deliberately discarded: it is the synthesizer that folds it, at the register's own width.
+  if (evalConst(expr) === undefined) return -1
+  if (indexToks === undefined) {
+    scan.out.push({ name: t.v, expr, line: t.line })
+    return past
+  }
+  // The WORD number, unlike the value, has to be known here: a loop over the array names different words on
+  // each iteration, and an index that does not fold names none this importer can point at.
+  const folded = evalConst(indexToks, undefined, 'self')
+  if (folded === undefined) return -1
+  const index = Number(asInteger(folded))
+  if (!Number.isSafeInteger(index) || index < 0 || index > MAX_WIDTH) return -1
+  scan.out.push({ name: t.v, expr, line: t.line, index })
+  return past
+}
+
+/** Name a `$readmemh`/`$readmemb` for what it is. Both load a memory FROM A FILE at simulation time, so there
+ *  is no constant here to build a ROM out of — and a reader who is told only "a construct this importer does
+ *  not build" has no way to know that the array's whole contents are what went missing. The refusal itself is
+ *  the ordinary one: a system-task call names no net, so the module is not built. */
+function reportFileLoad(span: Tok[], warnings: string[]): void {
+  for (let i = 0; i < span.length; i++) {
+    const t = span[i] as Tok
+    if (t.k !== 'sys' || (t.v !== '$readmemh' && t.v !== '$readmemb')) continue
+    // $readmemh(file, memory [, start [, end]]) — the memory is the argument after the first comma.
+    const open = span[i + 1]?.v === '(' ? i + 1 : -1
+    const comma = open === -1 ? -1 : span.findIndex((s, k) => k > open && s.v === ',')
+    const array = comma === -1 ? undefined : span[comma + 1]
+    warnings.push(
+      `line ${t.line}: "${t.v}" loads ${array === undefined || array.k !== 'id' ? 'a memory' : `the memory "${array.v}"`} from a file when a simulator runs — this importer builds hardware and reads no files, so those contents cannot be built — reported, not built`,
+    )
+  }
+}
+
+/** A `for` loop inside an `initial` — the ordinary way a ROM fill is written. Unrolled with the same counter
+ *  the generate elaborator and the procedural unroller count with, so a loop that cannot be proved to
+ *  terminate at its declared width is refused rather than unrolled at whatever a JavaScript loop reaches. */
+function readPowerOnFor(toks: Tok[], from: number, scan: PowerOnScan): number {
+  if (toks[from + 1]?.v !== '(') return -1
+  const close = matchBracket(toks, from + 1)
+  if (close === -1) return -1
+  const fold = (s: Tok[]): ConstVal | undefined => evalConst(s, undefined, 'self')
+  const counter = loopCounter(
+    toks.slice(from + 2, close),
+    fold,
+    (n) => scan.widths.get(n) ?? 1,
+    (n) => scan.signed.has(n),
+  )
+  if ('bad' in counter) return -1
+  const bodyEnd = powerOnStatementEnd(toks, close + 1)
+  if (bodyEnd === -1) return -1
+  const body = toks.slice(close + 1, bodyEnd)
+  for (;;) {
+    const another = loopContinues(counter, fold)
+    if ('bad' in another) return -1
+    if (!another.go) return bodyEnd
+    if (scan.budget.left <= 0) return -1
+    scan.budget.left -= 1
+    const iteration = substituteCounter(body, counter)
+    if ('bad' in iteration) return -1
+    if (readPowerOnStatement(iteration, 0, scan) !== iteration.length) return -1
+    if (loopAdvance(counter, fold) !== undefined) return -1
+  }
 }
 
 /** Collect a `generate … endgenerate` region, which holds SEVERAL statements and so cannot end at the first
@@ -1492,11 +1626,12 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       // register, and both lose theirs; read for what it is, it is either satisfied by the flip-flop this
       // importer builds or refused by name. The synthesizer decides which, because only it knows which
       // registers are clocked.
-      const powerOn = t.v === 'initial' ? initialPowerOnValues(span) : null
+      const powerOn = t.v === 'initial' ? initialPowerOnValues(span, widths, signed) : null
       if (powerOn !== null) {
         powerOnValues.push(...powerOn)
         continue
       }
+      reportFileLoad(span, warnings)
       const targets = t.v === 'defparam' ? null : assignmentTargets(span)
       // `defparam` overrides a parameter somewhere else in the design. It drives nothing itself, but every
       // width and constant computed from that parameter is wrong without it, and there is no net to name.

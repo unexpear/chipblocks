@@ -1780,8 +1780,15 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     return out
   }
   /** The bits a refused driver's target span claims: read as an lvalue where that works, else every net the
-   *  span names. */
+   *  span names.
+   *
+   *  A MEMORY word is the exception, and it was a silent wrong answer: `m[0]` reads as an ordinary bit-select
+   *  to lhsBits, which knows only nets, so an `initial` block filling a ROM claimed bit 0 of a phantom 1-bit
+   *  net called "m" — a name nothing ever reads. The refusal landed nowhere and the design published with
+   *  every ROM word at 0. Any span naming a memory goes to bitsNamedIn, which expands it to the real word
+   *  registers. */
   const targetBits = (span: Tok[]): string[] => {
+    if (span.some((t) => t.k === 'id' && mod.mems.has(t.v))) return bitsNamedIn(span)
     const lb = lhsBits(span, widthOf, bitNet)
     return 'bits' in lb ? lb.bits : bitsNamedIn(span)
   }
@@ -2282,11 +2289,19 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     }
   }
 
+  // The words an `initial` block loads at power-on. A word listed here is written even though no clock writes
+  // it — it is a mask-ROM word, built below out of the constant it holds.
+  const powerOnWords = new Set(
+    mod.powerOnValues
+      .filter((v) => v.index !== undefined && mod.mems.has(v.name))
+      .map((v) => memWord(v.name, v.index as number)),
+  )
+
   // A memory that is read but never written has undriven word registers (its read-mux inputs float). Real
   // memory powers up undefined, so this is a write-before-read hazard worth surfacing rather than a hard error.
   for (const [name, info] of mod.mems) {
-    const anyWritten = Array.from({ length: info.depth }, (_, k) => memWord(name, k)).some((w) =>
-      registered.has(w),
+    const anyWritten = Array.from({ length: info.depth }, (_, k) => memWord(name, k)).some(
+      (w) => registered.has(w) || powerOnWords.has(w),
     )
     if (anyWritten) continue
     const isRead =
@@ -2303,6 +2318,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   // else is refused by name rather than quietly ignored. Read as a DRIVER instead, this used to contend with
   // the always block clocking the same register and cost both of them their drivers.
   for (const v of mod.powerOnValues) {
+    if (v.index !== undefined) continue // an array word — built or refused per-word below
     const width = widthOf(v.name)
     const bits = Array.from({ length: width }, (_, i) => bitNet(v.name, i))
     // An assignment is a CONTEXT, and here it is the register's declared width: IEEE 1364-2005 §5.5.2 pushes
@@ -2327,6 +2343,77 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       bits.length === 0 ? [bitNet(v.name, 0)] : bits,
     )
   }
+
+  // `initial m[2] = 8'h33;` — the contents of a memory at power-on, which is how every real ROM is written.
+  // A word NO clock writes is a mask-ROM word and is built as the constant it holds, so the array really does
+  // read back what the source put in it. A word a clocked block also writes is a flip-flop, and there the
+  // scalar rule above applies unchanged: our flops power up holding 0, so only a zero survives.
+  const refusePowerOnWord = (v: PowerOnValue, why: string, bits: string[]): void => {
+    const at = `"${v.name}[${v.index}]"`
+    warnings.push(`line ${v.line}: initial value on ${at} — ${why} — reported, not built`)
+    markUnbuiltReason(
+      `the power-on value of ${at} (line ${v.line}) — ${why}`,
+      bits.length === 0 ? [bitNet(v.name, 0)] : bits,
+    )
+  }
+  const romGates: GateInst[] = []
+  for (const v of mod.powerOnValues) {
+    const index = v.index
+    if (index === undefined) continue
+    const info = mod.mems.get(v.name)
+    if (info === undefined) {
+      refusePowerOnWord(
+        v,
+        `"${v.name}" is not a declared memory, so this loads one BIT of a register and not a word`,
+        Array.from({ length: widthOf(v.name) }, (_, i) => bitNet(v.name, i)),
+      )
+      continue
+    }
+    if (index >= info.depth) {
+      refusePowerOnWord(
+        v,
+        `word ${index} is past the end of the ${info.depth}-word memory "${v.name}"`,
+        bitsNamedIn([{ k: 'id', v: v.name, line: v.line }]),
+      )
+      continue
+    }
+    const word = memWord(v.name, index)
+    const width = info.width
+    const bits = Array.from({ length: width }, (_, i) => bitNet(word, i))
+    const folded = evalConst(v.expr, undefined, width)
+    const powerOn = folded === undefined ? undefined : extendTo(folded, width, folded.signed)
+    if (powerOn === undefined) {
+      refusePowerOnWord(
+        v,
+        `its value does not fold to a constant at the ${width}-bit word width`,
+        bits,
+      )
+      continue
+    }
+    if (registered.has(word)) {
+      if (powerOn === 0n) continue
+      refusePowerOnWord(
+        v,
+        `a clocked block writes this word, and the flip-flops this importer builds power up holding 0, not ${powerOn}`,
+        bits,
+      )
+      continue
+    }
+    const where = `line ${v.line}: power-on contents of "${word}"`
+    const refused = ledger.claim(where, bits)
+    for (let i = 0; i < width; i++) {
+      const bit = bits[i] as string
+      if (refused.has(bit)) continue
+      const from = tie(((powerOn >> BigInt(i)) & 1n) === 1n ? 1 : 0)
+      if (from === undefined) {
+        refused.set(bit, NEEDS_TIE)
+        continue
+      }
+      romGates.push({ prim: 'buf', terminals: [bit, from] })
+    }
+    if (refused.size > 0) reportRefusedBits(where, bits, refused)
+  }
+  mod.gates.push(...romGates)
 
   mod.gates.push(...tieGates) // tie drivers read only inputs → never on a cycle → always safe to keep
 
@@ -2895,8 +2982,13 @@ function countDeclaredDrivers(
       targets === null ? scope.bitsNamedIn(block.body) : targets.flatMap(scope.targetBits)
     for (const bit of bits) opaque.add(bit)
   }
+  // Through bitsNamedIn rather than a width loop, so a power-on value on a MEMORY poisons that memory's real
+  // word registers instead of the bits of a net by the same name that holds none of them. For an ordinary
+  // register the two agree bit for bit except that bitsNamedIn drops this module's own inputs, and the only
+  // reader of `opaque` skips inputs anyway.
   for (const powerOn of mod.powerOnValues)
-    for (let i = 0; i < scope.widthOf(powerOn.name); i++) opaque.add(scope.bitNet(powerOn.name, i))
+    for (const bit of scope.bitsNamedIn([{ k: 'id', v: powerOn.name, line: powerOn.line }]))
+      opaque.add(bit)
 
   const strengths = new Map<string, DriveStrength[]>()
   const addDriver = (bit: string, strength: DriveStrength | undefined): void => {

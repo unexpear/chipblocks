@@ -16,14 +16,14 @@
  */
 
 import { describe, expect, test } from 'vitest'
+import type { BlockData } from '../src/renderer/blocks.ts'
 import { characterizeBlock } from '../src/renderer/logic-sim.ts'
 import { importVerilog } from '../src/renderer/verilog-import.ts'
 
 /** `o` for one (a, b) pair, read off the block's real gates. Null when the design was refused. */
-function outputFor(source: string, a: number, b: number): number | null {
-  const result = importVerilog(source)
-  if (result.block === null) return null
-  const table = characterizeBlock(result.block)
+function outputOf(block: BlockData | null, a: number, b: number): number | null {
+  if (block === null) return null
+  const table = characterizeBlock(block)
   if (table === null) return null
   let row = 0
   for (let i = 0; i < table.inputs.length; i++) {
@@ -40,6 +40,10 @@ function outputFor(source: string, a: number, b: number): number | null {
     if (at !== -1 && bits.out[at] === true) out |= 1 << bit
   }
   return out
+}
+
+function outputFor(source: string, a: number, b: number): number | null {
+  return outputOf(importVerilog(source).block, a, b)
 }
 
 const XOR_HELPER = `module m2(a, b, o);
@@ -270,5 +274,162 @@ ${PORTS}  wire [3:0] t;
 endmodule
 `
     expect(importVerilog(source).moduleName).not.toBe('deep')
+  })
+})
+
+/**
+ * AND THE CHOICE CANNOT DEPEND ON THE ORDER THE FILES WERE PICKED IN.
+ *
+ * Measured on the real die-derived Intel 8080: `sys8080.v + vm80a_sync.v` built the 11,155-part system and ran
+ * its program; the SAME TWO FILES the other way round refused, because the choice was "the first surviving
+ * name in declaration order" and the reversed list put the thin board wrapper `vm80a` first — a genuine root
+ * too, but one whose inout data bus this importer cannot represent. Same inputs, opposite result, decided by
+ * the order the user happened to click the files in.
+ *
+ * The designs below are the same shapes, small enough to check by EXECUTION. Every expected value came from
+ * Icarus Verilog 14.0 over all 256 (a, b) vectors, not from reading this importer's own output back.
+ */
+const CORE_AND_WRAPPER = `module wrap(a, d, y);
+  input [3:0] a;
+  inout [3:0] d;
+  output [3:0] y;
+  wire [3:0] t;
+  core c (.a(a), .b(d), .y(t));
+  assign d = 4'bzzzz;
+  assign y = t;
+endmodule
+module core(a, b, y);
+  input [3:0] a;
+  input [3:0] b;
+  output [3:0] y;
+  assign y = a ^ b;
+endmodule
+`
+const SYSTEM_ON_THAT_CORE = `module sys(a, b, o);
+${PORTS}  wire [3:0] t;
+  core c (.a(a), .b(b), .y(t));
+  assign o = t | b;
+endmodule
+`
+
+const TINY_ROOT = `module tiny(a, b, o);
+${PORTS}  assign o = a & b;
+endmodule
+`
+const LEAF = `module leaf(a, y);
+  input [3:0] a;
+  output [3:0] y;
+  assign y = ~a;
+endmodule
+`
+const BIG_ROOT = `module big(a, b, o);
+${PORTS}  wire [3:0] t;
+  leaf u (a, t);
+  assign o = (t ^ b) | (a & b);
+endmodule
+`
+
+const ALPHA = `module alpha(a, b, o);
+${PORTS}  assign o = a & b;
+endmodule
+`
+const BETA = `module beta(a, b, o);
+${PORTS}  assign o = a | b;
+endmodule
+`
+
+describe('which module is the design cannot depend on the order the files arrived in', () => {
+  test('a two-file design imports the same way round either way, down to the warnings', () => {
+    // Icarus Verilog 14.0 on `sys`, all 256 vectors: o = (a ^ b) | b. `wrap` is the other genuine root and
+    // this importer must refuse it (inout data bus), so the design is `sys` whichever file came first.
+    const system = { name: 'system.v', text: SYSTEM_ON_THAT_CORE }
+    const wrapper = { name: 'wrapper.v', text: CORE_AND_WRAPPER }
+    const forward = importVerilog([system, wrapper])
+    const reversed = importVerilog([wrapper, system])
+    expect(forward.moduleName).toBe('sys')
+    expect(reversed.moduleName).toBe('sys')
+    expect(reversed.warnings).toEqual(forward.warnings)
+    for (let a = 0; a < 16; a++)
+      for (let b = 0; b < 16; b++) {
+        expect(outputOf(forward.block, a, b)).toBe((a ^ b) | b)
+        expect(outputOf(reversed.block, a, b)).toBe((a ^ b) | b)
+      }
+  })
+
+  test('a root that could only ever be refused loses to one that can be built, and it says so', () => {
+    const result = importVerilog([
+      { name: 'wrapper.v', text: CORE_AND_WRAPPER },
+      { name: 'system.v', text: SYSTEM_ON_THAT_CORE },
+    ])
+    expect(result.warnings.some((w) => w.includes('importing "sys"'))).toBe(true)
+    expect(result.warnings.some((w) => w.includes('cannot represent'))).toBe(true)
+  })
+
+  test('the real top is the design when it is declared LAST, and when it is declared first', () => {
+    // Icarus Verilog 14.0 on `big`, all 256 vectors: o = ((~a) ^ b) | (a & b). `tiny` is the other root and
+    // answers a & b, so a choice that landed on it would read 1 where this reads 15 at a = 0, b = 15.
+    const lastPlace = importVerilog(`${TINY_ROOT}${LEAF}${BIG_ROOT}`)
+    const firstPlace = importVerilog(`${BIG_ROOT}${LEAF}${TINY_ROOT}`)
+    expect(lastPlace.moduleName).toBe('big')
+    expect(firstPlace.moduleName).toBe('big')
+    for (let a = 0; a < 16; a++)
+      for (let b = 0; b < 16; b++) {
+        const expected = ((~a & 15) ^ b) | (a & b)
+        expect(outputOf(lastPlace.block, a, b)).toBe(expected)
+        expect(outputOf(firstPlace.block, a, b)).toBe(expected)
+      }
+  })
+
+  test('two genuinely independent tops are separated by name, never by position', () => {
+    // Nothing in the source tells these two apart — same size, both buildable, neither instantiates the
+    // other. Icarus Verilog 14.0 on `alpha`, all 256 vectors: o = a & b.
+    const betaFirst = importVerilog(`${BETA}${ALPHA}`)
+    const alphaFirst = importVerilog(`${ALPHA}${BETA}`)
+    expect(betaFirst.moduleName).toBe('alpha')
+    expect(alphaFirst.moduleName).toBe('alpha')
+    expect(betaFirst.warnings.some((w) => w.includes('chosen by name'))).toBe(true)
+    for (let a = 0; a < 16; a++)
+      for (let b = 0; b < 16; b++) {
+        expect(outputOf(betaFirst.block, a, b)).toBe(a & b)
+        expect(outputOf(alphaFirst.block, a, b)).toBe(a & b)
+      }
+  })
+
+  test('one module on its own is the design, with no choice to report', () => {
+    // Icarus Verilog 14.0, all 256 vectors: o = (a + b) truncated to 4 bits.
+    const source = `module solo(a, b, o);
+${PORTS}  assign o = a + b;
+endmodule
+`
+    const result = importVerilog(source)
+    expect(result.moduleName).toBe('solo')
+    expect(result.warnings.some((w) => w.includes('look top-level'))).toBe(false)
+    for (let a = 0; a < 16; a++)
+      for (let b = 0; b < 16; b++) expect(outputOf(result.block, a, b)).toBe((a + b) & 15)
+  })
+
+  test('a root hidden by a construct this importer skips stays hidden in either file order', () => {
+    // The doubt that keeps a hidden sub-module from being published as the design has to survive the files
+    // being listed the other way round, or the whole guard is order-dependent too.
+    const helper = { name: 'helper.v', text: XOR_HELPER }
+    const design = {
+      name: 'design.v',
+      text: `module m(a, b, o);
+${PORTS}  wire [3:0] t;
+  generate if ($clog2(8) == 3) begin: gg
+    m2 u (a, b, t);
+  end endgenerate
+  assign o = t | b;
+endmodule
+`,
+    }
+    for (const files of [
+      [helper, design],
+      [design, helper],
+    ]) {
+      const result = importVerilog(files)
+      expect(result.moduleName).not.toBe('m2')
+      expect(result.block).toBeNull()
+    }
   })
 })

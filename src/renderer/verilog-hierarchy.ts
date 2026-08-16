@@ -110,9 +110,91 @@ export function pickSeparator(identifiers: Set<string>): string {
   return sep
 }
 
+/** Everything reachable from `root` by instantiation, `root` itself included. A recursive design terminates
+ *  on `seen` rather than spinning; flattenHierarchy is where the recursion is reported. */
+function instantiationCone(modules: Map<string, ParsedModule>, root: string): Set<string> {
+  const seen = new Set<string>()
+  const pending = [root]
+  while (pending.length > 0) {
+    const name = pending.pop() as string
+    if (seen.has(name)) continue
+    seen.add(name)
+    const mod = modules.get(name)
+    if (mod === undefined) continue
+    for (const inst of mod.instances)
+      if (modules.has(inst.moduleName)) pending.push(inst.moduleName)
+  }
+  return seen
+}
+
+/** The module items that become hardware. Net and parameter declarations are deliberately not counted: they
+ *  describe the design, they are not part of it, and a root with many wires is not thereby a bigger design. */
+function hardwareItems(mod: ParsedModule): number {
+  return (
+    mod.gates.length +
+    mod.assigns.length +
+    mod.alwaysBlocks.length +
+    mod.instances.length +
+    mod.mems.size
+  )
+}
+
+/** What is known about one candidate root, all of it read off the design graph rather than off the order the
+ *  modules happened to be declared in. */
+type RootRank = {
+  name: string
+  /** False when a port of this module is one the importer must refuse (an inout bus, an unfoldable range).
+   *  Choosing such a root cannot end in a design — importVerilog refuses on it the moment it is named. */
+  representable: boolean
+  /** How much of the source this root accounts for: modules in its cone, then hardware items across them. */
+  coneModules: number
+  coneItems: number
+}
+
+function rankRoot(modules: Map<string, ParsedModule>, name: string): RootRank {
+  const cone = instantiationCone(modules, name)
+  let coneItems = 0
+  for (const inCone of cone) {
+    const mod = modules.get(inCone)
+    if (mod !== undefined) coneItems += hardwareItems(mod)
+  }
+  return {
+    name,
+    representable: (modules.get(name)?.unrepresentablePorts.length ?? 0) === 0,
+    coneModules: cone.size,
+    coneItems,
+  }
+}
+
+/** A total order over candidate roots, so sorting cannot depend on the order they arrived in. Best first. */
+function betterRoot(a: RootRank, b: RootRank): number {
+  if (a.representable !== b.representable) return a.representable ? -1 : 1
+  if (a.coneModules !== b.coneModules) return b.coneModules - a.coneModules
+  if (a.coneItems !== b.coneItems) return b.coneItems - a.coneItems
+  if (a.name === b.name) return 0
+  return a.name < b.name ? -1 : 1
+}
+
+/** Why the winner beat the runner-up, in the words of whichever rule actually separated them. */
+function whyChosen(best: RootRank, next: RootRank): string {
+  if (best.representable !== next.representable)
+    return `, because "${next.name}" has a port this importer cannot represent and so could only ever be refused`
+  if (best.coneModules !== next.coneModules || best.coneItems !== next.coneItems)
+    return `, the root that accounts for most of this source (${best.coneModules} of the modules, ${best.coneItems} hardware items, against ${next.coneModules} and ${next.coneItems} for "${next.name}")`
+  return `, chosen by name because nothing in the source itself separates it from "${next.name}"`
+}
+
 /** The module nothing else instantiates. With exactly one such root that is unambiguously the top; with none
  *  (a cycle) or several (independent designs in one file) one is chosen and WHICH one is said out loud rather
  *  than left to chance.
+ *
+ *  Chosen, never taken. The choice used to be "the first surviving name in declaration order", which made the
+ *  order the user picked files in decide a CPU import: `sys8080.v + vm80a_sync.v` built the 8080 system, and
+ *  the same two files the other way round refused, because the thin board wrapper `vm80a` — a genuine root
+ *  too, but one whose inout data bus this importer cannot represent — came first. Same inputs, opposite
+ *  result. So every rule below reads the design graph instead: a root that could only be refused loses to one
+ *  that can be built, then the root accounting for most of the source wins, and a genuine tie is broken by
+ *  name and said so. None of them can see what order the modules were declared in.
  *
  *  A span this importer swallowed without parsing — a `generate` body, or a bare `for` generate loop that read
  *  as an unparseable instantiation — is the one place a module instantiation can hide. Nobody read those
@@ -136,22 +218,29 @@ export function chooseTopModule(
     for (const name of mod.namesInsideUnparsedSpans)
       if (modules.has(name) && name !== mod.name) maybeInstantiated.add(name)
   const roots = order.filter((name) => !instantiated.has(name))
-  const hiddenRoots = roots.filter((name) => maybeInstantiated.has(name))
-  // Prefer a root no unparsed span mentions, then any root — never `order[0]`, which can be a module this
-  // very function has just worked out IS instantiated by another one.
-  const candidates = roots.filter((name) => !maybeInstantiated.has(name))
-  const chosen = (candidates[0] ?? roots[0] ?? order[0]) as string
   if (roots.length === 1) return roots[0] as string
+  // With no root at all every module is instantiated by another one, so none of them is the design and the
+  // recursion is what the caller will hear about. One is still named, and named the same way whatever order
+  // the files arrived in, so that refusal is reproducible too.
+  const pool = roots.length > 0 ? roots : order
+  const certain = pool.filter((name) => !maybeInstantiated.has(name))
+  const contenders = (certain.length > 0 ? certain : pool).map((name) => rankRoot(modules, name))
+  contenders.sort(betterRoot)
+  const best = contenders[0] as RootRank
+  const chosen = best.name
+  if (order.length <= 1) return chosen
+  const hiddenRoots = roots.filter((name) => maybeInstantiated.has(name)).sort()
   const hiddenNote =
     hiddenRoots.length === 0
       ? ''
       : ` (${hiddenRoots.map((h) => `"${h}"`).join(', ')} ${hiddenRoots.length === 1 ? 'is' : 'are'} named inside a construct this importer did not build, so an instantiation of ${hiddenRoots.length === 1 ? 'it' : 'them'} would not have been seen)`
-  if (order.length > 1)
-    warnings.push(
-      roots.length === 0
-        ? `every module in this source is instantiated by another (a recursive design) — importing the first, "${chosen}"`
-        : `${order.length} modules found and ${roots.length} of them look top-level (${roots.join(', ')})${hiddenNote} — importing "${chosen}"`,
-    )
+  const next = contenders[1]
+  const reason = next === undefined ? '' : whyChosen(best, next)
+  warnings.push(
+    roots.length === 0
+      ? `every module in this source is instantiated by another (a recursive design) — importing "${chosen}"${reason}`
+      : `${order.length} modules found and ${roots.length} of them look top-level (${[...roots].sort().join(', ')})${hiddenNote} — importing "${chosen}"${reason}`,
+  )
   return chosen
 }
 
@@ -407,11 +496,16 @@ function inlineInstance(
       lhs: renameToks(a.lhs, rename),
       rhs: renameToks(a.rhs, rename),
     })
+  // Spread, never a field list. Listing the fields dropped `index` — the WORD an array power-on loads — the
+  // day it was added, and a ROM in a submodule then landed on the SCALAR power-on path at a phantom 1-bit
+  // net (`r.m`) instead of on its real word registers (`r.m[0]` … `r.m[3]`). The refusal that should have
+  // stopped the design named a net nothing reads, cost nothing, and the module published with every ROM word
+  // reading 0. Everything the child recorded about a power-on value except the two names travels unchanged.
   for (const v of child.powerOnValues)
     parent.powerOnValues.push({
+      ...v,
       name: rename(v.name),
       expr: renameToks(v.expr, rename),
-      line: v.line,
     })
   for (const b of child.alwaysBlocks)
     parent.alwaysBlocks.push({
