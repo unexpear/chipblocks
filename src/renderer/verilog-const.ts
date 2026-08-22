@@ -270,8 +270,12 @@ export function evalConst(
 ): ConstVal | undefined {
   const ts = new TS(tokens)
   if (ts.peek() === undefined) return undefined
-  const node = parse(ts, 0, params)
+  const node = parse(ts, 0, 0, params)
   if (node === undefined || ts.peek() !== undefined) return undefined
+  // Every walk below (selfWidth, growWidth, expressionSigned, foldAt) is plain recursion over this tree, so a
+  // tree past the cap is one none of them can finish. `a + 1 + 1 + …` parses in a loop and nests only on the
+  // left, so the PARSE depth above says nothing about it — the built tree is measured here, iteratively.
+  if (nodeDepth(node) > MAX_CONST_NESTING) return undefined
   const width =
     contextWidth === undefined
       ? growWidth(node)
@@ -285,8 +289,53 @@ export function evalConst(
   return { value, width, signed, unsized: expressionUnsized(node) }
 }
 
-function parse(ts: TS, minBP: number, params?: Map<string, ConstVal>): Node | undefined {
-  let left = parseUnary(ts, params)
+/** The deepest constant expression this evaluator will walk. Every walk over the parsed tree is plain
+ *  recursion, and so is the parser that builds it. MEASURED in a fresh process on `localparam P = ((((…7…))))`
+ *  nested N deep: the parser THREW `RangeError: Maximum call stack size exceeded` at N = 3000 and survived
+ *  N = 1000. Real constant expressions nest a handful of levels; a thousand is the same depth the synthesizer
+ *  will walk an ordinary expression to, so the two agree. Past it the span is simply NOT a constant, which
+ *  every caller already reports by name. */
+const MAX_CONST_NESTING = 1000
+
+/** How deeply a parsed constant tree nests. Deliberately iterative, over an explicit stack: a walk that
+ *  recursed would hit the depth it is measuring. */
+function nodeDepth(root: Node): number {
+  const kidsOf = (n: Node): readonly Node[] => {
+    if (n.kind === 'unary') return [n.operand]
+    if (n.kind === 'binary') return [n.left, n.right]
+    if (n.kind === 'choice') return [n.condition, n.whenTrue, n.whenFalse]
+    return []
+  }
+  const depth = new Map<Node, number>()
+  const opened = new Set<Node>()
+  const stack: Node[] = [root]
+  while (stack.length > 0) {
+    const n = stack[stack.length - 1] as Node
+    if (depth.has(n)) {
+      stack.pop()
+      continue
+    }
+    if (!opened.has(n)) {
+      opened.add(n)
+      for (const kid of kidsOf(n)) if (!depth.has(kid)) stack.push(kid)
+      continue
+    }
+    stack.pop()
+    let d = 1
+    for (const kid of kidsOf(n)) d = Math.max(d, 1 + (depth.get(kid) ?? 1))
+    depth.set(n, d)
+  }
+  return depth.get(root) ?? 1
+}
+
+function parse(
+  ts: TS,
+  minBP: number,
+  depth: number,
+  params?: Map<string, ConstVal>,
+): Node | undefined {
+  if (depth > MAX_CONST_NESTING) return undefined
+  let left = parseUnary(ts, depth, params)
   if (left === undefined) return undefined
   for (;;) {
     const t = ts.peek()
@@ -294,10 +343,10 @@ function parse(ts: TS, minBP: number, params?: Map<string, ConstVal>): Node | un
     if (t.v === '?') {
       if (1 < minBP) break
       ts.next()
-      const whenTrue = parse(ts, 0, params)
+      const whenTrue = parse(ts, 0, depth + 1, params)
       if (whenTrue === undefined || ts.peek()?.v !== ':') return undefined
       ts.next()
-      const whenFalse = parse(ts, 1, params)
+      const whenFalse = parse(ts, 1, depth + 1, params)
       if (whenFalse === undefined) return undefined
       left = { kind: 'choice', condition: left, whenTrue, whenFalse }
       continue
@@ -306,29 +355,29 @@ function parse(ts: TS, minBP: number, params?: Map<string, ConstVal>): Node | un
     const bp = BP[t.v]
     if (bp === undefined || bp < minBP) break
     ts.next()
-    const right = parse(ts, bp + 1, params)
+    const right = parse(ts, bp + 1, depth + 1, params)
     if (right === undefined) return undefined
     left = { kind: 'binary', op: t.v, left, right }
   }
   return left
 }
 
-function parseUnary(ts: TS, params?: Map<string, ConstVal>): Node | undefined {
+function parseUnary(ts: TS, depth: number, params?: Map<string, ConstVal>): Node | undefined {
   const t = ts.peek()
   if (t?.k === 'op' && (t.v === '-' || t.v === '+' || t.v === '~' || t.v === '!')) {
     ts.next()
-    const operand = parseUnary(ts, params)
+    const operand = parseUnary(ts, depth + 1, params)
     if (operand === undefined) return undefined
     return { kind: 'unary', op: t.v, operand }
   }
-  return parsePrimary(ts, params)
+  return parsePrimary(ts, depth, params)
 }
 
-function parsePrimary(ts: TS, params?: Map<string, ConstVal>): Node | undefined {
+function parsePrimary(ts: TS, depth: number, params?: Map<string, ConstVal>): Node | undefined {
   const t = ts.next()
   if (t === undefined) return undefined
   if (t.v === '(') {
-    const e = parse(ts, 0, params)
+    const e = parse(ts, 0, depth + 1, params)
     if (e === undefined || ts.peek()?.v !== ')') return undefined
     ts.next()
     return e

@@ -47,6 +47,7 @@ import type {
   TaskDef,
   Tok,
 } from './verilog-import.ts'
+import { appendAll } from './verilog-import.ts'
 
 /**
  * The Verilog-2005 reserved words. Our lexer deliberately classifies only SOME of them as keywords — `if`,
@@ -309,7 +310,7 @@ function renameFunction(fn: FuncDef, rename: Rename): FuncDef {
     retWidth: fn.retWidth,
     inputs: fn.inputs.map((i) => ({ name: rename(i.name), width: i.width })),
     localWidths,
-    integerLocals: renameNames(fn.integerLocals, rename),
+    signedNames: renameNames(fn.signedNames, rename),
     body: renameToks(fn.body, rename),
   }
 }
@@ -321,7 +322,7 @@ function renameTask(task: TaskDef, rename: Rename): TaskDef {
     name: rename(task.name),
     args: task.args.map((a) => ({ name: rename(a.name), width: a.width, dir: a.dir })),
     localWidths,
-    integerLocals: renameNames(task.integerLocals, rename),
+    signedNames: renameNames(task.signedNames, rename),
     body: renameToks(task.body, rename),
   }
 }
@@ -410,13 +411,15 @@ function claimUnknownInstance(parent: ParsedModule, inst: ModuleInst, what: stri
 }
 
 /** Copy one instance's (already flattened) sub-module into `parent`, prefixing every identifier it owns and
- *  joining its ports to the enclosing nets. */
+ *  joining its ports to the enclosing nets. `ownResolution` names the wired nets the PARENT declared for
+ *  itself, before any instance was inlined — see the merge at the end of this function. */
 function inlineInstance(
   parent: ParsedModule,
   inst: ModuleInst,
   child: ParsedModule,
   separator: string,
   warnings: string[],
+  ownResolution: ReadonlySet<string>,
 ): void {
   const prefix = `${inst.instName}${separator}`
   const alias = new Map<string, string>()
@@ -520,12 +523,22 @@ function inlineInstance(
   // WAS aliased renames to the enclosing net, and the alias only happened when the two agreed about `signed`,
   // so this can never flip a parent net's signedness out from under the parent's own arithmetic.
   for (const name of child.signed) parent.signed.add(rename(name))
-  for (const [name, how] of child.resolution) parent.resolution.set(rename(name), how)
+  // A port connection COLLAPSES the child's port net into the enclosing net, so when the two carry different
+  // wired net types only one of them can survive — and the enclosing declaration is the one that does.
+  // MEASURED against Icarus Verilog 14.0 (`output wor o` joined to a parent `wand n` carrying a driver of its
+  // own): Icarus reads a0&a1&a2 there, and this merge, which let the child overwrite the parent, published
+  // a0|a1|a2 — a defined, silently wrong answer, in eight shapes including the plain `output wand y` port.
+  // A net the parent did NOT declare has no type to defend, so the child's stands; a second wired child on
+  // such a net overwrites the first, which is what Icarus does with the last connection made.
+  for (const [name, how] of child.resolution) {
+    const renamed = rename(name)
+    if (!ownResolution.has(renamed)) parent.resolution.set(renamed, how)
+  }
   for (const fn of child.functions.values())
     parent.functions.set(rename(fn.name), renameFunction(fn, rename))
   for (const task of child.tasks.values())
     parent.tasks.set(rename(task.name), renameTask(task, rename))
-  parent.assigns.push(...joins)
+  appendAll(parent.assigns, joins)
 }
 
 /**
@@ -676,6 +689,7 @@ export function flattenHierarchy(
       return { failed: `a hierarchy nested more than ${MAX_HIERARCHY_DEPTH} modules deep` }
     onStack.add(key)
     const out = emptyLike(mod)
+    const ownResolution = new Set(out.resolution.keys())
     const usedNames = new Set<string>()
     for (const inst of mod.instances) {
       const where = `line ${inst.line}: instance "${inst.instName}" of "${inst.moduleName}"`
@@ -739,7 +753,7 @@ export function flattenHierarchy(
         refuse(flat.failed)
         continue
       }
-      inlineInstance(out, inst, flat, separator, warnings)
+      inlineInstance(out, inst, flat, separator, warnings, ownResolution)
     }
     onStack.delete(key)
     done.set(key, out)

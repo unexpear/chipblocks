@@ -149,6 +149,28 @@ const BEHAVIORAL = [
  *  drives nothing — an `integer` written by an always block is still handled by that block. Without this they
  *  parsed as failed module instantiations, which now (rightly) makes a design unbuildable. */
 export const NON_NET_DECLS = ['genvar', 'integer', 'real', 'realtime', 'time', 'event', 'specparam']
+/**
+ * What each variable TYPE keyword is worth — the ONE table every declaration site reads, so a function
+ * argument, a function return, a local, a task argument, a module port and a module-scope variable cannot
+ * disagree about what `integer` means.
+ *
+ * IEEE 1364-2005 §3.9 makes `integer` a SIGNED 32-bit variable and `time` an UNSIGNED 64-bit one — both
+ * ordinary two-valued vectors, built exactly like a `reg` of that width and signedness. §3.10 makes `real`
+ * and `realtime` IEEE-754 doubles, and a fraction has no bit pattern a two-valued net can carry, so those
+ * two are refused BY NAME rather than quietly rounded.
+ *
+ * Both halves are measured against Icarus Verilog 14.0. Before this table existed, every site re-derived the
+ * type from the leading keyword alone and missed it whenever a direction keyword came first: `input integer
+ * k` built the argument ONE BIT wide with no warning at all, so `idf(7)` answered 1 where Icarus answers 7,
+ * `addk(9,5)` answered 2 where Icarus answers 14, and `wf(-3)` answered 0x0001 where Icarus answers 0xfffd.
+ * `real r; r = 7; r = r / 2; y = a + r;` built 3 where Icarus reads 3.5 and rounds the store to 4.
+ */
+export const VAR_TYPES = new Map<string, { width: number; signed: boolean } | 'floating-point'>([
+  ['integer', { width: 32, signed: true }],
+  ['time', { width: 64, signed: false }],
+  ['real', 'floating-point'],
+  ['realtime', 'floating-point'],
+])
 /** The 26 gate and switch primitives, as one set — the words that start a primitive INSTANTIATION rather
  *  than a declaration or an instantiation of a module. */
 export const GATE_WORDS = new Set([
@@ -485,10 +507,11 @@ export type FuncDef = {
   retWidth: number
   inputs: { name: string; width: number }[]
   localWidths: Map<string, number>
-  /** Locals declared `integer` — IEEE 1364-2005 §3.9 makes those a SIGNED 32-bit variable, where a `reg [31:0]`
-   *  of the same width is unsigned. Only the loop unroller reads this (it must count at the exact declared type;
-   *  `for (i = 3; i >= 0; i = i - 1)` terminates signed and never terminates unsigned). */
-  integerLocals: Set<string>
+  /** Function-scoped names whose declared type is SIGNED — an `integer` local OR an `integer` argument, since
+   *  IEEE 1364-2005 §3.9 makes both a SIGNED 32-bit variable where a `reg [31:0]` of the same width is
+   *  unsigned. The loop unroller reads it (it must count at the exact declared type; `for (i = 3; i >= 0;
+   *  i = i - 1)` terminates signed and never terminates unsigned) and so does every read of the name. */
+  signedNames: Set<string>
   body: Tok[]
 }
 /** A synthesizable Verilog `task`: its ordered args (each with a direction + width), local widths, and body.
@@ -499,8 +522,8 @@ export type TaskDef = {
   name: string
   args: TaskArg[]
   localWidths: Map<string, number>
-  /** Locals declared `integer` — see FuncDef.integerLocals. */
-  integerLocals: Set<string>
+  /** Args and locals whose declared type is SIGNED — see FuncDef.signedNames. */
+  signedNames: Set<string>
   body: Tok[]
 }
 /** One port connection on a module instance: `.port(expr)` (named) or just `expr` (positional, `port` null).
@@ -706,6 +729,49 @@ const unsizedPort = (name: string, bad: string): Omit<UnrepresentablePort, 'name
   said: `port "${name}" range — ${bad}`,
   why: 'has a declared range this importer cannot fold to a width',
 })
+
+/** A port declared `real`/`realtime`. IEEE 1364-2005 §12.3.3 does not allow a real port at all, and there is
+ *  no bit pattern here for a fraction — registered at the default width it published a ONE-PIN port where the
+ *  source declares a 64-bit floating-point value. */
+const floatingPointPort = (name: string, kind: string): Omit<UnrepresentablePort, 'name'> => ({
+  said: `port "${name}" is declared "${kind}", which is IEEE-754 floating point`,
+  why: 'is declared floating point, which has no bit pattern this two-valued netlist can carry',
+})
+
+/** An `input` port declared with a VARIABLE type. IEEE 1364-2005 §12.3.3 allows a variable port only in the
+ *  output direction, and Icarus Verilog 14.0 rejects `input integer a;` outright — so there is no oracle to
+ *  measure a build against, and this importer does not ship behaviour it cannot measure. */
+const variableInputPort = (name: string, kind: string): Omit<UnrepresentablePort, 'name'> => ({
+  said: `input port "${name}" is declared "${kind}", which IEEE 1364-2005 §12.3.3 allows only on an output`,
+  why: 'is an input declared with a variable type, which is not legal Verilog',
+})
+
+/** Why a port cannot be represented, deferred until its NAME is read — the two header parsers meet the
+ *  declaration before the identifier it belongs to, and a refusal that cannot say which port it was is not
+ *  worth much to the reader. */
+type PortRefusal = (name: string) => Omit<UnrepresentablePort, 'name'>
+const unfoldableRangePort: PortRefusal = (name) =>
+  unsizedPort(name, 'non-constant range (bounds must fold to a constant)')
+
+/**
+ * Refuse a module-scope `real`/`realtime` variable, and with it the whole module.
+ *
+ * A floating-point variable's VALUE is what cannot be represented, not its declaration, so there is no net to
+ * name and no smaller honest answer. Measured against Icarus Verilog 14.0: `real r; always @* begin r = 7;
+ * r = r / 2; y = a + r; end` built a+3 here — integer division — where Verilog divides as reals and the store
+ * to y rounds 3.5 to 4, silently and with every pin present.
+ */
+function refuseFloatingPoint(t: Tok, refusedDrivers: RefusedDriver[], warnings: string[]): void {
+  warnings.push(
+    `line ${t.line}: a "${t.v}" variable is IEEE-754 floating point — this importer has no bit pattern for a fraction — reported, not built`,
+  )
+  refusedDrivers.push({
+    where: `line ${t.line}`,
+    what: `a "${t.v}" (floating-point) variable declaration`,
+    terms: [],
+    wholeModule: true,
+  })
+}
 
 /** A bidirectional port. There is no direction to build it in and no third value to give it, so it has never
  *  been built — but dropping it silently published the module anyway, with the net inside it registered ONE
@@ -1173,13 +1239,14 @@ function skipStatement(c: Cursor): void {
 }
 
 /**
- * Register each name in a module-scope `integer a, b = 0;` declaration as a 32-bit SIGNED variable, WITHOUT
- * moving the cursor (the declaration is still skipped as a whole). A name followed by `[` is an integer ARRAY,
- * which nothing here models, so it is left unregistered — the first use then reports rather than reading a
- * silently-wrong width.
+ * Register each name in a module-scope `integer a, b = 0;` (or `time t;`) declaration at the width and
+ * signedness VAR_TYPES gives that keyword, WITHOUT moving the cursor (the declaration is still skipped as a
+ * whole). A name followed by `[` is an ARRAY of that type, which nothing here models, so it is left
+ * unregistered — the first use then reports rather than reading a silently-wrong width.
  */
-function registerIntegerVariables(
+function registerTypedVariables(
   c: Cursor,
+  type: { width: number; signed: boolean },
   widths: Map<string, number>,
   signed: Set<string>,
 ): void {
@@ -1194,8 +1261,8 @@ function registerIntegerVariables(
     if (depth !== 0 || !atName || t.k !== 'id') continue
     atName = false
     if ((c.toks[i + 1] as Tok | undefined)?.v === '[') continue
-    widths.set(t.v, 32)
-    signed.add(t.v)
+    widths.set(t.v, type.width)
+    if (type.signed) signed.add(t.v)
   }
 }
 
@@ -1239,13 +1306,17 @@ function initialPowerOnValues(
   const out: PowerOnValue[] = []
   const budget = { left: MAX_INITIAL_ITERATIONS }
   const body = span.slice(1) // past `initial`
-  if (readPowerOnStatement(body, 0, { widths, signed, budget, out }) !== body.length) return null
+  if (readPowerOnStatement(body, 0, { widths, signed, budget, out }, 0) !== body.length) return null
   return out.length === 0 ? null : out
 }
 
 /** How many array words ONE `initial` block may load through unrolled loops. A ROM fill is the whole reason
  *  the loop is unrolled at all, so the bound is a real memory's worth of words rather than a token count. */
 const MAX_INITIAL_ITERATIONS = 65536
+
+/** How deeply `begin … end` blocks may nest inside one `initial`. A real ROM fill is one block, or one loop
+ *  inside one block; sixty-four is far past anything written by hand. */
+const MAX_POWER_ON_NESTING = 64
 
 type PowerOnScan = {
   widths: Map<string, number>
@@ -1287,20 +1358,30 @@ function powerOnStatementEnd(toks: Tok[], from: number): number {
  * `for` loop that writes them. Returns the index just past it, or -1 for anything else, which puts the whole
  * `initial` back on the ordinary not-built path.
  */
-function readPowerOnStatement(toks: Tok[], from: number, scan: PowerOnScan): number {
+function readPowerOnStatement(
+  toks: Tok[],
+  from: number,
+  scan: PowerOnScan,
+  nesting: number,
+): number {
   const t = toks[from]
   if (t === undefined) return -1
+  // A `begin` inside a `begin` is read by recursing, so the nesting is a stack depth. MEASURED in a fresh
+  // process: 20,000 nested blocks THREW `RangeError: Maximum call stack size exceeded` here. Past the cap
+  // the statement is simply not read as a power-on load, which puts the whole `initial` on the ordinary
+  // not-built path — a refusal by name, which is what every other unreadable `initial` already gets.
+  if (nesting > MAX_POWER_ON_NESTING) return -1
   if (t.k === 'kw' && t.v === 'begin') {
     // `begin : name` — a named block's label is scope, not a statement.
     let i = toks[from + 1]?.v === ':' ? from + 3 : from + 1
     while (!(toks[i]?.k === 'kw' && toks[i]?.v === 'end')) {
-      const next = readPowerOnStatement(toks, i, scan)
+      const next = readPowerOnStatement(toks, i, scan, nesting + 1)
       if (next === -1 || next <= i) return -1
       i = next
     }
     return i + 1
   }
-  if (t.k === 'id' && t.v === 'for') return readPowerOnFor(toks, from, scan)
+  if (t.k === 'id' && t.v === 'for') return readPowerOnFor(toks, from, scan, nesting)
   if (t.k !== 'id') return -1
   const past = powerOnStatementEnd(toks, from)
   if (past === -1) return -1
@@ -1354,7 +1435,7 @@ function reportFileLoad(span: Tok[], warnings: string[]): void {
 /** A `for` loop inside an `initial` — the ordinary way a ROM fill is written. Unrolled with the same counter
  *  the generate elaborator and the procedural unroller count with, so a loop that cannot be proved to
  *  terminate at its declared width is refused rather than unrolled at whatever a JavaScript loop reaches. */
-function readPowerOnFor(toks: Tok[], from: number, scan: PowerOnScan): number {
+function readPowerOnFor(toks: Tok[], from: number, scan: PowerOnScan, nesting: number): number {
   if (toks[from + 1]?.v !== '(') return -1
   const close = matchBracket(toks, from + 1)
   if (close === -1) return -1
@@ -1377,7 +1458,7 @@ function readPowerOnFor(toks: Tok[], from: number, scan: PowerOnScan): number {
     scan.budget.left -= 1
     const iteration = substituteCounter(body, counter)
     if ('bad' in iteration) return -1
-    if (readPowerOnStatement(iteration, 0, scan) !== iteration.length) return -1
+    if (readPowerOnStatement(iteration, 0, scan, nesting + 1) !== iteration.length) return -1
     if (loopAdvance(counter, fold) !== undefined) return -1
   }
 }
@@ -1403,6 +1484,17 @@ function collectGenerate(c: Cursor): Tok[] {
  * behind. The caller then declares the WHOLE module unbuilt, which is the only honest answer available when
  * we cannot say what a construct we did not build was driving.
  */
+/** Append every element of `src` to `dst`.
+ *
+ *  `dst.push(...src)` passes each element as a separate ARGUMENT, and a list big enough to pass the engine's
+ *  argument limit throws `RangeError: Maximum call stack size exceeded` there instead of building — a crash,
+ *  where the user should have got either a design or a reason. A loop has no such limit. MEASURED in a fresh
+ *  process: a generate region of 20,000 nested blocks threw exactly there, spreading its own token span.
+ *  Every append of a list whose length the SOURCE decides goes through here. */
+export function appendAll<T>(dst: T[], src: readonly T[]): void {
+  for (const item of src) dst.push(item)
+}
+
 export function assignmentTargets(span: Tok[]): Tok[][] | null {
   const terms: Tok[][] = []
   for (let i = 0; i < span.length; i++) {
@@ -1563,7 +1655,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       continue
     }
     if (t.k === 'kw' && t.v === 'assign') {
-      assigns.push(...parseAssigns(c, warnings))
+      appendAll(assigns, parseAssigns(c, warnings))
       continue
     }
     if (t.k === 'kw' && t.v === 'always') {
@@ -1604,7 +1696,9 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       // Its WIDTH and SIGNEDNESS are registered because IEEE 1364-2005 §3.9 makes it a signed 32-bit variable,
       // and a procedural loop has to count at its counter's exact declared type: unregistered, a 32-bit
       // `integer` would be modelled as a 1-bit register that wraps to 0 after one step.
-      if (t.v === 'integer') registerIntegerVariables(c, widths, signed)
+      const declType = VAR_TYPES.get(t.v)
+      if (declType === 'floating-point') refuseFloatingPoint(t, refusedDrivers, warnings)
+      else if (declType !== undefined) registerTypedVariables(c, declType, widths, signed)
       skipStatement(c)
       continue
     }
@@ -1628,7 +1722,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       // registers are clocked.
       const powerOn = t.v === 'initial' ? initialPowerOnValues(span, widths, signed) : null
       if (powerOn !== null) {
-        powerOnValues.push(...powerOn)
+        appendAll(powerOnValues, powerOn)
         continue
       }
       reportFileLoad(span, warnings)
@@ -1839,9 +1933,9 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
   // call a signed operand, and a `call` node carries no signedness — so building it zero-extended is a
   // measured wrong answer (Icarus Verilog 14.0 gives 11111111 where this gave 00001111 at a = 15). A refusal
   // costs one function; the warn-and-build cost four silently-flipped output bits.
-  let signedReturn = false
+  let signedReturn: string | null = null
   while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) {
-    if (c.peek()?.v === 'signed') signedReturn = true
+    if (c.peek()?.v === 'signed') signedReturn = 'signed'
     c.next()
   }
   // `bad` marks an unsupported declaration (an ascending/nonzero-based/unfoldable range → what would be a
@@ -1849,6 +1943,22 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
   // to it then reports as "unknown function". Never a silent miscompile.
   const bad = { v: false }
   let retWidth = 1
+  // A TYPE keyword stands where the return range would: `function integer f;`. Read here, it settles the same
+  // width the range would have — and `integer` being signed lands in the refusal above, not in a build.
+  const retTypeTok = c.peek()
+  const retType = retTypeTok?.k === 'kw' ? VAR_TYPES.get(retTypeTok.v) : undefined
+  if (retTypeTok !== undefined && retType !== undefined) {
+    c.next()
+    if (retType === 'floating-point') {
+      warnings.push(
+        `line ${line}: a "${retTypeTok.v}" function return is IEEE-754 floating point — this importer has no bit pattern for a fraction — reported, not built`,
+      )
+      bad.v = true
+    } else {
+      retWidth = retType.width
+      if (retType.signed) signedReturn = retTypeTok.v
+    }
+  }
   if (c.is('[')) {
     const r = readRange(c)
     // The return range is the function's own WIDTH. Warning about it and keeping the default 1 built every
@@ -1868,25 +1978,37 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
   const name = nameTok.v
   const inputs: { name: string; width: number }[] = []
   const localWidths = new Map<string, number>()
-  const integerLocals = new Set<string>()
-  if (signedReturn) {
-    warnings.push(`line ${line}: a signed function return is not built — reported`)
+  const signedNames = new Set<string>()
+  if (signedReturn !== null) {
+    const why =
+      signedReturn === 'signed'
+        ? ''
+        : ` — "${signedReturn}" is a SIGNED ${retWidth}-bit type (IEEE 1364-2005 §3.9)`
+    warnings.push(`line ${line}: a signed function return is not built${why} — reported`)
     bad.v = true
   }
-  if (c.is('(')) parseFunctionPorts(readGroup(c), inputs, warnings, bad)
+  if (c.is('(')) parseFunctionPorts(readGroup(c), inputs, signedNames, warnings, bad)
   if (c.is(';')) c.next()
   const body: Tok[] = []
   while (!c.atEnd() && !c.is('endfunction')) {
     if (c.is('input')) {
-      collectDecl(c, (nm, w) => inputs.push({ name: nm, width: w }), warnings, bad)
-      continue
-    }
-    if (c.is('reg') || c.is('integer') || c.is('wire')) {
       collectDecl(
         c,
-        (nm, w, isInteger) => {
+        (nm, w, isSigned) => {
+          inputs.push({ name: nm, width: w })
+          if (isSigned) signedNames.add(nm)
+        },
+        warnings,
+        bad,
+      )
+      continue
+    }
+    if (isLocalDecl(c)) {
+      collectDecl(
+        c,
+        (nm, w, isSigned) => {
           localWidths.set(nm, w)
-          if (isInteger) integerLocals.add(nm)
+          if (isSigned) signedNames.add(nm)
         },
         warnings,
         bad,
@@ -1903,21 +2025,62 @@ function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: str
     return
   }
   if (functions.has(name)) warnings.push(`line ${line}: function "${name}" redefined — reported`)
-  functions.set(name, { name, retWidth, inputs, localWidths, integerLocals, body })
+  functions.set(name, { name, retWidth, inputs, localWidths, signedNames, body })
 }
 
-/** Read one `<kw> [range]? name {, name} ;` declaration, calling `emit(name, width)` per name (the range is
- *  shared across the comma list). Cursor starts AT the keyword; leaves it just past `;`. An `integer` is 32-bit;
- *  an unsupported range sets `bad` (the function is then dropped, never built at a silently-wrong width). */
+/** Is the cursor on a LOCAL variable declaration inside a function/task body? Every typed spelling counts,
+ *  not just `reg`/`integer` — a `real r;` left to fall through into the body tokens reported as an
+ *  unrecognized statement instead of naming the type it could not build. */
+function isLocalDecl(c: Cursor): boolean {
+  const t = c.peek()
+  if (t === undefined || t.k !== 'kw') return false
+  return t.v === 'reg' || t.v === 'wire' || VAR_TYPES.has(t.v)
+}
+
+/**
+ * Read one `<kw> [reg]? [type]? [signed]? [range]? name {, name} ;` declaration inside a function or task,
+ * calling `emit(name, width, signed)` per name (everything before the names is shared across the comma list).
+ * Cursor starts AT the leading keyword; leaves it just past `;`.
+ *
+ * The direction keyword of an ARGUMENT may be followed by the optional `reg` and then a type keyword
+ * (IEEE 1364-2005 §10.3.2 / §10.4.2), and reading only the leading keyword missed both: `input integer k`
+ * and `input reg [3:0] v` each stood at the default ONE BIT, with every pin present and no warning. The
+ * width and signedness now come from VAR_TYPES, the same table the module scope reads. An unsupported range
+ * or type sets `bad` (the function/task is then dropped, never built at a silently-wrong width).
+ */
 function collectDecl(
   c: Cursor,
-  emit: (name: string, width: number, isInteger: boolean) => void,
+  emit: (name: string, width: number, isSigned: boolean) => void,
   warnings: string[],
   bad: { v: boolean },
 ): void {
-  const kw = c.next() // 'reg' | 'wire' | 'integer' | 'input'
-  const isInteger = kw?.v === 'integer'
-  let width = isInteger ? 32 : 1
+  const kw = c.next() // 'reg' | 'wire' | 'integer' | 'time' | 'real' | 'input' | 'output' | 'inout'
+  let width = 1
+  let signed = false
+  let typed = false
+  const applyType = (t: Tok): void => {
+    const type = VAR_TYPES.get(t.v)
+    if (type === undefined) return
+    if (type === 'floating-point') {
+      warnings.push(
+        `a "${t.v}" declaration inside a function/task is IEEE-754 floating point — this importer has no bit pattern for a fraction — reported`,
+      )
+      bad.v = true
+      return
+    }
+    width = type.width
+    signed = type.signed
+    typed = true
+  }
+  if (kw !== undefined) applyType(kw)
+  if (kw !== undefined && ['input', 'output', 'inout'].includes(kw.v)) {
+    if (c.peek()?.k === 'kw' && c.peek()?.v === 'reg') c.next()
+    const t = c.peek()
+    if (t !== undefined && t.k === 'kw' && VAR_TYPES.has(t.v)) {
+      c.next()
+      applyType(t)
+    }
+  }
   // A `signed` local inside a function or task is REFUSED, not silently unsigned: its declared type is what
   // every later read of it takes (§5.5.1), and the type wall it would need is not something a dropped flag can
   // stand in for. The function/task is dropped and a call to it reports as unknown.
@@ -1931,41 +2094,91 @@ function collectDecl(
     if ('bad' in r) {
       warnings.push(`function declaration range — ${r.bad} — reported`)
       bad.v = true
+    } else if (typed) {
+      // `input integer [3:0] k` — a type keyword already fixed the width, so a range on top of it is not
+      // legal Verilog and there is no honest width to pick between the two.
+      warnings.push(`a range written on a "${kw?.v}" declaration is not legal Verilog — reported`)
+      bad.v = true
     } else width = r.width
   }
   while (!c.atEnd() && !c.is(';')) {
     const t = c.next() as Tok
-    if (t.k === 'id') emit(t.v, width, isInteger)
+    if (t.k !== 'id') continue
+    // A range AFTER the name is an ARRAY dimension — `reg [7:0] t [0:1];` declares two eight-bit words, not
+    // one. The dimension used to be skipped in silence along with every other non-identifier token, which
+    // registered `t` as a plain 8-bit reg; `t[0]` and `t[1]` then read as BIT-selects of it. MEASURED against
+    // Icarus Verilog 14.0 on a function doing `t[0] = v; t[1] = ~v; f = {16'b0, t[0], t[1]};`:
+    // 0x00000001 0x00000001 0x00000002 0x00000001 where Icarus reads 0x0000b44b 0x00005aa5 0x000001fe
+    // 0x0000807f. An array local is refused by name instead, and the function/task is dropped.
+    if (c.is('[')) {
+      warnings.push(
+        `an array declaration ("${t.v}") inside a function/task is not built — reported`,
+      )
+      bad.v = true
+      continue
+    }
+    emit(t.v, width, signed)
   }
   if (c.is(';')) c.next()
 }
 
-/** ANSI function port-list slices → inputs (a function has only inputs; a leading `input`/`signed` is skipped,
- *  a range is sticky across a bare-name continuation, and a new `input` resets it). An unsupported range sets
- *  `bad` so the function is dropped rather than built with a silently-wrong width-1 port. */
+/** The keywords that may stand before the NAME in one ANSI function/task port slice: the direction, the
+ *  optional `reg`, `signed`, and any variable type keyword. A word missing from this set is read as the
+ *  argument's name — which is how `function f(input integer k)` used to lose `k` entirely and then report
+ *  the call as passing one argument too many. */
+const PORT_DECL_PREFIX = new Set(['input', 'output', 'inout', 'reg', 'signed', ...VAR_TYPES.keys()])
+
+/** ANSI function port-list slices → inputs (a function has only inputs; the declaration prefix is read off,
+ *  the width/signedness are sticky across a bare-name continuation, and a new `input` resets them). An
+ *  unsupported range or type sets `bad` so the function is dropped rather than built with a wrong width. */
 function parseFunctionPorts(
   slices: Tok[][],
   inputs: { name: string; width: number }[],
+  signedNames: Set<string>,
   warnings: string[],
   bad: { v: boolean },
 ): void {
   let width = 1
+  let signed = false
+  let typed = false
+  // IEEE 1364-2005 §10.3.2: the FIRST port must carry its direction; a later bare name inherits it across the
+  // comma list. Without this a direction-less `function f([3:0] v)` — which Icarus Verilog 14.0 rejects with
+  // "Missing task/function port direction" — was quietly read as an input.
+  let sawDir = false
   for (const s of slices) {
     let j = 0
-    let sawInput = false
-    while (
-      j < s.length &&
-      (s[j] as Tok).k === 'kw' &&
-      ['input', 'signed'].includes((s[j] as Tok).v)
-    ) {
-      if ((s[j] as Tok).v === 'input') sawInput = true
-      if ((s[j] as Tok).v === 'signed') {
+    while (j < s.length && (s[j] as Tok).k === 'kw' && PORT_DECL_PREFIX.has((s[j] as Tok).v)) {
+      const t = s[j] as Tok
+      if (t.v === 'input') {
+        sawDir = true
+        width = 1
+        signed = false
+        typed = false
+      } else if (t.v === 'output' || t.v === 'inout') {
+        // IEEE 1364-2005 §10.3.2: a function's arguments are inputs only, and Icarus Verilog 14.0 rejects
+        // this outright ("Function arguments must be input ports") — so there is no oracle for a build.
+        warnings.push(
+          `a function argument declared "${t.v}" is not legal Verilog — §10.3.2 makes every function argument an input — reported`,
+        )
+        bad.v = true
+      } else if (t.v === 'signed') {
         warnings.push('a signed function argument is not built — reported')
         bad.v = true
+      } else if (VAR_TYPES.has(t.v)) {
+        const type = VAR_TYPES.get(t.v)
+        if (type === 'floating-point') {
+          warnings.push(
+            `a "${t.v}" function argument is IEEE-754 floating point — this importer has no bit pattern for a fraction — reported`,
+          )
+          bad.v = true
+        } else if (type !== undefined) {
+          width = type.width
+          signed = type.signed
+          typed = true
+        }
       }
       j += 1
     }
-    if (sawInput) width = 1
     if ((s[j] as Tok | undefined)?.v === '[') {
       const inner: Tok[] = []
       j += 1
@@ -1975,9 +2188,24 @@ function parseFunctionPorts(
       if ('bad' in r) {
         warnings.push(`function port range — ${r.bad} — reported`)
         bad.v = true
+      } else if (typed) {
+        warnings.push(
+          'a range written on a typed function argument is not legal Verilog — reported',
+        )
+        bad.v = true
       } else width = r.width
     }
-    if ((s[j] as Tok | undefined)?.k === 'id') inputs.push({ name: (s[j] as Tok).v, width })
+    const nameTok = s[j] as Tok | undefined
+    if (nameTok?.k === 'id') {
+      if (!sawDir) {
+        warnings.push(
+          `function argument "${nameTok.v}" has no direction keyword — §10.3.2 requires one on the first port — reported`,
+        )
+        bad.v = true
+      }
+      inputs.push({ name: nameTok.v, width })
+      if (signed) signedNames.add(nameTok.v)
+    }
   }
 }
 
@@ -2019,9 +2247,9 @@ function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): 
   const name = nameTok.v
   const args: TaskArg[] = []
   const localWidths = new Map<string, number>()
-  const integerLocals = new Set<string>()
+  const signedNames = new Set<string>()
   const bad = { v: false }
-  if (c.is('(')) parseTaskPorts(readGroup(c), args, warnings, bad)
+  if (c.is('(')) parseTaskPorts(readGroup(c), args, signedNames, warnings, bad)
   if (c.is(';')) c.next()
   // A task missing its `endtask` must NOT swallow the real module items that follow it — if there is no
   // `endtask` before `endmodule`, rewind to just after the header and report, so those gates still parse.
@@ -2031,15 +2259,23 @@ function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): 
     const kw = c.peek()?.v
     if (kw === 'input' || kw === 'output' || kw === 'inout') {
       const dir = kw
-      collectDecl(c, (nm, w) => args.push({ name: nm, width: w, dir }), warnings, bad)
-      continue
-    }
-    if (kw === 'reg' || kw === 'integer' || kw === 'wire') {
       collectDecl(
         c,
-        (nm, w, isInteger) => {
+        (nm, w, isSigned) => {
+          args.push({ name: nm, width: w, dir })
+          if (isSigned) signedNames.add(nm)
+        },
+        warnings,
+        bad,
+      )
+      continue
+    }
+    if (isLocalDecl(c)) {
+      collectDecl(
+        c,
+        (nm, w, isSigned) => {
           localWidths.set(nm, w)
-          if (isInteger) integerLocals.add(nm)
+          if (isSigned) signedNames.add(nm)
         },
         warnings,
         bad,
@@ -2069,39 +2305,52 @@ function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): 
     return
   }
   if (tasks.has(name)) warnings.push(`line ${line}: task "${name}" redefined — reported`)
-  tasks.set(name, { name, args, localWidths, integerLocals, body })
+  tasks.set(name, { name, args, localWidths, signedNames, body })
 }
 
-/** ANSI task port-list slices → args with directions (input/output/inout, a range, both sticky across a
- *  bare-name continuation). An unsupported range sets `bad` so the task is dropped rather than mis-sized. */
+/** ANSI task port-list slices → args with directions (input/output/inout; the declaration prefix is read off
+ *  and the width/signedness are sticky across a bare-name continuation). An unsupported range or type sets
+ *  `bad` so the task is dropped rather than mis-sized. */
 function parseTaskPorts(
   slices: Tok[][],
   args: TaskArg[],
+  signedNames: Set<string>,
   warnings: string[],
   bad: { v: boolean },
 ): void {
   let width = 1
+  let signed = false
+  let typed = false
+  let sawDir = false
   let dir: 'input' | 'output' | 'inout' = 'input'
   for (const s of slices) {
     let j = 0
-    let sawDir = false
-    while (
-      j < s.length &&
-      (s[j] as Tok).k === 'kw' &&
-      ['input', 'output', 'inout', 'signed'].includes((s[j] as Tok).v)
-    ) {
+    while (j < s.length && (s[j] as Tok).k === 'kw' && PORT_DECL_PREFIX.has((s[j] as Tok).v)) {
       const v = (s[j] as Tok).v
       if (v === 'input' || v === 'output' || v === 'inout') {
         dir = v
         sawDir = true
-      }
-      if (v === 'signed') {
+        width = 1
+        signed = false
+        typed = false
+      } else if (v === 'signed') {
         warnings.push('a signed task argument is not built — reported')
         bad.v = true
+      } else if (VAR_TYPES.has(v)) {
+        const type = VAR_TYPES.get(v)
+        if (type === 'floating-point') {
+          warnings.push(
+            `a "${v}" task argument is IEEE-754 floating point — this importer has no bit pattern for a fraction — reported`,
+          )
+          bad.v = true
+        } else if (type !== undefined) {
+          width = type.width
+          signed = type.signed
+          typed = true
+        }
       }
       j += 1
     }
-    if (sawDir) width = 1
     if ((s[j] as Tok | undefined)?.v === '[') {
       const inner: Tok[] = []
       j += 1
@@ -2111,9 +2360,24 @@ function parseTaskPorts(
       if ('bad' in r) {
         warnings.push(`task port range — ${r.bad} — reported`)
         bad.v = true
+      } else if (typed) {
+        warnings.push('a range written on a typed task argument is not legal Verilog — reported')
+        bad.v = true
       } else width = r.width
     }
-    if ((s[j] as Tok | undefined)?.k === 'id') args.push({ name: (s[j] as Tok).v, width, dir })
+    const nameTok = s[j] as Tok | undefined
+    if (nameTok?.k === 'id') {
+      // §10.4.2, as for a function: the first port carries the direction, later bare names inherit it. A
+      // direction-less first port is what Icarus rejects as "Missing task/function port direction".
+      if (!sawDir) {
+        warnings.push(
+          `task argument "${nameTok.v}" has no direction keyword — §10.4.2 requires one on the first port — reported`,
+        )
+        bad.v = true
+      }
+      args.push({ name: nameTok.v, width, dir })
+      if (signed) signedNames.add(nameTok.v)
+    }
   }
 }
 
@@ -2242,43 +2506,69 @@ function groupSpanEnd(toks: Tok[], open: number): number {
  * own span; without it a `always @(posedge clk) begin … end` would stop at the first ';' inside the block.
  */
 export function statementSpanEnd(toks: Tok[], start: number): number {
-  const t = toks[start]
-  if (t === undefined) return start
-  if (t.v === 'always' || t.v === 'initial') {
-    let i = start + 1
-    if ((toks[i] as Tok | undefined)?.v === '@') {
-      i += 1
-      i = (toks[i] as Tok | undefined)?.v === '(' ? groupSpanEnd(toks, i) : i + 1
+  // Deliberately iterative. Every header this reads — `always @(…)`, `if (…)`, a loop header — is FOLLOWED by
+  // the statement it heads, so the whole shape is a scan forward plus a count of how many `if`s are still
+  // waiting to see whether an `else` follows their body. Recursing per header made a source's nesting a stack
+  // depth instead: MEASURED in fresh processes, `else if (…)` chained 20,000 arms deep and
+  // `if (…) if (…) …` nested 20,000 deep BOTH threw `RangeError: Maximum call stack size exceeded` here,
+  // before anything downstream had a chance to refuse them by name.
+  //
+  // The pending count also gives Verilog's dangling-else rule for free: an `else` closes the INNERMOST `if`
+  // still waiting, which is the one decremented first.
+  let at = start
+  let pendingIfs = 0
+  for (;;) {
+    const t = toks[at]
+    if (t === undefined) return at
+    if (t.v === 'always' || t.v === 'initial') {
+      let i = at + 1
+      if ((toks[i] as Tok | undefined)?.v === '@') {
+        i += 1
+        i = (toks[i] as Tok | undefined)?.v === '(' ? groupSpanEnd(toks, i) : i + 1
+      }
+      at = i
+      continue
     }
-    return statementSpanEnd(toks, i)
+    // if/else and the procedural loops: an optional `( … )` header, then a body that is itself one statement.
+    // `forever` has no header; only `if` takes an else-branch.
+    if (t.v === 'if' || t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever') {
+      let i = at + 1
+      if (t.v !== 'forever' && (toks[i] as Tok | undefined)?.v === '(') i = groupSpanEnd(toks, i)
+      if (t.v === 'if') pendingIfs += 1
+      at = i
+      continue
+    }
+    let end: number
+    if (t.v === 'begin')
+      end = nestedSpanEnd(
+        toks,
+        at,
+        (x) => x.k === 'kw' && x.v === 'begin',
+        (x) => x.k === 'kw' && x.v === 'end',
+      )
+    else if (CASE_WORDS.has(t.v))
+      end = nestedSpanEnd(
+        toks,
+        at,
+        (x) => CASE_WORDS.has(x.v),
+        (x) => x.v === 'endcase',
+      )
+    else {
+      let i = at
+      while (i < toks.length && (toks[i] as Tok).v !== ';') i += 1
+      end = i < toks.length ? i + 1 : i
+    }
+    let elseBranch = -1
+    while (pendingIfs > 0) {
+      pendingIfs -= 1
+      if ((toks[end] as Tok | undefined)?.v === 'else') {
+        elseBranch = end + 1
+        break
+      }
+    }
+    if (elseBranch === -1) return end
+    at = elseBranch
   }
-  if (t.v === 'begin')
-    return nestedSpanEnd(
-      toks,
-      start,
-      (x) => x.k === 'kw' && x.v === 'begin',
-      (x) => x.k === 'kw' && x.v === 'end',
-    )
-  if (CASE_WORDS.has(t.v))
-    return nestedSpanEnd(
-      toks,
-      start,
-      (x) => CASE_WORDS.has(x.v),
-      (x) => x.v === 'endcase',
-    )
-  // if/else and the procedural loops: an optional `( … )` header, then a body that is itself one statement.
-  // `forever` has no header; only `if` takes an else-branch.
-  if (t.v === 'if' || t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever') {
-    let i = start + 1
-    if (t.v !== 'forever' && (toks[i] as Tok | undefined)?.v === '(') i = groupSpanEnd(toks, i)
-    i = statementSpanEnd(toks, i)
-    if (t.v === 'if' && (toks[i] as Tok | undefined)?.v === 'else')
-      return statementSpanEnd(toks, i + 1)
-    return i
-  }
-  let i = start
-  while (i < toks.length && (toks[i] as Tok).v !== ';') i += 1
-  return i < toks.length ? i + 1 : i
 }
 
 /** Parse `assign <lhs> = <rhs> {, <lhs> = <rhs>} ;` into one Assign per comma-separated assignment. lhs and
@@ -2343,10 +2633,11 @@ function parseHeader(
   warnings: string[],
 ): void {
   const { portOrder, portPositions, dir, widths, signed, droppedPorts } = ports
-  // A header range that would not fold, held until the NAME it belongs to is read so the refusal can say
-  // which port it was. It survives a `]` with no identifier after it (malformed, but not a licence to
-  // publish), so `pending` is checked once more after the whole list.
-  let pending: { bad: string; line: number } | undefined
+  // A header declaration this importer cannot represent — a range that would not fold, or a floating-point
+  // type — held until the NAME it belongs to is read so the refusal can say which port it was. It survives a
+  // `]` with no identifier after it (malformed, but not a licence to publish), so `pending` is checked once
+  // more after the whole list.
+  let pending: { reason: PortRefusal; line: number } | undefined
   const keep = (name: string): void => {
     portOrder.push(name)
     portPositions.push(name)
@@ -2393,13 +2684,31 @@ function parseHeader(
         sgn = true
       } else if (t.k === 'kw' && NET_TYPES.has(t.v)) {
         netType = t.v
+      } else if (t.k === 'kw' && VAR_TYPES.has(t.v)) {
+        // `output integer y` — a variable port, whose type settles the width the range would otherwise give.
+        // Read as an unknown keyword it left the port at the default width 1, and the module published a
+        // ONE-PIN `y` where the source declares 32 bits.
+        const type = VAR_TYPES.get(t.v)
+        if (type === 'floating-point') {
+          width = 'bad'
+          pending = { reason: (n) => floatingPointPort(n, t.v), line: t.line }
+        } else if (d === 'input') {
+          width = 'bad'
+          pending = { reason: (n) => variableInputPort(n, t.v), line: t.line }
+        } else if (type !== undefined) {
+          width = type.width
+          sgn = type.signed
+        }
       } else if (t.k === 'p' && t.v === '[') {
         const inner: Tok[] = []
         i += 1
         while (i < s.length && s[i]?.v !== ']') inner.push(s[i++] as Tok)
         const r = rangeWidth(inner)
         width = 'bad' in r ? 'bad' : r.width
-        if ('bad' in r) pending = { bad: r.bad, line: t.line }
+        if ('bad' in r) {
+          const { bad } = r
+          pending = { reason: (n) => unsizedPort(n, bad), line: t.line }
+        }
       } else if (t.k === 'id') {
         if (width === 'bad') {
           dropUnrepresentablePort(
@@ -2408,7 +2717,7 @@ function parseHeader(
             warnings,
             t.v,
             pending?.line ?? t.line,
-            unsizedPort(t.v, pending?.bad ?? 'non-constant range (bounds must fold to a constant)'),
+            (pending?.reason ?? unfoldableRangePort)(t.v),
           )
           pending = undefined
           drop(t.v)
@@ -2444,7 +2753,7 @@ function parseHeader(
       warnings,
       '<unnamed header port>',
       pending.line,
-      unsizedPort('<unnamed header port>', pending.bad),
+      pending.reason('<unnamed header port>'),
     )
     drop('<unnamed header port>')
   }
@@ -2474,7 +2783,7 @@ function parsePortDecl(
   let lastId: Tok | undefined
   // Held until the NAME arrives, exactly as in parseHeader, so the refusal can say which port it was — and
   // re-checked after the `;` so a range with no identifier behind it cannot publish either.
-  let pending: { bad: string; line: number } | undefined
+  let pending: { reason: PortRefusal; line: number } | undefined
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
     if (t.v === '=') {
@@ -2509,10 +2818,30 @@ function parsePortDecl(
       c.next()
       continue
     }
+    if (t.k === 'kw' && VAR_TYPES.has(t.v)) {
+      // `output integer y;` in the non-ANSI body — the same variable port as in an ANSI header, and the same
+      // one-pin publish if its type is left unread.
+      const type = VAR_TYPES.get(t.v)
+      if (type === 'floating-point') {
+        width = 'bad'
+        pending = { reason: (n) => floatingPointPort(n, t.v), line: t.line }
+      } else if (d === 'input') {
+        width = 'bad'
+        pending = { reason: (n) => variableInputPort(n, t.v), line: t.line }
+      } else if (type !== undefined) {
+        width = type.width
+        sgn = type.signed
+      }
+      c.next()
+      continue
+    }
     if (t.k === 'p' && t.v === '[') {
       const r = readRange(c)
       width = 'bad' in r ? 'bad' : r.width
-      if ('bad' in r) pending = { bad: r.bad, line: t.line }
+      if ('bad' in r) {
+        const { bad } = r
+        pending = { reason: (n) => unsizedPort(n, bad), line: t.line }
+      }
       continue
     }
     c.next()
@@ -2525,7 +2854,7 @@ function parsePortDecl(
         warnings,
         t.v,
         pending?.line ?? t.line,
-        unsizedPort(t.v, pending?.bad ?? 'non-constant range (bounds must fold to a constant)'),
+        (pending?.reason ?? unfoldableRangePort)(t.v),
       )
       dropFromHeader(t.v)
       pending = undefined
@@ -2550,7 +2879,7 @@ function parsePortDecl(
       warnings,
       '<unnamed port>',
       pending.line,
-      unsizedPort('<unnamed port>', pending.bad),
+      pending.reason('<unnamed port>'),
     )
 }
 
@@ -3209,7 +3538,7 @@ function importOneStream(text: string): ImportResult {
     // Generate regions are elaborated AFTER the parameters are folded (so `if (W > 8)` and `i < N` arrive as
     // literals) and BEFORE the module is parsed, so every stage below sees a module that never had one.
     const mod = parseModule(elaborateGenerate(elaborated.toks, reports), reports)
-    warnings.push(...reports)
+    appendAll(warnings, reports)
     if (mod === null) continue
     if (modules.has(mod.name)) {
       // Keeping the first definition and reporting the second is how this silently built the WRONG design:

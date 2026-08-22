@@ -47,6 +47,7 @@ import {
 } from './verilog-const.ts'
 import { namesAnObject, pickSeparator } from './verilog-hierarchy.ts'
 import {
+  appendAll,
   CASE_WORDS,
   GATE_WORDS,
   NET_TYPES,
@@ -63,6 +64,14 @@ import {
  *  costs. Past it the loop is REFUSED, never truncated: unrolling the first N iterations of a longer loop
  *  builds a design with fewer stages than the source and says nothing about it. */
 const MAX_GENERATE_ITERATIONS = 4096
+
+/** How deeply generate blocks may nest inside one another. Elaborating a block elaborates its body first, so
+ *  the nesting depth is a stack depth: MEASURED in a fresh process on `if (1) begin : g … end` nested N deep,
+ *  the elaborator THREW `RangeError: Maximum call stack size exceeded` at N = 3000 and survived N = 1000.
+ *  A doubly nested generate is already unusual and a triple nest exotic, so sixty-four — the same depth the
+ *  module hierarchy allows — is far past anything real. Past it the region is REFUSED by name and left
+ *  unelaborated, exactly as any other region this pass cannot read is. */
+const MAX_GENERATE_NESTING = 64
 
 /** A genvar is a signed 32-bit elaboration integer (IEEE 1364-2005 §12.1.3.2) — the same type an `integer`
  *  has, which is why `for (i = 7; i >= 0; i = i - 1)` runs eight times instead of never ending. */
@@ -654,7 +663,10 @@ function elaborateItems(
   scope: Scope,
   outer: Set<string>,
   siblings: Set<string>,
+  nesting: number,
 ): Tok[] | { bad: string } {
+  if (nesting > MAX_GENERATE_NESTING)
+    return bad(`generate blocks nested more than ${MAX_GENERATE_NESTING} deep`)
   // A block constant is folded INTO the tokens that follow it, so this span is rewritten as it is walked and
   // cannot be the caller's own array.
   const work = toks.slice(from, to)
@@ -677,13 +689,13 @@ function elaborateItems(
       continue
     }
     if (item.kind === 'for') {
-      const unrolled = unrollGenerateFor(work, item, scope, visible, siblings)
+      const unrolled = unrollGenerateFor(work, item, scope, visible, siblings, nesting)
       if ('bad' in unrolled) return unrolled
-      out.push(...unrolled.toks)
+      appendAll(out, unrolled.toks)
       continue
     }
     if (item.kind !== 'if' && item.kind !== 'case') {
-      out.push(...work.slice(item.start, item.end))
+      appendAll(out, work.slice(item.start, item.end))
       continue
     }
     const chosen = chooseBranch(work, item)
@@ -691,9 +703,9 @@ function elaborateItems(
     // A false `if` with no `else`, and a `case` that matches no arm and has no `default`, generate nothing at
     // all. That is the construct doing its job, not a failure — the region simply contributes no hardware.
     if (chosen.taken === undefined) continue
-    const built = elaborateBranch(work, chosen.taken, scope, visible, siblings)
+    const built = elaborateBranch(work, chosen.taken, scope, visible, siblings, nesting)
     if ('bad' in built) return built
-    out.push(...built.toks)
+    appendAll(out, built.toks)
   }
   return out
 }
@@ -706,12 +718,13 @@ function elaborateBranch(
   scope: Scope,
   outer: Set<string>,
   siblings: Set<string>,
+  nesting: number,
 ): { toks: Tok[] } | { bad: string } {
   const wrapper = blockWrapper(toks, branch.from, branch.to)
   if ('bad' in wrapper) return wrapper
   const label = claimLabel(wrapper.label, (toks[branch.from] as Tok).line, scope, siblings)
   if (typeof label !== 'string') return label
-  return elaborateBlock(toks.slice(wrapper.from, wrapper.to), label, scope, outer)
+  return elaborateBlock(toks.slice(wrapper.from, wrapper.to), label, scope, outer, nesting)
 }
 
 /** Take a generate block's name. Two blocks in ONE scope may not share a label — Icarus Verilog 14.0 rejects
@@ -745,10 +758,19 @@ function elaborateBlock(
   label: string,
   scope: Scope,
   outer: Set<string>,
+  nesting: number,
 ): { toks: Tok[] } | { bad: string } {
   // A block's body is a NEW scope, so it starts with no labels taken: a block called `k` inside `g[0]` and
   // another called `k` inside `g[1]` are two different objects, and so are `g.k` and `h.k`.
-  const elaborated = elaborateItems(bodyToks, 0, bodyToks.length, scope, outer, new Set())
+  const elaborated = elaborateItems(
+    bodyToks,
+    0,
+    bodyToks.length,
+    scope,
+    outer,
+    new Set(),
+    nesting + 1,
+  )
   if ('bad' in elaborated) return elaborated
   const final = readItems(elaborated, 0, elaborated.length)
   if ('bad' in final) return final
@@ -769,6 +791,7 @@ function unrollGenerateFor(
   scope: Scope,
   outer: Set<string>,
   siblings: Set<string>,
+  nesting: number,
 ): { toks: Tok[] } | { bad: string } {
   const line = (toks[item.start] as Tok).line
   if ((toks[item.start + 1] as Tok | undefined)?.v !== '(')
@@ -808,9 +831,9 @@ function unrollGenerateFor(
         `line ${line}: unrolling the generate loops in this module needs more than ${MAX_GENERATE_ITERATIONS} iterations`,
       )
     scope.budget.left -= 1
-    const one = elaborateIteration(bodyToks, counter, label, scope, outer)
+    const one = elaborateIteration(bodyToks, counter, label, scope, outer, nesting)
     if ('bad' in one) return bad(`line ${line}: ${one.bad}`)
-    out.push(...one.toks)
+    appendAll(out, one.toks)
     const advanced = loopAdvance(counter, fold)
     if (advanced !== undefined) return bad(`line ${line}: ${advanced.bad}`)
   }
@@ -826,6 +849,7 @@ function elaborateIteration(
   label: string,
   scope: Scope,
   outer: Set<string>,
+  nesting: number,
 ): { toks: Tok[] } | { bad: string } {
   const substituted = substituteCounter(bodyToks, counter)
   if ('bad' in substituted) return substituted
@@ -835,7 +859,7 @@ function elaborateIteration(
     signed: true,
     unsized: false,
   })
-  return elaborateBlock(substituted, `${label}${scope.sep}${index}`, scope, outer)
+  return elaborateBlock(substituted, `${label}${scope.sep}${index}`, scope, outer, nesting)
 }
 
 /**
@@ -955,7 +979,7 @@ export function elaborateGenerate(toks: Tok[], warnings: string[]): Tok[] {
     const before = scope.labels.size
     const from = region.kind === 'generate' ? region.start + 1 : region.start
     const to = region.kind === 'generate' ? region.end - 1 : region.end
-    const elaborated = elaborateItems(toks, from, to, scope, outer, moduleSiblings)
+    const elaborated = elaborateItems(toks, from, to, scope, outer, moduleSiblings, 0)
     const added = [...scope.labels].slice(before)
     const referenced = added.find(
       (label) => !labelIsOnlyDeclared(toks, moduleStart, moduleEnd, label),
@@ -968,9 +992,9 @@ export function elaborateGenerate(toks: Tok[], warnings: string[]): Tok[] {
             : `"${referenced}" is named outside its own generate block, and resolving a hierarchical name into a generated scope is a later increment`
         }`,
       )
-      out.push(...toks.slice(region.start, region.end))
-    } else out.push(...elaborated)
-    out.push(...toks.slice(region.end, regions[n + 1]?.start ?? toks.length))
+      appendAll(out, toks.slice(region.start, region.end))
+    } else appendAll(out, elaborated)
+    appendAll(out, toks.slice(region.end, regions[n + 1]?.start ?? toks.length))
   })
   return out
 }

@@ -22,6 +22,37 @@ import {
 /** A named signal grouped from its bit ports, LSB first: `count[0], count[1], …` → one "count". */
 export type DebugSignal = { name: string; bits: string[] }
 
+/** How many bits of a signal a JavaScript number holds EXACTLY (Number.MAX_SAFE_INTEGER is 2^53 − 1). */
+const EXACTLY_HELD_BITS = 53
+
+/**
+ * Bit `index` of a signal value the caller supplied. Plain arithmetic, never `>>`: JavaScript's bitwise
+ * operators work on 32-BIT integers, so a stimulus above 2^32 was truncated before the shift even ran.
+ * MEASURED on a 40-bit `assign y = a`: driving 2^33 + 7 put 7 on the pins.
+ */
+export const signalBitHigh = (value: number, index: number): boolean =>
+  Math.floor(value / 2 ** index) % 2 === 1
+
+/**
+ * What a signal's bits add up to, or undefined when any bit is undriven — or when the signal is too wide for
+ * a number to hold its value exactly, where a rounded answer would be a fabricated one and the inspector
+ * shows "—" instead. Plain arithmetic for the same reason as above: `1 << 31` is NEGATIVE in JavaScript, so
+ * that same 40-bit signal read back −2147483648 when its bit 31 was the only one high.
+ */
+export function readSignalValue(
+  bitHigh: (netId: string) => boolean | undefined,
+  sig: DebugSignal,
+): number | undefined {
+  if (sig.bits.length > EXACTLY_HELD_BITS) return undefined
+  let value = 0
+  for (let i = 0; i < sig.bits.length; i++) {
+    const bit = bitHigh(sig.bits[i] as string)
+    if (bit === undefined) return undefined
+    if (bit) value += 2 ** i
+  }
+  return value
+}
+
 export type DebugSession = {
   /** Input signals the user drives (the clock is separate — it's pulsed by step()). */
   readonly inputs: DebugSignal[]
@@ -216,7 +247,7 @@ export function createDebugSession(block: BlockData): DebugSession | null {
       const sig = session.inputs.find((s) => s.name === name)
       if (!sig) return
       sig.bits.forEach((id, i) => {
-        level.set(id, ((value >> i) & 1) === 1)
+        level.set(id, signalBitHigh(value, i))
       })
     },
     step() {
@@ -241,13 +272,7 @@ export function createDebugSession(block: BlockData): DebugSession | null {
     readValue(name) {
       const sig = [...session.inputs, ...session.outputs].find((s) => s.name === name)
       if (!sig) return undefined
-      let value = 0
-      for (let i = 0; i < sig.bits.length; i++) {
-        const bit = last?.value(HARNESS_BLOCK_ID, sig.bits[i] as string)
-        if (bit === undefined) return undefined
-        if (bit) value |= 1 << i
-      }
-      return value
+      return readSignalValue((netId) => last?.value(HARNESS_BLOCK_ID, netId), sig)
     },
     get settled() {
       return last?.settled ?? true

@@ -11,7 +11,13 @@
 
 import type { BlockData } from './blocks.ts'
 import { type LogicResult, stepLogic } from './logic-sim.ts'
-import { buildLogicHarness, type DebugSignal, HARNESS_BLOCK_ID } from './verilog-debug.ts'
+import {
+  buildLogicHarness,
+  type DebugSignal,
+  HARNESS_BLOCK_ID,
+  readSignalValue,
+  signalBitHigh,
+} from './verilog-debug.ts'
 
 export type CycleSnapshot = {
   /** 1-based cycle index (after this clock edge). */
@@ -47,15 +53,8 @@ export type TraceInputs = Map<string, number>
 
 export const MAX_TRACE_CYCLES = 256
 
-function readSignal(last: LogicResult, sig: DebugSignal): number | undefined {
-  let value = 0
-  for (let i = 0; i < sig.bits.length; i++) {
-    const bit = last.value(HARNESS_BLOCK_ID, sig.bits[i] as string)
-    if (bit === undefined) return undefined
-    if (bit) value |= 1 << i
-  }
-  return value
-}
+const readSignal = (last: LogicResult, sig: DebugSignal): number | undefined =>
+  readSignalValue((netId) => last.value(HARNESS_BLOCK_ID, netId), sig)
 
 /**
  * Trace a design for `cycles` clock cycles, holding the given input values constant. Returns null if the
@@ -79,7 +78,7 @@ export function runTrace(
       const v = inputs.get(sig.name)
       if (v === undefined) continue
       sig.bits.forEach((id, i) => {
-        level.set(id, ((v >> i) & 1) === 1)
+        level.set(id, signalBitHigh(v, i))
       })
     }
   }

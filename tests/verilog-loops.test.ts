@@ -563,13 +563,19 @@ endmodule`,
     )
   })
 
-  test('an indexed part-select is still refused, so unrolling never quietly widens what builds', () => {
-    refuses(
-      `module m(input [3:0] a, output reg [3:0] y);
+  test('an indexed part-select on both sides: unrolling substitutes the counter, so each slice is constant', () => {
+    // `y[i*2 +: 2] = a[i*2 +: 2]` over i = 0, 1 copies a straight through. Unrolling replaces `i` with a
+    // literal, so each `+:` folds to a fixed [hi:lo] — the same thing a hand-written y[1:0]/y[3:2] pair is.
+    // Icarus Verilog 14.0 sweeps 0..15 to 0..15.
+    expect(
+      sweep(
+        `module m(input [3:0] a, output reg [3:0] y);
 integer i;
 always @* for (i = 0; i < 2; i = i + 1) y[i*2 +: 2] = a[i*2 +: 2];
 endmodule`,
-      'indexed part-select',
-    )
+        4,
+        4,
+      ),
+    ).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
   })
 })

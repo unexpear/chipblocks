@@ -33,6 +33,7 @@ import {
   loopContinues,
   loopCounter,
   MAX_REPL,
+  MAX_WIDTH,
   plainDecimal,
   splitOnColon,
   substituteCounter,
@@ -54,7 +55,7 @@ import type {
   Tok,
   UnbuiltReport,
 } from './verilog-import.ts'
-import { assignmentTargets, statementSpanEnd } from './verilog-import.ts'
+import { appendAll, assignmentTargets, statementSpanEnd } from './verilog-import.ts'
 
 /** Declared memories, by name (`reg [D-1:0] m [0:W-1]`). Threaded through the parser so `m[addr]` becomes a
  *  memory read/write rather than a (rejected) non-constant bit-select. */
@@ -74,6 +75,12 @@ type Expr =
   | { t: 'bin'; op: string; a: Expr; b: Expr }
   | { t: 'tern'; c: Expr; a: Expr; b: Expr }
   | { t: 'memread'; name: string; idx: Expr; width: number; depth: number } // m[addr] — a decode/read-mux
+  // An INDEXED part-select `n[base +: width]` / `n[base -: width]` (IEEE 1364-2005 §5.2.1) whose base is only
+  // known at run time. The width is always constant — that is what makes the slice a fixed size, and so
+  // synthesizable — and `up` is the `+:` spelling: it selects `width` bits UPWARD from base, where `-:`
+  // selects them downward ending AT base. A CONSTANT base never reaches here: it folds to `partsel` while
+  // parsing, so this node means real hardware — the same decode/read-mux a memory read builds.
+  | { t: 'idxsel'; name: string; base: Expr; width: number; up: boolean }
   // a function call `f(a,b)`: inlined at its DECLARED return width (retWidth/fn are filled by bindCalls once
   // the function table is known — at parse time only name+args exist).
   | { t: 'call'; name: string; args: Expr[]; retWidth?: number; fn?: FuncDef }
@@ -88,10 +95,33 @@ type Expr =
  *  it must report. One record, because a width without its signedness is exactly half an answer. */
 type Decl = { width: number; signed: boolean }
 
+/** What the names in one elaborated block mean — the declared width, signedness and (where declared) type
+ *  wall of each. ONE oracle for the whole pass: the wall a store puts on a value, the width a select of
+ *  that value is range-checked against, and the widths a run-time base is bounded at are all read from it,
+ *  so a name cannot be walled at one width and selected at another. */
+type EnvScope = {
+  widthOf: (n: string) => number
+  signedOf: (n: string) => boolean
+  declOf: (n: string) => Decl | undefined
+}
+
 /** The synthetic net name of memory word k (bracket form — can't collide with a user simple identifier). */
 const memWord = (name: string, k: number): string => `${name}[${k}]`
 /** Address-bus width for a W-word memory (⌈log2 W⌉, at least 1). */
 const clog2 = (words: number): number => Math.max(1, Math.ceil(Math.log2(Math.max(2, words))))
+/**
+ * Bit `j` of a decode line's index — the word number a memory read is testing for, or a base value an indexed
+ * part-select is testing for. The index is small (bounded by the memory depth, or by the reachable-base span),
+ * but `j` runs over the FULL declared address or base width, which the wide types push past 32.
+ *
+ * JavaScript's `>>` takes its shift count MOD 32, so `k >> 32` reads bit 0 again. Every decode line with an odd
+ * index then demanded that address bit 32 be 1, a bit that is constantly 0, so the line never matched and the
+ * read answered 0. MEASURED against Icarus Verilog 14.0 over `reg [7:0] m [0:3]; reg [32:0] ad; r = m[ad];`:
+ * words 0 and 2 read 17 and 51 correctly while words 1 and 3 read 0 where Icarus reads 34 and 68 — the
+ * even-index lines survived and the odd-index ones died, which is exactly what the aliased bit selects.
+ * Dividing keeps every bit of the index in its own place, and reports 0 above the index's top bit.
+ */
+const decodeIndexBit = (index: number, j: number): boolean => Math.floor(index / 2 ** j) % 2 === 1
 /** The value of an expression that folds to a constant (all bits known), else undefined. Synthesizes into a
  *  throwaway context so it reuses synthAt's EXACT-width folding — `3+2` folds to 5, but a sized `4'd15+4'd1`
  *  wraps to 0 exactly as the hardware would, so no false out-of-range report. Any net reference ⇒ undefined. */
@@ -212,28 +242,36 @@ class TokStream {
   }
 }
 
-function parseRhs(tokens: Tok[], mems: MemTable): Expr {
+function parseRhs(tokens: Tok[], mems: MemTable, depth = 0): Expr {
   const ts = new TokStream(tokens)
   if (ts.peek() === undefined) return { t: 'bad', why: 'empty right-hand side' }
-  const e = parseExpr(ts, 0, mems)
+  const e = parseExpr(ts, 0, mems, depth)
   if (e.t === 'bad') return e
   if (ts.peek() !== undefined)
     return { t: 'bad', why: `trailing "${ts.peek()?.v}" after the expression` }
   return e
 }
 
-function parseExpr(ts: TokStream, minBP: number, mems: MemTable): Expr {
-  let left = parseUnary(ts, mems)
+/** `depth` is how many expressions enclose this one. The parser is plain recursive descent, so a source
+ *  nested past the cap overflows HERE, before there is a tree for `oversized` to measure — and the tree a
+ *  parse that deep would build is one `oversized` refuses anyway, so the same cap applies one step earlier. */
+function parseExpr(ts: TokStream, minBP: number, mems: MemTable, depth: number): Expr {
+  if (depth > MAX_SYNTHESIS_DEPTH)
+    return {
+      t: 'bad',
+      why: `it is an expression nested more than ${MAX_SYNTHESIS_DEPTH} levels deep, which is past what this importer will build`,
+    }
+  let left = parseUnary(ts, mems, depth)
   for (;;) {
     const t = ts.peek()
     if (t === undefined) break
     if (t.v === '?') {
       if (1 < minBP) break
       ts.next()
-      const then = parseExpr(ts, 0, mems)
+      const then = parseExpr(ts, 0, mems, depth + 1)
       if (ts.peek()?.v !== ':') return { t: 'bad', why: 'conditional ?: is missing its ":"' }
       ts.next()
-      const els = parseExpr(ts, 1, mems)
+      const els = parseExpr(ts, 1, mems, depth + 1)
       left = { t: 'tern', c: left, a: then, b: els }
       continue
     }
@@ -243,21 +281,21 @@ function parseExpr(ts: TokStream, minBP: number, mems: MemTable): Expr {
     if (!SUPPORTED_BIN.has(t.v))
       return { t: 'bad', why: `operator "${t.v}" is not supported (a later increment)` }
     ts.next()
-    const right = parseExpr(ts, bp + 1, mems)
+    const right = parseExpr(ts, bp + 1, mems, depth + 1)
     left = { t: 'bin', op: t.v, a: left, b: right }
   }
   return left
 }
 
-function parseUnary(ts: TokStream, mems: MemTable): Expr {
+function parseUnary(ts: TokStream, mems: MemTable, depth: number): Expr {
   const t = ts.peek()
   if (t?.k === 'op' && UNARY.has(t.v)) {
     if (!SUPPORTED_UN.has(t.v))
       return { t: 'bad', why: `unary "${t.v}" is not supported (a later increment)` }
     ts.next()
-    return { t: 'un', op: t.v, a: parseUnary(ts, mems) }
+    return { t: 'un', op: t.v, a: parseUnary(ts, mems, depth + 1) }
   }
-  return parsePrimary(ts, mems)
+  return parsePrimary(ts, mems, depth)
 }
 
 /** Read the tokens inside a `[ … ]` at the cursor (positioned just past `[`), balancing nested brackets, and
@@ -277,11 +315,14 @@ function readBracket(ts: TokStream): Tok[] {
   return inner
 }
 
-function parsePrimary(ts: TokStream, mems: MemTable): Expr {
+function parsePrimary(ts: TokStream, mems: MemTable, depth: number): Expr {
   const t = ts.next()
   if (t === undefined) return { t: 'bad', why: 'unexpected end of expression' }
   if (t.v === '(') {
-    const e = parseExpr(ts, 0, mems)
+    const e = parseExpr(ts, 0, mems, depth + 1)
+    // The reason the inner expression gave is the real one — reporting `missing ")"` over it would name the
+    // source instead of the refusal.
+    if (e.t === 'bad') return e
     if (ts.peek()?.v !== ')') return { t: 'bad', why: 'missing ")"' }
     ts.next()
     return e
@@ -290,11 +331,11 @@ function parsePrimary(ts: TokStream, mems: MemTable): Expr {
     if (ts.peek()?.v !== '(') return { t: 'bad', why: `${t.v} must be called as ${t.v}(expr)` }
     const argToks = readCallArgs(ts)
     if (argToks.length !== 1) return { t: 'bad', why: `${t.v} takes exactly one argument` }
-    const of = parseRhs(argToks[0] as Tok[], mems)
+    const of = parseRhs(argToks[0] as Tok[], mems, depth + 1)
     if (of.t === 'bad') return of
     return { t: 'cast', signed: t.v === '$signed', of }
   }
-  if (t.v === '{') return parseBraces(ts, mems)
+  if (t.v === '{') return parseBraces(ts, mems, depth)
   if (t.k === 'num') return constExpr(t.v)
   if (t.k === 'id') {
     const mem = mems.get(t.v)
@@ -303,7 +344,7 @@ function parsePrimary(ts: TokStream, mems: MemTable): Expr {
       if (ts.peek()?.v !== '[')
         return { t: 'bad', why: `memory "${t.v}" used as a plain value — index it as ${t.v}[addr]` }
       ts.next() // '['
-      const idx = parseRhs(readBracket(ts), mems)
+      const idx = parseRhs(readBracket(ts), mems, depth + 1)
       if (idx.t === 'bad') return { t: 'bad', why: `memory index — ${idx.why}` }
       if (ts.peek()?.v === '[')
         return {
@@ -316,38 +357,91 @@ function parsePrimary(ts: TokStream, mems: MemTable): Expr {
     // only other id-then-paren is a module instance, never inside an expression). Resolved by bindCalls later.
     if (ts.peek()?.v === '(') {
       const argToks = readCallArgs(ts)
-      const args = argToks.map((a) => parseRhs(a, mems))
+      const args = argToks.map((a) => parseRhs(a, mems, depth + 1))
       const bad = args.find((a) => a.t === 'bad')
       if (bad !== undefined)
         return { t: 'bad', why: `argument to "${t.v}" — ${(bad as { why: string }).why}` }
       return { t: 'call', name: t.v, args }
     }
-    if (ts.peek()?.v === '[') return parseSelect(ts, t.v)
+    if (ts.peek()?.v === '[') return parseSelect(ts, t.v, mems, depth)
     return { t: 'net', name: t.v }
   }
   return { t: 'bad', why: `unexpected "${t.v}"` }
 }
 
-/** After an id, a `[ … ]`: bit-select `[i]` or part-select `[h:l]`. Bounds fold as constant expressions
- *  (a parameter has already been substituted to a literal), so `[W-1:0]` / `[W-1]` size correctly. */
-function parseSelect(ts: TokStream, name: string): Expr {
+/**
+ * The `base` and `width` halves of an INDEXED part-select `[base +: width]` / `[base -: width]`, split out of
+ * the tokens already divided at the `:` — or undefined when this is an ordinary `[hi:lo]`.
+ *
+ * The marker is the LAST token before the colon being a bare `+` or `-`, which an ordinary range can never
+ * end with (`[b-1:0]` ends with the `1`). IEEE 1364-2005 §5.2.1 makes the width constant and lets the base be
+ * computed at run time; that fixed width is exactly why an indexed part-select is synthesizable where a
+ * `[hi:lo]` with a computed bound is not.
+ */
+function indexedSelectParts(
+  parts: [Tok[], Tok[]],
+): { base: Tok[]; width: Tok[]; up: boolean } | undefined {
+  const left = parts[0]
+  const mark = left[left.length - 1]
+  if (mark?.v !== '+' && mark?.v !== '-') return undefined
+  return { base: left.slice(0, -1), width: parts[1], up: mark.v === '+' }
+}
+
+/** The constant bit range `[base +: width]` / `[base -: width]` denotes, `dynamic` when only the width folds
+ *  (the base is real hardware), or the reason it cannot be built at all. `+:` runs UP from base, `-:` runs
+ *  DOWN to it, so both spellings end up as the same descending `[hi:lo]` every other select already speaks. */
+type IndexedBounds =
+  | { kind: 'const'; hi: number; lo: number }
+  | { kind: 'dynamic'; width: number }
+  | { kind: 'bad'; why: string }
+
+function indexedBounds(
+  sel: { base: Tok[]; width: Tok[]; up: boolean },
+  name: string,
+): IndexedBounds {
+  const spelling = `${name}[… ${sel.up ? '+' : '-'}: …]`
+  const width = constInt(sel.width)
+  if (width === undefined || width < 1)
+    return {
+      kind: 'bad',
+      why: `the width of the indexed part-select ${spelling} is not a constant positive integer — IEEE 1364-2005 §5.2.1 requires one, and a run-time width is not synthesizable`,
+    }
+  if (sel.base.length === 0)
+    return { kind: 'bad', why: `the indexed part-select ${spelling} has no base expression` }
+  const base = constInt(sel.base)
+  if (base === undefined) return { kind: 'dynamic', width }
+  return sel.up
+    ? { kind: 'const', hi: base + width - 1, lo: base }
+    : { kind: 'const', hi: base, lo: base - width + 1 }
+}
+
+/** After an id, a `[ … ]`: bit-select `[i]`, part-select `[h:l]`, or indexed part-select `[b +: W]`/`[b -: W]`.
+ *  Bounds fold as constant expressions (a parameter or genvar has already been substituted to a literal), so
+ *  `[W-1:0]` / `[W-1]` / `[g*8 +: 8]` all size correctly. */
+function parseSelect(ts: TokStream, name: string, mems: MemTable, depth: number): Expr {
   ts.next() // '['
   const inner: Tok[] = []
-  let depth = 0
-  while (ts.peek() !== undefined && !(depth === 0 && ts.peek()?.v === ']')) {
+  let brackets = 0
+  while (ts.peek() !== undefined && !(brackets === 0 && ts.peek()?.v === ']')) {
     const tk = ts.next() as Tok
-    if (tk.v === '[' || tk.v === '(' || tk.v === '{') depth += 1
-    else if (tk.v === ']' || tk.v === ')' || tk.v === '}') depth -= 1
+    if (tk.v === '[' || tk.v === '(' || tk.v === '{') brackets += 1
+    else if (tk.v === ']' || tk.v === ')' || tk.v === '}') brackets -= 1
     inner.push(tk)
   }
   if (ts.peek()?.v !== ']') return { t: 'bad', why: 'missing "]"' }
   ts.next()
   const parts = splitOnColon(inner)
   if (parts !== undefined) {
-    // an indexed part-select a[b+:W] / a[b-:W] (a trailing '+'/'-' before the ':') is a later increment
-    const last = parts[0][parts[0].length - 1]
-    if (last?.v === '+' || last?.v === '-')
-      return { t: 'bad', why: 'an indexed part-select a[b+:W] needs a later increment' }
+    const indexed = indexedSelectParts(parts)
+    if (indexed !== undefined) {
+      const bounds = indexedBounds(indexed, name)
+      if (bounds.kind === 'bad') return { t: 'bad', why: bounds.why }
+      if (bounds.kind === 'const') return { t: 'partsel', name, hi: bounds.hi, lo: bounds.lo }
+      const base = parseRhs(indexed.base, mems, depth + 1)
+      if (base.t === 'bad')
+        return { t: 'bad', why: `the base of the indexed part-select on "${name}" — ${base.why}` }
+      return { t: 'idxsel', name, base, width: bounds.width, up: indexed.up }
+    }
     const hi = constInt(parts[0])
     const lo = constInt(parts[1])
     if (hi === undefined || lo === undefined)
@@ -362,7 +456,7 @@ function parseSelect(ts: TokStream, name: string): Expr {
 }
 
 /** `{ e0, e1, … }` concatenation or `{ n { e } }` replication. */
-function parseBraces(ts: TokStream, mems: MemTable): Expr {
+function parseBraces(ts: TokStream, mems: MemTable, depth: number): Expr {
   // replication if the first inner token is a constant immediately followed by '{' (a parameter count `{W{…}}`
   // has already been substituted to a single sized-literal token, so it still matches this `num {` shape).
   const first = ts.peek()
@@ -370,7 +464,7 @@ function parseBraces(ts: TokStream, mems: MemTable): Expr {
     const count = constInt([first])
     ts.next() // count
     ts.next() // inner '{'
-    const of = parseConcatBody(ts, mems)
+    const of = parseConcatBody(ts, mems, depth + 1)
     if (of.t === 'bad') return of
     if (ts.peek()?.v !== '}') return { t: 'bad', why: 'missing "}" after replication' }
     ts.next()
@@ -382,14 +476,14 @@ function parseBraces(ts: TokStream, mems: MemTable): Expr {
       return { t: 'bad', why: `replication count ${count} is unreasonably large — reported` }
     return { t: 'repl', count, of }
   }
-  return parseConcatBody(ts, mems)
+  return parseConcatBody(ts, mems, depth + 1)
 }
 
 /** The comma-separated body of a `{ … }`, up to (not consuming) the matching '}'. */
-function parseConcatBody(ts: TokStream, mems: MemTable): Expr {
+function parseConcatBody(ts: TokStream, mems: MemTable, depth: number): Expr {
   const parts: Expr[] = []
   for (;;) {
-    const e = parseExpr(ts, 0, mems)
+    const e = parseExpr(ts, 0, mems, depth + 1)
     if (e.t === 'bad') return e
     parts.push(e)
     if (ts.peek()?.v === ',') {
@@ -471,6 +565,159 @@ function unknownBitsOf(digits: string, baseChar: string, width: number, signed: 
   return signed ? { t: 'const', bits: sized, signed: true } : { t: 'const', bits: sized }
 }
 
+/**
+ * The most nodes this importer will walk when synthesizing one expression.
+ *
+ * Elaboration substitutes a blocking value into every later read of it, so a statement that reads the same
+ * variable three times and writes it back triples the expression each time round a loop. Ten rounds of an
+ * ordinary CRC/LFSR shift — `t = t[7] ? ((t << 1) ^ 8'h07) : (t << 1);` — is 3^10 copies of the value, and
+ * the netlist it asks for runs past a million gates for eight bits of output. MEASURED: the importer THREW
+ * `RangeError: Maximum call stack size exceeded` on that design at ten rounds and at eight, giving the user
+ * no result and no reason.
+ *
+ * A quarter of a million nodes is more than four times the largest tree any shipped design elaborates to
+ * (MEASURED over the whole test suite: 57,332 nodes, and the next largest is 4,847), so nothing real meets
+ * this cap. It is deliberately generous: its job is to stop work that would never finish, not to judge how
+ * big a netlist is worth building — that is `MAX_TARGET_GATES` below, and the two are separate because a
+ * node count says nothing about the size of the netlist it asks for. Past it the expression is REFUSED by
+ * name.
+ */
+const MAX_SYNTHESIS_NODES = 250000
+
+/**
+ * The deepest expression this importer will walk.
+ *
+ * Every walk over an expression — binding calls, looking for an unsupported construct, range-checking a
+ * select, synthesizing it to gates — is plain recursion, so the expression's nesting depth is a stack depth.
+ * A blocking assignment that reads its own variable nests one level deeper per unrolled iteration, and a long
+ * loop nests thousands deep. MEASURED on `for (i = 0; i < N; i = i + 1) t = (t + 8'd3) ^ 8'd5;`: the walks
+ * THREW `RangeError: Maximum call stack size exceeded` at a nesting of 1504 in one run and survived 3004 in
+ * another — where the stack runs out depends on how much of it the caller already holds, so there is no depth
+ * that is reliably safe near the limit. The deepest expression the shipped designs elaborate to is 513, so
+ * one thousand is twice anything real and comfortably under the shallowest observed failure. Past it the
+ * expression is REFUSED by name, which is an answer; a throw is not.
+ */
+const MAX_SYNTHESIS_DEPTH = 1000
+
+/**
+ * The deepest procedural STATEMENT tree this importer will walk, and the deepest the statement parser will
+ * recurse building one.
+ *
+ * The cap above bounds an expression; this one bounds the always-block statement tree an expression is
+ * elaborated OUT of, and the two are different depths. Every walk over a statement — inlining task calls,
+ * walling stores, collecting the memory writes, elaborating the block to next-state expressions — is plain
+ * recursion, and each runs BEFORE any expression exists to measure. MEASURED in fresh processes on
+ * `if (a > k) y = v; else begin … end` nested N deep: the statement walks THREW `RangeError: Maximum call
+ * stack size exceeded` at N = 950 (in `elaborateBound`, `collectMemWrites`, `expandTaskCalls` and
+ * `containsTaskCall` on different runs — the site moves, the class does not), and did not throw at N = 900.
+ * A `case` parses into one nested `if` per item, so an N-item case is an N-deep statement tree even though
+ * the source nests nothing, which is why the tree is measured and not just the parser's recursion.
+ *
+ * The deepest statement tree the shipped designs build is 30 — the 8080's own core, MEASURED over the whole
+ * test suite, where the next deepest is 19 — so five hundred is far past anything real and still comfortably
+ * under the shallowest observed failure. It is also where the expression cap above already lands for this
+ * shape: an `if` chain 500 deep elaborates to an expression 1000 levels deep, so a `case` past 500 items was
+ * refused before this cap existed and is refused after it, only by an earlier and more exact name. Past it the
+ * block is REFUSED by name, which is an answer; a throw is not.
+ */
+const MAX_STATEMENT_DEPTH = 500
+
+/**
+ * The most gates this importer will build for ONE target.
+ *
+ * The node and depth caps above bound the WORK; this one bounds the RESULT, and they are not the same limit.
+ * MEASURED: the largest expression tree any shipped design elaborates to (57,332 nodes) synthesizes to FOUR
+ * parts, while an eight-round CRC shift at 65,604 nodes synthesizes to 255,864 — nodes say nothing about the
+ * size of the netlist they ask for.
+ *
+ * A netlist that size is not something the app can carry. MEASURED in the running app: the 255,864-part
+ * design built, and the very NEXT design threw `RangeError: Invalid string length` serializing the project
+ * that now held it — the crash had moved, not gone. A 85,278-part one built in the importer in 359 ms and
+ * then held the app for over twenty minutes without finishing.
+ *
+ * Twenty-five thousand is four times the largest cone any shipped design synthesizes (MEASURED over the whole
+ * test suite: 6,330 gates, and the next largest is 1,383) and still more than the 8080 system's ENTIRE
+ * netlist (14,231 gates), so nothing real meets it. Past it the target is REFUSED by name and the rest of the
+ * design still builds.
+ */
+const MAX_TARGET_GATES = 25000
+
+/** Why a target's synthesized cone is more gates than this importer will publish, or undefined. */
+function overGateBudget(gates: readonly GateInst[]): string | undefined {
+  if (gates.length <= MAX_TARGET_GATES) return undefined
+  return `it synthesizes to ${gates.length} gates, past the ${MAX_TARGET_GATES} this importer will build for one target — reported`
+}
+
+/** Every sub-expression a node is built from. One list, so the size-and-depth walk below reads a node's
+ *  children the same way every other walk over an `Expr` does. */
+function childrenOf(e: Expr): readonly Expr[] {
+  switch (e.t) {
+    case 'un':
+      return [e.a]
+    case 'bin':
+      return [e.a, e.b]
+    case 'tern':
+      return [e.c, e.a, e.b]
+    case 'concat':
+      return e.parts
+    case 'repl':
+      return [e.of]
+    case 'memread':
+      return [e.idx]
+    case 'idxsel':
+      return [e.base]
+    case 'call':
+      return e.args
+    case 'sized':
+    case 'cast':
+      return [e.of]
+    default:
+      return []
+  }
+}
+
+/**
+ * Why this expression is past what this importer will build, or undefined if it is within both caps. Asked
+ * FIRST on every top-level elaborated tree, before any other walk, because every other walk is plain
+ * recursion over the TREE and a tree past either cap is exactly what they cannot finish.
+ *
+ * Deliberately iterative, over an explicit stack: a walk that recursed would hit the depth it is measuring
+ * and throw while measuring it. Each DISTINCT node is visited once, so an expression standing for an
+ * astronomical tree is still answered in milliseconds.
+ */
+function oversized(root: Expr): string | undefined {
+  const nodes = new Map<Expr, number>()
+  const depth = new Map<Expr, number>()
+  const opened = new Set<Expr>()
+  const stack: Expr[] = [root]
+  while (stack.length > 0) {
+    const e = stack[stack.length - 1] as Expr
+    if (nodes.has(e)) {
+      stack.pop()
+      continue
+    }
+    if (!opened.has(e)) {
+      opened.add(e)
+      for (const child of childrenOf(e)) if (!nodes.has(child)) stack.push(child)
+      continue
+    }
+    stack.pop()
+    let n = 1
+    let d = 1
+    for (const child of childrenOf(e)) {
+      n = Math.min(MAX_SYNTHESIS_NODES + 1, n + (nodes.get(child) ?? 1))
+      d = Math.max(d, 1 + (depth.get(child) ?? 1))
+    }
+    nodes.set(e, n)
+    depth.set(e, d)
+  }
+  if ((nodes.get(root) ?? 1) > MAX_SYNTHESIS_NODES)
+    return `it elaborates to more than ${MAX_SYNTHESIS_NODES} expression nodes, which is past what this importer will build — reported`
+  if ((depth.get(root) ?? 1) > MAX_SYNTHESIS_DEPTH)
+    return `it elaborates to an expression nested more than ${MAX_SYNTHESIS_DEPTH} levels deep, which is past what this importer will build — reported`
+  return undefined
+}
+
 /** The first unsupported construct in the tree, or undefined if fully supported. */
 function firstBad(e: Expr): string | undefined {
   switch (e.t) {
@@ -492,6 +739,8 @@ function firstBad(e: Expr): string | undefined {
       return firstBad(e.of)
     case 'memread':
       return firstBad(e.idx)
+    case 'idxsel':
+      return firstBad(e.base)
     case 'call': {
       for (const a of e.args) {
         const b = firstBad(a)
@@ -537,36 +786,61 @@ function readCallArgs(ts: TokStream): Tok[][] {
  *  `bad` (unknown function / wrong argument count). Runs on an ast BEFORE firstBad/selfWidth/synthAt so a
  *  call's declared return width is known everywhere it matters. */
 function bindCalls(e: Expr, funcs: Map<string, FuncDef>): Expr {
-  switch (e.t) {
-    case 'call': {
-      const args = e.args.map((a) => bindCalls(a, funcs))
-      const fn = funcs.get(e.name)
-      if (fn === undefined) return { t: 'bad', why: `call to unknown function "${e.name}"` }
-      if (args.length !== fn.inputs.length)
-        return {
-          t: 'bad',
-          why: `function "${e.name}" takes ${fn.inputs.length} argument(s), got ${args.length}`,
-        }
-      return { t: 'call', name: e.name, args, retWidth: fn.retWidth, fn }
+  return bindCallsSharing(e, funcs, new Map())
+}
+
+/**
+ * The body of `bindCalls`, keeping the SHARING the elaborated expression arrived with.
+ *
+ * Forward-substitution hands the same value object to every place that reads it, so what elaboration builds
+ * is a graph, not a tree: a statement that reads its own variable three times and writes it back triples the
+ * tree each time round a loop while adding only a handful of distinct nodes. Rebuilding each occurrence
+ * separately turns that graph back into the tree it stands for, and eight rounds of an ordinary CRC shift is
+ * already 3^8 fresh nodes — built here, BEFORE anything gets the chance to look at the size and refuse it.
+ * Binding each distinct node once keeps the result a graph, so the size guard runs on a handful of nodes and
+ * answers in milliseconds however large the tree it stands for is. What later walks see is unchanged: they
+ * visit a shared node once per place it appears, exactly as they did before.
+ */
+function bindCallsSharing(e: Expr, funcs: Map<string, FuncDef>, seen: Map<Expr, Expr>): Expr {
+  const memo = seen.get(e)
+  if (memo !== undefined) return memo
+  const bind = (child: Expr): Expr => bindCallsSharing(child, funcs, seen)
+  const bound = ((): Expr => {
+    switch (e.t) {
+      case 'call': {
+        const args = e.args.map(bind)
+        const fn = funcs.get(e.name)
+        if (fn === undefined) return { t: 'bad', why: `call to unknown function "${e.name}"` }
+        if (args.length !== fn.inputs.length)
+          return {
+            t: 'bad',
+            why: `function "${e.name}" takes ${fn.inputs.length} argument(s), got ${args.length}`,
+          }
+        return { t: 'call', name: e.name, args, retWidth: fn.retWidth, fn }
+      }
+      case 'un':
+        return { ...e, a: bind(e.a) }
+      case 'bin':
+        return { ...e, a: bind(e.a), b: bind(e.b) }
+      case 'tern':
+        return { ...e, c: bind(e.c), a: bind(e.a), b: bind(e.b) }
+      case 'concat':
+        return { ...e, parts: e.parts.map(bind) }
+      case 'repl':
+        return { ...e, of: bind(e.of) }
+      case 'memread':
+        return { ...e, idx: bind(e.idx) }
+      case 'idxsel':
+        return { ...e, base: bind(e.base) }
+      case 'sized':
+      case 'cast':
+        return { ...e, of: bind(e.of) }
+      default:
+        return e
     }
-    case 'un':
-      return { ...e, a: bindCalls(e.a, funcs) }
-    case 'bin':
-      return { ...e, a: bindCalls(e.a, funcs), b: bindCalls(e.b, funcs) }
-    case 'tern':
-      return { ...e, c: bindCalls(e.c, funcs), a: bindCalls(e.a, funcs), b: bindCalls(e.b, funcs) }
-    case 'concat':
-      return { ...e, parts: e.parts.map((p) => bindCalls(p, funcs)) }
-    case 'repl':
-      return { ...e, of: bindCalls(e.of, funcs) }
-    case 'memread':
-      return { ...e, idx: bindCalls(e.idx, funcs) }
-    case 'sized':
-    case 'cast':
-      return { ...e, of: bindCalls(e.of, funcs) }
-    default:
-      return e
-  }
+  })()
+  seen.set(e, bound)
+  return bound
 }
 
 /** Does the tree contain a function call? A call synthesizes to gates (never a compile-time constant), so a
@@ -590,8 +864,81 @@ function hasCall(e: Expr): boolean {
       return hasCall(e.of)
     case 'memread':
       return hasCall(e.idx)
+    case 'idxsel':
+      return hasCall(e.base)
     default:
       return false
+  }
+}
+
+/** Does the tree read NOTHING but literals — no net, no select, no memory read, no call? Such a tree has one
+ *  compile-time value, so `foldConstBits` settles it EXACTLY where `valueRange` could only estimate it. Kept
+ *  apart from `hasCall` because a call is net-free and still never a constant. */
+function isNetFree(e: Expr): boolean {
+  switch (e.t) {
+    case 'const':
+      return true
+    case 'un':
+      return isNetFree(e.a)
+    case 'sized':
+    case 'cast':
+      return isNetFree(e.of)
+    case 'bin':
+      return isNetFree(e.a) && isNetFree(e.b)
+    case 'tern':
+      return isNetFree(e.c) && isNetFree(e.a) && isNetFree(e.b)
+    case 'concat':
+      return e.parts.every(isNetFree)
+    case 'repl':
+      return isNetFree(e.of)
+    default:
+      return false // net, bitsel, partsel, idxsel, memread — each reads something; call, bad — never constant
+  }
+}
+
+/**
+ * Replace every WHOLE-net read of a named signal with the expression given for it.
+ *
+ * This is how a function body is SPECIALISED to one call site: a formal whose actual is a compile-time
+ * constant becomes that constant inside the body, which is what lets `nib = v[k*4 +: 4]` bound its slice when
+ * every call passes a constant k. Without it the body is elaborated once for all callers, k is just a 32-bit
+ * net, and `k*4` reaches past the end of any net worth slicing.
+ *
+ * Only a whole-net read is replaced. A bit- or part-select of the formal already carries its own tight bounds
+ * (`valueRange` gives `k[3:0]` the span 0..15 whatever k is), and rewriting those would mean deriving the same
+ * bounds a second way.
+ */
+function substNets(e: Expr, byName: Map<string, Expr>): Expr {
+  if (byName.size === 0) return e
+  switch (e.t) {
+    case 'net':
+      return byName.get(e.name) ?? e
+    case 'un':
+      return { ...e, a: substNets(e.a, byName) }
+    case 'bin':
+      return { ...e, a: substNets(e.a, byName), b: substNets(e.b, byName) }
+    case 'tern':
+      return {
+        ...e,
+        c: substNets(e.c, byName),
+        a: substNets(e.a, byName),
+        b: substNets(e.b, byName),
+      }
+    case 'concat':
+      return { ...e, parts: e.parts.map((p) => substNets(p, byName)) }
+    case 'repl':
+      return { ...e, of: substNets(e.of, byName) }
+    case 'memread':
+      return { ...e, idx: substNets(e.idx, byName) }
+    case 'idxsel':
+      return { ...e, base: substNets(e.base, byName) }
+    case 'call':
+      return { ...e, args: e.args.map((a) => substNets(a, byName)) }
+    case 'sized':
+    case 'cast':
+      return { ...e, of: substNets(e.of, byName) }
+    default:
+      return e
   }
 }
 
@@ -618,6 +965,8 @@ function hasUnknownConst(e: Expr): boolean {
       return hasUnknownConst(e.of)
     case 'memread':
       return hasUnknownConst(e.idx)
+    case 'idxsel':
+      return hasUnknownConst(e.base)
     case 'call':
       return e.args.some(hasUnknownConst)
     default:
@@ -788,6 +1137,8 @@ function selfWidth(e: Expr, w: (name: string) => number): number {
       return Math.max(selfWidth(e.a, w), selfWidth(e.b, w))
     case 'memread':
       return e.width
+    case 'idxsel':
+      return e.width
     case 'call':
       // A function call's width is its DECLARED return width — a self-determined wall, never the body's width.
       return e.retWidth ?? 1
@@ -917,13 +1268,17 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
       )
     }
     case 'bitsel': {
+      // A select outside its net reads x (IEEE 1364-2005 §5.2.1) — NOT 0. Zero here was a value Verilog does
+      // not have: outOfRange refuses such a select on every path that owns a driver, but a function body is
+      // synthesized through inlineCall without that gate, and there the invented 0 reached the netlist.
       const inRange = e.index >= 0 && e.index < x.widthOf(e.name)
-      return resize([inRange ? netBit(x, e.name, e.index) : { c: 0 }], w)
+      return resize([inRange ? netBit(x, e.name, e.index) : UNKNOWN], w)
     }
     case 'partsel': {
       const nw = x.widthOf(e.name)
       const bits: Bit[] = []
-      for (let k = e.lo; k <= e.hi; k++) bits.push(k < nw ? netBit(x, e.name, k) : { c: 0 })
+      for (let k = e.lo; k <= e.hi; k++)
+        bits.push(k >= 0 && k < nw ? netBit(x, e.name, k) : UNKNOWN)
       return resize(bits, w)
     }
     case 'concat': {
@@ -934,14 +1289,14 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
       const bits: Bit[] = []
       for (let i = e.parts.length - 1; i >= 0; i--) {
         const p = e.parts[i] as Expr
-        bits.push(...synthAt(p, selfWidth(p, x.widthOf), isSigned(p, S), x))
+        appendAll(bits, synthAt(p, selfWidth(p, x.widthOf), isSigned(p, S), x))
       }
       return resize(bits, w)
     }
     case 'repl': {
       const elem = synthAt(e.of, selfWidth(e.of, x.widthOf), isSigned(e.of, S), x)
       const bits: Bit[] = []
-      for (let i = 0; i < e.count; i++) bits.push(...elem)
+      for (let i = 0; i < e.count; i++) appendAll(bits, elem)
       return resize(bits, w)
     }
     case 'un': {
@@ -1129,7 +1484,7 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
       for (let k = 0; k < e.depth; k++) {
         let match: Bit = { c: 1 }
         for (let j = 0; j < addrW; j++) {
-          const wantOne = ((k >> j) & 1) === 1
+          const wantOne = decodeIndexBit(k, j)
           match = and1(match, wantOne ? (addr[j] as Bit) : not1(addr[j] as Bit, x), x)
         }
         oneHot.push(match)
@@ -1144,6 +1499,41 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
         out.push(acc)
       }
       return resizeSigned(out, w, sgn)
+    }
+    case 'idxsel': {
+      // A run-time-based indexed part-select reads exactly like a memory read: decode the base to one-hot
+      // lines, then OR the slice each line selects. The base is synthesized ONCE and shared by all `width`
+      // output bits. Only the base values `indexedSelectFault` has already proved reachable are decoded, so
+      // the one-hot is exhaustive — a base that could leave the net was refused before we got here, which is
+      // what stops the all-zero OR from answering where Verilog reads x.
+      // Unprovable ⇒ every bit reads x, the same answer Verilog gives outside a net. outOfRange refuses this
+      // before synthesis wherever a driver is claimed; inside an inlined function body, where there is no such
+      // gate, the x is what stops a zero being invented.
+      const span = reachableBases(e, x.widthOf, x.signedOf)
+      if (span === undefined) return resize(new Array<Bit>(e.width).fill(UNKNOWN), w)
+      const baseW = selfWidth(e.base, x.widthOf)
+      const baseBits = synthSelf(e.base, x)
+      const oneHot: Bit[] = []
+      for (let v = span.min; v <= span.max; v++) {
+        let match: Bit = { c: 1 }
+        for (let j = 0; j < baseW; j++) {
+          const wantOne = decodeIndexBit(v, j)
+          const bit = baseBits[j] as Bit
+          match = and1(match, wantOne ? bit : not1(bit, x), x)
+        }
+        oneHot.push(match)
+      }
+      const out: Bit[] = []
+      for (let b = 0; b < e.width; b++) {
+        let acc: Bit = { c: 0 }
+        for (let k = 0; k < oneHot.length; k++) {
+          const v = span.min + k
+          const low = e.up ? v : v - e.width + 1
+          acc = or1(acc, and1(oneHot[k] as Bit, netBit(x, e.name, low + b), x), x)
+        }
+        out.push(acc)
+      }
+      return resize(out, w) // a part-select is UNSIGNED whatever the net it reads is (§5.5.1)
     }
     case 'sized':
       // A width wall: evaluate `of` at exactly `width` (with its own signedness), then re-fit to the context.
@@ -1161,6 +1551,86 @@ function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
   }
 }
 
+/** A function's own name scope. `own` is what each formal, local and the return variable is worth; the three
+ *  oracles fall back to the enclosing module for any name the body reads from outside it. */
+type FnScope = {
+  own: Map<string, number>
+  widthOf: (n: string) => number
+  signedOf: (n: string) => boolean
+  declOf: (n: string) => Decl | undefined
+}
+
+/**
+ * What a function's body names mean — ONE definition, read by the call-site gate AND by inlineCall, so a body
+ * cannot be checked at one set of widths and built at another.
+ *
+ * `prefix` is what inlineCall renames every function-scoped name with (`__fn7_nib_`), so repeated calls never
+ * alias; the gate has no gates to mint and passes the empty string, where the rule below degenerates to a
+ * plain lookup. A name that is not the function's own belongs to the enclosing module and keeps the module's
+ * width and signedness — the body of a function may read a module net, and giving it the default 1 bit would
+ * silently narrow it.
+ */
+function functionScope(
+  fn: FuncDef,
+  prefix: string,
+  outerWidthOf: (n: string) => number,
+  outerSignedOf: (n: string) => boolean,
+): FnScope {
+  const own = new Map<string, number>()
+  for (const inp of fn.inputs) own.set(inp.name, inp.width)
+  for (const [nm, wd] of fn.localWidths) own.set(nm, wd)
+  own.set(fn.name, fn.retWidth) // the return variable is the function name
+  const localName = (n: string): string | undefined => {
+    if (!n.startsWith(prefix)) return undefined
+    const bare = n.slice(prefix.length)
+    return own.has(bare) ? bare : undefined
+  }
+  const widthOf = (n: string): number => {
+    const bare = localName(n)
+    return bare === undefined ? outerWidthOf(n) : (own.get(bare) as number)
+  }
+  const signedOf = (n: string): boolean => {
+    const bare = localName(n)
+    return bare === undefined ? outerSignedOf(n) : fn.signedNames.has(bare)
+  }
+  const declOf = (n: string): Decl | undefined => {
+    const bare = localName(n)
+    return bare === undefined
+      ? undefined
+      : { width: own.get(bare) as number, signed: fn.signedNames.has(bare) }
+  }
+  return { own, widthOf, signedOf, declOf }
+}
+
+/**
+ * What each formal of `fn` is worth at THIS call site, as the `const` node that stands in for its whole-net
+ * reads inside the body. An actual that reads any net has no one value and is left alone.
+ *
+ * The constant is fitted to the FORMAL's declared width and signedness, because binding an actual to a formal
+ * is an assignment (IEEE 1364-2005 §5.6) — `extendTo` is the same one widening rule inlineCall's
+ * `resizeSigned` materializes onto the argument nets, so the specialised tree and the built gates cannot
+ * disagree about what the argument is.
+ */
+function constArgNodes(
+  fn: FuncDef,
+  args: Expr[],
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+  prefix: string,
+): Map<string, Expr> {
+  const out = new Map<string, Expr>()
+  for (let k = 0; k < fn.inputs.length; k++) {
+    const inp = fn.inputs[k] as { name: string; width: number } | undefined
+    const actual = args[k] as Expr | undefined
+    if (inp === undefined || actual === undefined || !isNetFree(actual)) continue
+    const c = foldConstBits(actual, w, sgn)
+    if (c === undefined) continue
+    const signed = fn.signedNames.has(inp.name)
+    out.set(prefix + inp.name, bitsOf(extendTo(c, inp.width, c.signed), inp.width, signed))
+  }
+  return out
+}
+
 /**
  * Inline a function call into REAL gates at the function's declared return width — the gate-materialization
  * approach that makes every width EXACT (the reason the earlier symbolic-inlining attempt was reverted).
@@ -1174,22 +1644,18 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
   if (x.funcs === undefined || x.callSeq === undefined) return resize([], fn.retWidth)
   const id = x.callSeq.n++
   const prefix = `__fn${id}_${fn.name}_`
-  const fnWidth = new Map<string, number>()
-  for (const inp of fn.inputs) fnWidth.set(inp.name, inp.width)
-  for (const [nm, wd] of fn.localWidths) fnWidth.set(nm, wd)
-  fnWidth.set(fn.name, fn.retWidth) // the return variable is the function name
   // Apply the function's widths ONLY to its own (prefixed) scoped names; anything else is a module net, whose
   // width must come from the enclosing context — else an outer function's formal named like a module net the
-  // INNER function reads would steal its width.
-  const bodyWidthOf = (n: string): number =>
-    n.startsWith(prefix) ? (fnWidth.get(n.slice(prefix.length)) ?? 1) : x.widthOf(n)
+  // INNER function reads would steal its width. A function-scoped `integer` is a SIGNED 32-bit variable (IEEE
+  // 1364-2005 §3.9). ONE scope, ONE signedness oracle: the same maps go to the loop unroller, into the Ctx the
+  // body is synthesized under, and into the call-site gate — so a function-scope name can no longer be typed
+  // one way while it is unrolled, built or checked another.
+  const scope = functionScope(fn, prefix, x.widthOf, x.signedOf)
+  const fnWidth = scope.own
+  const bodyWidthOf = scope.widthOf
+  const bodySignedOf = scope.signedOf
   const bodyBitNet = (n: string, i: number): string => (bodyWidthOf(n) === 1 ? n : `${n}[${i}]`)
   const constNets = new Map<string, 0 | 1 | 'x'>()
-  // A function-scoped `integer` is a SIGNED 32-bit variable (IEEE 1364-2005 §3.9). ONE scope, ONE signedness
-  // oracle: the same map goes to the loop unroller AND into the Ctx the body is synthesized under, so a
-  // function-scope read can no longer be typed one way while it is unrolled another.
-  const bodySignedOf = (n: string): boolean =>
-    n.startsWith(prefix) ? fn.integerLocals.has(n.slice(prefix.length)) : x.signedOf(n)
   const bodyCtx: Ctx = {
     ...x,
     widthOf: bodyWidthOf,
@@ -1223,20 +1689,18 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
   // body / no return assignment / a bad nested call (a call to it then reports as "unknown function").
   if (seq.t === 'bad') return resize([{ c: 0 }], fn.retWidth)
   const written = new Set<string>()
-  const declOf = (name: string): Decl | undefined => {
-    if (!name.startsWith(prefix)) return undefined
-    const local = name.slice(prefix.length)
-    const wd = fnWidth.get(local)
-    return wd === undefined ? undefined : { width: wd, signed: fn.integerLocals.has(local) }
-  }
-  const env = elaborate(seq, new Map(), written, declOf)
+  const env = elaborate(seq, new Map(), written, scope)
   const retExpr = env.get(prefix + fn.name)
   if (retExpr === undefined) return resize([{ c: 0 }], fn.retWidth)
   const bound = bindCalls(retExpr, x.funcs)
   if (firstBad(bound) !== undefined) return resize([{ c: 0 }], fn.retWidth)
+  // Specialise the body to THIS call site before synthesizing it: a formal whose actual is a compile-time
+  // constant becomes that constant, which is what lets a slice inside the body bound its base. The gate
+  // (callBodyFault) specialises the identical way, so it cannot pass a body this then fails to build.
+  const spec = substNets(bound, constArgNodes(fn, args, x.widthOf, x.signedOf, prefix))
   // The return variable is unsigned — a `signed` function return is refused at import, so there is no signed
   // return to lose here — and elaborate has already walled the store at the declared retWidth.
-  return synthAt(bound, fn.retWidth, false, bodyCtx)
+  return synthAt(spec, fn.retWidth, false, bodyCtx)
 }
 
 // ── the assign driver ───────────────────────────────────────────────────────────
@@ -1259,25 +1723,69 @@ type SynthModule = {
   unbuilt: UnbuiltReport
 }
 
-/** The target bit-nets of an lhs (`y`, `y[i]`, `y[h:l]`, or a concat of those), LSB-first. */
+/** The constant `[hi:lo]` an assignment target's part-select denotes — a plain `[h:l]`, or an indexed
+ *  `[base +: W]` / `[base -: W]` resolved to the same descending pair. A run-time base is refused: writing a
+ *  slice whose position moves needs a per-bit write enable on the target net, which this importer does not
+ *  build, and picking one fixed position would drive the wrong bits. */
+function targetBounds(
+  parts: [Tok[], Tok[]],
+  name: string,
+): { hi: number; lo: number } | { bad: string } {
+  const indexed = indexedSelectParts(parts)
+  if (indexed !== undefined) {
+    const bounds = indexedBounds(indexed, name)
+    if (bounds.kind === 'bad') return { bad: bounds.why }
+    if (bounds.kind === 'dynamic')
+      return {
+        bad: `the indexed part-select target "${name}[base ${indexed.up ? '+' : '-'}: ${bounds.width}]" has a run-time base — a moving write position is a later increment`,
+      }
+    return { hi: bounds.hi, lo: bounds.lo }
+  }
+  const hi = constInt(parts[0])
+  const lo = constInt(parts[1])
+  if (hi === undefined || lo === undefined) return { bad: 'non-constant part-select target' }
+  return { hi, lo }
+}
+
+/**
+ * The target bit-nets of an lhs (`y`, `y[i]`, `y[h:l]`, or a concat of those), LSB-first.
+ *
+ * A concatenation is flattened over an explicit stack rather than by recursing into each part: `{{{ … y … }}}`
+ * nested deeply enough is otherwise a stack depth, and MEASURED in a fresh process, 4,000 nested braces on the
+ * left of an assign THREW `RangeError: Maximum call stack size exceeded` right here. The stack is filled in
+ * SOURCE order and drained from the end, which visits the parts back-to-front — the same order the recursive
+ * form walked them in, and the order that puts the rightmost part's bits at the bottom.
+ */
 function lhsBits(
   toks: Tok[],
   widthOf: (n: string) => number,
   bitNet: (n: string, i: number) => string,
 ): { bits: string[]; note?: string } | { bad: string } {
-  if (toks[0]?.v === '{') {
-    if (toks[toks.length - 1]?.v !== '}') return { bad: 'malformed concatenation target' }
-    const parts = splitTopComma(toks.slice(1, -1))
-    const out: string[] = []
-    const notes: string[] = []
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const pb = lhsBits(parts[i] as Tok[], widthOf, bitNet)
-      if ('bad' in pb) return pb
-      out.push(...pb.bits)
-      if (pb.note !== undefined) notes.push(pb.note)
+  const out: string[] = []
+  const notes: string[] = []
+  const pending: Tok[][] = [toks]
+  while (pending.length > 0) {
+    const span = pending.pop() as Tok[]
+    if (span[0]?.v === '{') {
+      if (span[span.length - 1]?.v !== '}') return { bad: 'malformed concatenation target' }
+      for (const part of splitTopComma(span.slice(1, -1))) pending.push(part)
+      continue
     }
-    return notes.length > 0 ? { bits: out, note: notes.join('; ') } : { bits: out }
+    const term = lhsTerm(span, widthOf, bitNet)
+    if ('bad' in term) return term
+    appendAll(out, term.bits)
+    if (term.note !== undefined) notes.push(term.note)
   }
+  return notes.length > 0 ? { bits: out, note: notes.join('; ') } : { bits: out }
+}
+
+/** ONE target of an lhs — a whole net, a bit-select, or a part-select. Never a concatenation: `lhsBits` above
+ *  flattens those before anything gets here. */
+function lhsTerm(
+  toks: Tok[],
+  widthOf: (n: string) => number,
+  bitNet: (n: string, i: number) => string,
+): { bits: string[]; note?: string } | { bad: string } {
   if (toks[0]?.k !== 'id') return { bad: 'assign target must be a net' }
   const name = toks[0].v
   if (toks.length === 1)
@@ -1289,10 +1797,16 @@ function lhsBits(
     const width = widthOf(name)
     const parts = splitOnColon(inner)
     if (parts !== undefined) {
-      const hi = constInt(parts[0])
-      const lo = constInt(parts[1])
-      if (hi === undefined || lo === undefined) return { bad: 'non-constant part-select target' }
+      const bounds = targetBounds(parts, name)
+      if ('bad' in bounds) return bounds
+      const { hi, lo } = bounds
       if (hi < lo) return { bad: 'ascending part-select target is unsupported' }
+      // Only a `[base -: W]` can reach below bit 0. Verilog drops those bits, but dropping them here would
+      // slide every later part of a concatenation target onto the wrong bit, so this one is refused.
+      if (lo < 0)
+        return {
+          bad: `part-select target [${hi}:${lo}] reaches below bit 0 of the ${width}-bit net "${name}"`,
+        }
       // A write to a bit that does not exist goes nowhere in Verilog, and the bits that DO exist are still
       // written (IEEE 1364-2005 §5.2.1). Refusing the whole assignment erased the in-range half of it, so the
       // range is clamped and the drop is reported instead.
@@ -1372,18 +1886,26 @@ function pruneRecursiveFunctions(functions: Map<string, FuncDef>, warnings: stri
   }
 }
 
+/** Every statement in a procedural tree, in source order, each visited once. Iterative for the same reason
+ *  `overNested` is: a recursive walk over a deeply nested tree is a stack depth, and the collectors below run
+ *  before anything has measured that depth. */
+function eachStatement(root: ProcStmt, visit: (s: ProcStmt) => void): void {
+  const stack: ProcStmt[] = [root]
+  while (stack.length > 0) {
+    const s = stack.pop() as ProcStmt
+    visit(s)
+    const kids = statementChildren(s)
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i] as ProcStmt)
+  }
+}
+
 /** Whether a procedural tree contains a task-call statement (illegal inside a function body). */
 function containsTaskCall(stmt: ProcStmt): boolean {
-  switch (stmt.t) {
-    case 'taskcall':
-      return true
-    case 'seq':
-      return stmt.body.some(containsTaskCall)
-    case 'if':
-      return containsTaskCall(stmt.conseq) || (stmt.els !== undefined && containsTaskCall(stmt.els))
-    default:
-      return false
-  }
+  let found = false
+  eachStatement(stmt, (s) => {
+    if (s.t === 'taskcall') found = true
+  })
+  return found
 }
 
 /** Why a function's body can't be synthesized, or undefined if it's fine. Parses + elaborates the body exactly
@@ -1395,13 +1917,18 @@ function functionBodyError(fn: FuncDef, functions: Map<string, FuncDef>): string
   for (const [nm, wd] of fn.localWidths) fnWidth.set(nm, wd)
   fnWidth.set(fn.name, fn.retWidth)
   const widthOf = (n: string): number => fnWidth.get(n) ?? 1
-  const seq = parseProcedural(fn.body, new Map(), true, widthOf, (n) => fn.integerLocals.has(n))
+  const signedOf = (n: string): boolean => fn.signedNames.has(n)
+  const seq = parseProcedural(fn.body, new Map(), true, widthOf, signedOf)
   if (seq.t === 'bad') return seq.why
   if (containsTaskCall(seq)) return 'a function cannot call a task'
   const written = new Set<string>()
-  const ret = elaborate(seq, new Map(), written, () => undefined).get(fn.name)
+  // No type walls here: this gate runs before any call site is known, and a body is dropped for GOOD by what
+  // it finds, so it asks only whether the body's shape is supported. The per-call-site widths + walls are what
+  // `callBodyFault` checks, at the call site, where a constant actual can still bound a slice.
+  const scope: EnvScope = { widthOf, signedOf, declOf: () => undefined }
+  const ret = elaborate(seq, new Map(), written, scope).get(fn.name)
   if (ret === undefined) return `it never assigns its return value "${fn.name}"`
-  return firstBad(bindCalls(ret, functions))
+  return oversized(ret) ?? firstBad(bindCalls(ret, functions))
 }
 
 /** Drop + report every function whose body can't be synthesized, iterating to a fixpoint so a function that
@@ -1431,7 +1958,12 @@ type TaskCtx = {
   callSeq: { n: number }
   widthOf: (n: string) => number
   signedOf: (n: string) => boolean
-  registerWidth: (name: string, w: number) => void
+  /** Publish one task-scoped name's DECLARED TYPE — width AND signedness — into the enclosing module's own
+   *  tables. A task body is spliced into the caller's tree and elaborated under the CALLER's scope, so that
+   *  scope is the only oracle a later read of the name has: registering the width alone left `signedOf` (and
+   *  through it `declOf`, whose wall every store re-applies) saying UNSIGNED, which silently zero-extended
+   *  every task-scope `integer` widened past its own 32 bits and made `k < 0` unsigned. */
+  registerDecl: (name: string, w: number, signed: boolean) => void
   /** Tasks currently being inlined (to reject direct/indirect task recursion). */
   stack: Set<string>
 }
@@ -1466,22 +1998,10 @@ function wrapStores(stmt: ProcStmt, declOf: (n: string) => Decl | undefined): Pr
 
 /** Every signal a procedural tree assigns (nb lhs / memwrite name). */
 function collectAssigned(stmt: ProcStmt, out: Set<string>): void {
-  switch (stmt.t) {
-    case 'nb':
-    case 'nbsel':
-      out.add(stmt.lhs)
-      break
-    case 'memwrite':
-      out.add(stmt.name)
-      break
-    case 'seq':
-      for (const s of stmt.body) collectAssigned(s, out)
-      break
-    case 'if':
-      collectAssigned(stmt.conseq, out)
-      if (stmt.els !== undefined) collectAssigned(stmt.els, out)
-      break
-  }
+  eachStatement(stmt, (s) => {
+    if (s.t === 'nb' || s.t === 'nbsel') out.add(s.lhs)
+    else if (s.t === 'memwrite') out.add(s.name)
+  })
 }
 
 /** Inline one task-call statement into a `seq`: input/inout args bound (sized to the arg's declared width)
@@ -1506,23 +2026,25 @@ function expandTaskCall(name: string, argSpans: Tok[][], x: TaskCtx): ProcStmt {
   const scopeWidth = new Map<string, number>()
   for (const a of task.args) scopeWidth.set(a.name, a.width)
   for (const [nm, wd] of task.localWidths) scopeWidth.set(nm, wd)
-  for (const [nm, wd] of scopeWidth) x.registerWidth(prefix + nm, wd)
+  for (const [nm, wd] of scopeWidth) x.registerDecl(prefix + nm, wd, task.signedNames.has(nm))
   const bodyToks = task.body.map((t) =>
     t.k === 'id' && scopeWidth.has(t.v) ? { ...t, v: prefix + t.v } : t,
   )
   const bodySignedOf = (n: string): boolean =>
-    n.startsWith(prefix) ? task.integerLocals.has(n.slice(prefix.length)) : x.signedOf(n)
+    n.startsWith(prefix) ? task.signedNames.has(n.slice(prefix.length)) : x.signedOf(n)
   const parsedBody = parseProcedural(bodyToks, x.mems, true, x.widthOf, bodySignedOf)
   if (parsedBody.t === 'bad') return { t: 'bad', why: `task "${name}" body — ${parsedBody.why}` }
   // Inline any nested task call in the body (recursion-guarded); its top level is not conditional.
-  const nested = expandTaskCalls(parsedBody, { ...x, stack: new Set([...x.stack, name]) }, false)
+  const nested = withinNesting(
+    expandTaskCalls(parsedBody, { ...x, stack: new Set([...x.stack, name]) }, false),
+  )
   if (nested.t === 'bad') return nested
   // Width walls on every intermediate local/arg store, exactly like the function inliner.
   const declOf = (n: string): Decl | undefined => {
     if (!n.startsWith(prefix)) return undefined
     const local = n.slice(prefix.length)
     const wd = scopeWidth.get(local)
-    return wd === undefined ? undefined : { width: wd, signed: task.integerLocals.has(local) }
+    return wd === undefined ? undefined : { width: wd, signed: task.signedNames.has(local) }
   }
   const walledBody = wrapStores(nested, declOf)
   const assigned = new Set<string>()
@@ -1532,13 +2054,20 @@ function expandTaskCall(name: string, argSpans: Tok[][], x: TaskCtx): ProcStmt {
   for (let k = 0; k < task.args.length; k++) {
     const a = task.args[k] as TaskArg
     if (a.dir === 'input' || a.dir === 'inout') {
-      const argExpr = bindCalls(parseRhs(argSpans[k] as Tok[], x.mems), x.funcs)
-      const eb = firstBad(argExpr)
+      const argRaw = parseRhs(argSpans[k] as Tok[], x.mems)
+      const argHuge = oversized(argRaw)
+      const argExpr = argHuge === undefined ? bindCalls(argRaw, x.funcs) : argRaw
+      const eb = argHuge ?? firstBad(argExpr)
       if (eb !== undefined) return { t: 'bad', why: `task "${name}" argument "${a.name}" — ${eb}` }
       pre.push({
         t: 'nb',
         lhs: prefix + a.name,
-        rhs: { t: 'sized', width: a.width, signed: false, of: argExpr },
+        rhs: {
+          t: 'sized',
+          width: a.width,
+          signed: task.signedNames.has(a.name),
+          of: argExpr,
+        },
         blocking: true,
       })
     }
@@ -1557,7 +2086,9 @@ function expandTaskCall(name: string, argSpans: Tok[][], x: TaskCtx): ProcStmt {
         rhs: {
           t: 'sized',
           width: a.width,
-          signed: false,
+          // The write-back into the CALLER's signal is an assignment, so what the caller widens it by is THIS
+          // wall's type: an `output integer` landing in a wider caller net sign-extends (§3.9 + §5.6).
+          signed: task.signedNames.has(a.name),
           of: { t: 'net', name: prefix + a.name },
         },
         blocking: true,
@@ -1618,12 +2149,17 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   const signedOf = (name: string): boolean => mod.signed.has(name)
   // A store into a declared signal takes that signal's own width and signedness (IEEE 1364-2005 §6.2), which
   // is what makes a blocking intermediate a real WALL: `reg [3:0] t; t = a + 4'd1; y = t;` must truncate at t,
-  // and `reg signed [3:0] t; t = a; y = t;` must sign-extend out of t. A signal with no declared width (every
-  // 1-bit net) has nothing to wall, so it keeps the substituted expression exactly as before.
-  const declOf = (name: string): Decl | undefined => {
-    const wd = mod.widths.get(name)
-    return wd === undefined ? undefined : { width: wd, signed: signedOf(name) }
-  }
+  // and `reg signed [3:0] t; t = a; y = t;` must sign-extend out of t.
+  //
+  // ONE bit is a declared width like any other, and the wall it puts on a store is the one that matters most:
+  // it throws away every bit above bit 0. `mod.widths` records only widths ABOVE one, so asking it alone left
+  // every scalar `reg` with no wall at all and a copy into one carried the whole value onward. MEASURED
+  // against Icarus Verilog 14.0 on `reg q; reg [7:0] r; q = a; r = scale(q);` with `scale(v) = v * 8'd17`:
+  // 0 273 546 819 1365 1638 2730 36735 where Icarus reads 0 273 512 785 1297 1536 2560 36625 — Icarus scales
+  // a[0] alone, we scaled all eight bits of `a`. `reg [0:0] q` read the same, because it too is one bit wide.
+  // `widthOf` already answers 1 for a name `mod.widths` does not hold, so reading the wall off it keeps the
+  // width a select is checked against and the width a store is walled at as one answer, never two.
+  const declOf = (name: string): Decl => ({ width: widthOf(name), signed: signedOf(name) })
 
   // Expand declared bus ports into scalar bit-ports (a[3:0] → a[0]..a[3]), preserving direction + order.
   const newOrder: string[] = []
@@ -1728,8 +2264,9 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     callSeq,
     widthOf,
     signedOf,
-    registerWidth: (name, wd) => {
+    registerDecl: (name, wd, signed) => {
       if (wd > 1) mod.widths.set(name, wd)
+      if (signed) mod.signed.add(name)
     },
     stack: new Set(),
   })
@@ -1852,8 +2389,12 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     const inGates: GateInst[] = []
     const inNets: string[] = []
     for (const sl of inSlices) {
-      const ast = bindCalls(parseRhs(sl, mod.mems), mod.functions)
-      const why = firstBad(ast) ?? outOfRange(ast, widthOf, signedOf)
+      // The size-and-depth guard runs BEFORE the tree is bound, because binding walks it: a tree past
+      // either cap is one `bindCalls` cannot finish either.
+      const raw = parseRhs(sl, mod.mems)
+      const huge = oversized(raw)
+      const ast = huge === undefined ? bindCalls(raw, mod.functions) : raw
+      const why = huge ?? firstBad(ast) ?? outOfRange(ast, widthOf, signedOf, mod.functions)
       if (why !== undefined) {
         bad = why
         continue
@@ -1882,7 +2423,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       if (refusedRaw.size > 0) reportRefusedBits(where, outSlices.flatMap(targetBits), refusedRaw)
       continue
     }
-    mod.gates.push(...inGates)
+    appendAll(mod.gates, inGates)
     // The strength written on the instance is the strength of THIS gate, and it was dropped here — so a
     // `buf (strong1, strong0) g(y[1], a[0])` reached the ladder looking unannotated. MEASURED against Icarus
     // Verilog 14.0: two strengths on one bit-select were then read as a plain contention and both drivers
@@ -1960,8 +2501,12 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       reportRefusedBits(where, targets, refused)
       continue
     }
-    const ast = bindCalls(parseRhs(a.rhs, mod.mems), mod.functions)
-    const bad = firstBad(ast)
+    // The size-and-depth guard runs BEFORE the tree is bound, because binding walks it: a tree past either
+    // cap is one `bindCalls` cannot finish either.
+    const raw = parseRhs(a.rhs, mod.mems)
+    const huge = oversized(raw)
+    const ast = huge === undefined ? bindCalls(raw, mod.functions) : raw
+    const bad = huge ?? firstBad(ast)
     if (bad !== undefined) {
       warnings.push(`line ${a.line}: assign not synthesized — ${bad}`)
       markUnbuilt('a continuous assign this importer cannot build', `line ${a.line}`, targets)
@@ -1969,7 +2514,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     }
     // An out-of-range constant select reads x in Verilog — not representable in a 0/1 netlist, so report it
     // rather than silently substitute 0.
-    const oor = outOfRange(ast, widthOf, signedOf)
+    const oor = outOfRange(ast, widthOf, signedOf, mod.functions)
     if (oor !== undefined) {
       warnings.push(`line ${a.line}: ${oor} reads x in Verilog — reported, not built`)
       markUnbuilt('a continuous assign that reads out of range', `line ${a.line}`, targets)
@@ -1981,6 +2526,12 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       a.portJoin === true
         ? synthPortConnection(ast, targets.length, ctx)
         : synthAt(ast, targets.length, isSigned(ast, signedOf), ctx)
+    const tooMany = overGateBudget(gates)
+    if (tooMany !== undefined) {
+      warnings.push(`line ${a.line}: assign not synthesized — ${tooMany}`)
+      markUnbuilt('a continuous assign this importer cannot build', `line ${a.line}`, targets)
+      continue
+    }
     const wired: string[] = []
     for (let i = 0; i < targets.length; i++) {
       const tb = targets[i] as string
@@ -2016,7 +2567,8 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     // comb: blocking `=` + full-case coverage
     const parsed = parseProcedural(blk.body, mod.mems, true, widthOf, signedOf)
     // Inline any task call (inputs bound, outputs written back) before elaboration.
-    const seq = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(true), false)
+    const seq =
+      parsed.t === 'bad' ? parsed : withinNesting(expandTaskCalls(parsed, taskCtx(true), false))
     if (seq.t === 'bad') {
       warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
       bodyTargetBits(
@@ -2038,13 +2590,17 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       continue
     }
     const written = new Set<string>()
-    const env = elaborate(seq, new Map(), written, declOf)
+    const env = elaborate(seq, new Map(), written, { widthOf, signedOf, declOf })
     for (const r of written) {
       const raw = env.get(r)
       if (raw === undefined) continue
-      const ast = bindCalls(raw, mod.functions)
-      const bad = firstBad(ast)
-      const oor = outOfRange(ast, widthOf, signedOf)
+      // The size-and-depth guard runs BEFORE the tree is bound, because binding walks it: an elaborated
+      // expression past either cap is one `bindCalls` cannot finish either.
+      const huge = oversized(raw)
+      const ast = huge === undefined ? bindCalls(raw, mod.functions) : raw
+      const bad = huge ?? firstBad(ast)
+      // outOfRange walks the tree, so it is asked only once `bad` has cleared it as walkable.
+      const oor = bad === undefined ? outOfRange(ast, widthOf, signedOf, mod.functions) : undefined
       const w = widthOf(r)
       const targets = Array.from({ length: w }, (_, i) => bitNet(r, i))
       const where = `line ${blk.line}: combinational always block driving register "${r}"`
@@ -2074,6 +2630,17 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       }
       const gates: GateInst[] = []
       const rhs = synthAt(ast, w, isSigned(ast, signedOf), synCtx(gates))
+      const tooMany = overGateBudget(gates)
+      if (tooMany !== undefined) {
+        warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${tooMany}`)
+        markUnbuilt(
+          'a combinational always block this importer cannot build',
+          `line ${blk.line}`,
+          targets,
+        )
+        if (refused.size > 0) reportRefusedBits(where, targets, refused)
+        continue
+      }
       const wired: string[] = []
       for (let i = 0; i < w; i++) {
         const tb = targets[i] as string
@@ -2118,7 +2685,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   for (const b of built) {
     const looped = b.targets.filter((tb) => onCycle.has(tb))
     if (looped.length === 0) {
-      mod.gates.push(...b.gates)
+      appendAll(mod.gates, b.gates)
       continue
     }
     reportRefusedBits(
@@ -2130,7 +2697,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     // x/contention rule (see WHY THE x GUARD AND THE CONTENTION GUARD SAY THE SAME THING) is deliberately
     // unchanged here: the looped bit loses its driver and reads undriven, while the bits around it keep
     // theirs. Poisoning it would erase a whole design over one bit Verilog itself calls unknown.
-    mod.gates.push(...retractOutputs(b.gates, onCycle))
+    appendAll(mod.gates, retractOutputs(b.gates, onCycle))
   }
 
   // ── clocked always-blocks → one D flip-flop per registered bit + its next-state gates ──────────────
@@ -2151,7 +2718,8 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     if (blk.clk === null) continue // combinational — handled above as continuous drives, not flip-flops
     const parsed = parseProcedural(blk.body, mod.mems, false, widthOf, signedOf)
     // A task call in a clocked block is reported (expandTaskCalls with comb=false); a block without one passes.
-    const expanded = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(false), false)
+    const expanded =
+      parsed.t === 'bad' ? parsed : withinNesting(expandTaskCalls(parsed, taskCtx(false), false))
     // `@(posedge clk or posedge reset)` — split the reset branch off the body, so what is synthesized below is
     // the ordinary next-state logic and the reset becomes the flip-flop's real asynchronous CLEAR pin.
     const async = blk.reset === null ? null : splitAsyncReset(blk, expanded, widthOf)
@@ -2179,8 +2747,10 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     // Validate each store address ONCE (a memwrite fans out to `depth` word-registers, so a per-word check
     // would report the same fault `depth` times). A faulty store marks the whole memory not-built.
     for (const mw of collectMemWrites(seq)) {
-      const bad = firstBad(mw.idx) ?? firstBad(mw.rhs)
-      const oor = outOfRange(mw.idx, widthOf, signedOf) ?? outOfRange(mw.rhs, widthOf, signedOf)
+      const bad = oversized(mw.idx) ?? oversized(mw.rhs) ?? firstBad(mw.idx) ?? firstBad(mw.rhs)
+      const oor =
+        outOfRange(mw.idx, widthOf, signedOf, mod.functions) ??
+        outOfRange(mw.rhs, widthOf, signedOf, mod.functions)
       const v = foldConst(mw.idx, widthOf, signedOf)
       const oob = v !== undefined && v >= mw.depth
       if (bad === undefined && oor === undefined && !oob) continue
@@ -2194,7 +2764,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       badMem.add(mw.name)
     }
     const written = new Set<string>()
-    const env = elaborate(seq, new Map(), written, declOf)
+    const env = elaborate(seq, new Map(), written, { widthOf, signedOf, declOf })
     for (const r of written) {
       const base = memBaseOf(r)
       if (base !== undefined && badMem.has(base)) continue // faulty store, already reported above
@@ -2223,9 +2793,13 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       }
       const raw = env.get(r)
       if (raw === undefined) continue
-      const ast = bindCalls(raw, mod.functions)
-      const bad = firstBad(ast)
-      const oor = outOfRange(ast, widthOf, signedOf)
+      // The size-and-depth guard runs BEFORE the tree is bound, because binding walks it: an elaborated
+      // expression past either cap is one `bindCalls` cannot finish either.
+      const huge = oversized(raw)
+      const ast = huge === undefined ? bindCalls(raw, mod.functions) : raw
+      const bad = huge ?? firstBad(ast)
+      // outOfRange walks the tree, so it is asked only once `bad` has cleared it as walkable.
+      const oor = bad === undefined ? outOfRange(ast, widthOf, signedOf, mod.functions) : undefined
       const w = widthOf(r)
       const qBits = Array.from({ length: w }, (_, i) => bitNet(r, i))
       // Driving an input port (scalar OR any bus bit) is illegal; a bit already sourced by a gate/assign is a
@@ -2253,6 +2827,13 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       // flop's D and Q pins never land on the same net (which would short them).
       const dGates: GateInst[] = []
       const D = synthAt(ast, w, isSigned(ast, signedOf), synCtx(dGates))
+      const tooMany = overGateBudget(dGates)
+      if (tooMany !== undefined) {
+        warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${tooMany}`)
+        markUnbuilt('a clocked always block this importer cannot build', `line ${blk.line}`, qBits)
+        if (refused.size > 0) reportRefusedBits(where, qBits, refused)
+        continue
+      }
       const newFlops: FlopInst[] = []
       for (let i = 0; i < w; i++) {
         const qNet = qBits[i] as string
@@ -2283,8 +2864,8 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       }
       if (refused.size > 0) reportRefusedBits(where, qBits, refused)
       if (newFlops.length === 0) continue
-      mod.gates.push(...dGates)
-      mod.flops.push(...newFlops)
+      appendAll(mod.gates, dGates)
+      appendAll(mod.flops, newFlops)
       registered.add(r)
     }
   }
@@ -2413,9 +2994,9 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     }
     if (refused.size > 0) reportRefusedBits(where, bits, refused)
   }
-  mod.gates.push(...romGates)
+  appendAll(mod.gates, romGates)
 
-  mod.gates.push(...tieGates) // tie drivers read only inputs → never on a cycle → always safe to keep
+  appendAll(mod.gates, tieGates) // tie drivers read only inputs → never on a cycle → always safe to keep
 
   // Retract every driver of a contended bit (see contendedBits). This runs last so it catches all three
   // kinds at once: a structural gate, a synthesized assign/combinational buffer, and a flip-flop. Only the
@@ -2540,11 +3121,216 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   for (const r of refusals) emitRefusal(warnings, r, finallyDriven)
 }
 
+/** An inclusive range of the values an expression can take, as exact integers. */
+type ValueRange = { min: bigint; max: bigint }
+
+const unsignedSpan = (width: number): ValueRange => ({ min: 0n, max: (1n << BigInt(width)) - 1n })
+
+/**
+ * The values an expression can take at run time, or undefined when this importer cannot bound them.
+ *
+ * Every rule here must OVER-estimate. The range is what proves an indexed part-select's slice never leaves
+ * its net, and an under-estimate would build a read-mux that answers 0 for a base Verilog reads x at. So a
+ * shape with no rule, and anything that could be NEGATIVE (a signed operand, a subtraction that can go
+ * below zero), returns undefined — refused, not guessed.
+ *
+ * The result is the expression's SELF-DETERMINED value (§5.4.1): it wraps at its own width, so an estimate
+ * that reaches the width collapses to the whole unsigned span, which is still a true over-estimate.
+ */
+function valueRange(
+  e: Expr,
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+): ValueRange | undefined {
+  const width = selfWidth(e, w)
+  if (width < 1 || width > MAX_WIDTH) return undefined
+  const raw = rawValueRange(e, w, sgn)
+  if (raw === undefined || raw.min < 0n || raw.max < raw.min) return undefined
+  const span = 1n << BigInt(width)
+  return raw.max < span ? raw : unsignedSpan(width)
+}
+
+function rawValueRange(
+  e: Expr,
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+): ValueRange | undefined {
+  // A tree that reads nothing but literals has ONE value, so SETTLE it rather than estimate it. This is the
+  // only route by which a signed base bounds at all: every estimate below gives up on a signed operand
+  // (it could be negative, and a negative base leaves the net), yet `integer k; k = 3;` inside a function body
+  // elaborates to a signed 32-bit type wall around the literal 3, whose value is plainly 3. It is also what
+  // reads a specialised call site: once a constant actual has replaced its formal, `k*4` is literals only.
+  // A tree carrying a literal x does not fold, so it stays unbounded — the same answer the bare-literal rule
+  // this replaces gave it.
+  if (isNetFree(e)) {
+    const c = foldConstBits(e, w, sgn)
+    if (c === undefined) return undefined
+    const v = asInteger(c)
+    return { min: v, max: v }
+  }
+  switch (e.t) {
+    case 'net':
+      return sgn(e.name) ? undefined : unsignedSpan(w(e.name))
+    case 'bitsel':
+      return { min: 0n, max: 1n }
+    case 'partsel':
+      return e.hi >= e.lo ? unsignedSpan(e.hi - e.lo + 1) : undefined
+    case 'idxsel':
+      return unsignedSpan(e.width)
+    case 'concat': {
+      // A concatenation's value is its parts packed LSB-upward — the `{idx, 3'b0}` idiom for a strided base
+      // bounds far tighter than the whole width does.
+      let min = 0n
+      let max = 0n
+      let shift = 0
+      for (let i = e.parts.length - 1; i >= 0; i--) {
+        const p = e.parts[i] as Expr
+        const pr = valueRange(p, w, sgn)
+        if (pr === undefined) return undefined
+        min += pr.min << BigInt(shift)
+        max += pr.max << BigInt(shift)
+        shift += selfWidth(p, w)
+      }
+      return { min, max }
+    }
+    case 'un':
+      if (e.op === '+') return valueRange(e.a, w, sgn)
+      if (e.op === '~' || e.op === '-') return undefined
+      return { min: 0n, max: 1n } // ! and the reductions
+    case 'bin':
+      return binaryValueRange(e.op, e.a, e.b, w, sgn)
+    case 'tern': {
+      const a = valueRange(e.a, w, sgn)
+      const b = valueRange(e.b, w, sgn)
+      if (a === undefined || b === undefined) return undefined
+      return { min: a.min < b.min ? a.min : b.min, max: a.max > b.max ? a.max : b.max }
+    }
+    default:
+      // memread, repl, call, sized, cast — bounded only by their own width, and only when unsigned.
+      return isSigned(e, sgn) ? undefined : unsignedSpan(selfWidth(e, w))
+  }
+}
+
+/** The shift amount a `<<`/`>>` estimate will accept: past this the shifted estimate is astronomically wide
+ *  and proves nothing anyway, so the base is reported as unbounded instead. */
+const MAX_RANGE_SHIFT = 1024n
+
+function binaryValueRange(
+  op: string,
+  ea: Expr,
+  eb: Expr,
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+): ValueRange | undefined {
+  if (RELATIONAL.has(op) || op === '==' || op === '!=' || op === '&&' || op === '||')
+    return { min: 0n, max: 1n }
+  const a = valueRange(ea, w, sgn)
+  const b = valueRange(eb, w, sgn)
+  if (a === undefined || b === undefined) return undefined
+  if (op === '+') return { min: a.min + b.min, max: a.max + b.max }
+  if (op === '-') return { min: a.min - b.max, max: a.max - b.min } // negative ⇒ refused by valueRange
+  if (op === '*') return { min: a.min * b.min, max: a.max * b.max }
+  if (op === '&') return { min: 0n, max: a.max < b.max ? a.max : b.max }
+  if (op === '<<' || op === '<<<') {
+    if (b.max > MAX_RANGE_SHIFT) return undefined
+    return { min: a.min << b.min, max: a.max << b.max }
+  }
+  if (op === '>>' || op === '>>>') {
+    if (b.max > MAX_RANGE_SHIFT) return undefined
+    return { min: a.min >> b.max, max: a.max >> b.min }
+  }
+  if (op === '/') return { min: 0n, max: a.max }
+  if (op === '%') return { min: 0n, max: b.max > 0n ? b.max - 1n : a.max }
+  return { min: 0n, max: a.max > b.max ? a.max : b.max } // | ^ ~^ — no bit above either operand's top
+}
+
+/** How many decode lines a run-time indexed part-select may build. A select over a very wide net would
+ *  otherwise mint one AND-tree per addressable bit and never finish. */
+const MAX_INDEXED_SELECT_LINES = 4096
+
+/** The base values a run-time indexed part-select can actually take, as plain numbers — the exhaustive set its
+ *  read-mux decodes. Undefined means it could not be proved safe, and `indexedSelectFault` says why. */
+function reachableBases(
+  e: { name: string; base: Expr; width: number; up: boolean },
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+): { min: number; max: number } | undefined {
+  const r = valueRange(e.base, w, sgn)
+  if (r === undefined) return undefined
+  const netWidth = BigInt(w(e.name))
+  const lowest = e.up ? r.min : r.min - BigInt(e.width - 1)
+  const highest = e.up ? r.max + BigInt(e.width - 1) : r.max
+  if (lowest < 0n || highest >= netWidth) return undefined
+  if (r.max - r.min >= BigInt(MAX_INDEXED_SELECT_LINES)) return undefined
+  return { min: Number(r.min), max: Number(r.max) }
+}
+
+/** Why a run-time-based indexed part-select cannot be built, or undefined when every base value it can take
+ *  keeps the whole slice inside the net. A slice that leaves its net reads x for the outside bits (IEEE
+ *  1364-2005 §5.2.1) and a 0/1 netlist has no x, so an unprovable base is refused rather than zero-filled. */
+function indexedSelectFault(
+  e: { name: string; base: Expr; width: number; up: boolean },
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+): string | undefined {
+  if (reachableBases(e, w, sgn) !== undefined) return undefined
+  const netWidth = w(e.name)
+  const spelling = `${e.name}[base ${e.up ? '+' : '-'}: ${e.width}]`
+  const r = valueRange(e.base, w, sgn)
+  if (r === undefined)
+    return `the base of the indexed part-select ${spelling} cannot be bounded by this importer, so outside the ${netWidth}-bit net "${e.name}" it`
+  const lowest = e.up ? r.min : r.min - BigInt(e.width - 1)
+  const highest = e.up ? r.max + BigInt(e.width - 1) : r.max
+  if (lowest < 0n || highest >= BigInt(netWidth))
+    return `the indexed part-select ${spelling} can reach bits [${highest}:${lowest}] of the ${netWidth}-bit net "${e.name}", where it`
+  return `the indexed part-select ${spelling} spans ${r.max - r.min + 1n} possible base values, more than the ${MAX_INDEXED_SELECT_LINES} decode lines this importer builds, and outside the ${netWidth}-bit net "${e.name}" it`
+}
+
+/**
+ * Why an inlined call to `e.fn` cannot be built at THIS call site, or undefined when it can.
+ *
+ * The gate every driver runs stopped at a call's ARGUMENTS, so a select this importer cannot bound INSIDE a
+ * function body met no gate at all: synthAt answered it with x, the assign driver dropped those bits, and the
+ * module published with the pins missing. MEASURED against Icarus Verilog 14.0, over a body doing
+ * `nib = v[k*4 +: 4]`: `assign y = {28'h000000a, (nib(a,0) == 4'hf)};` published y = 0x14 at a = 0xbaff where
+ * Icarus reads 0x15 — a design that imported and disagreed, which is the one thing this importer must never do.
+ *
+ * The body is elaborated here the way inlineCall elaborates it — same scope (functionScope), same declared-type
+ * walls, same per-call constant specialisation (constArgNodes + substNets) — so the gate cannot pass a body
+ * that then fails to build, nor refuse one that would have built.
+ */
+function callBodyFault(
+  e: { args: Expr[]; fn?: FuncDef },
+  w: (n: string) => number,
+  sgn: (n: string) => boolean,
+  funcs: Map<string, FuncDef> | undefined,
+): string | undefined {
+  const fn = e.fn
+  if (fn === undefined) return undefined
+  const scope = functionScope(fn, '', w, sgn)
+  const seq = parseProcedural(fn.body, new Map(), true, scope.widthOf, scope.signedOf)
+  // A body that does not parse, or never assigns its return, was already reported and dropped by
+  // validateFunctions — a call to it reads as "unknown function" and never reaches here.
+  if (seq.t === 'bad') return undefined
+  const ret = elaborate(seq, new Map(), new Set<string>(), scope).get(fn.name)
+  if (ret === undefined) return undefined
+  const huge = oversized(ret)
+  if (huge !== undefined) return huge
+  const bound = funcs === undefined ? ret : bindCalls(ret, funcs)
+  const spec = substNets(bound, constArgNodes(fn, e.args, w, sgn, ''))
+  // A construct the body cannot build is checked HERE, not only in validateFunctions: that gate elaborates the
+  // body with no declared-type walls, so a shape that only goes bad once the walls are on (a select of a
+  // walled local whose base cannot be bounded) reached inlineCall, whose guard for an unbuildable body returns
+  // ZEROS. A wrong answer with no warning — so the gate that stands in front of every driver looks for it.
+  return oversized(spec) ?? firstBad(spec) ?? outOfRange(spec, scope.widthOf, scope.signedOf, funcs)
+}
+
 /** The first out-of-range constant bit/part-select in the tree (Verilog x), or undefined. */
 function outOfRange(
   e: Expr,
   w: (n: string) => number,
   sgn: (n: string) => boolean,
+  funcs?: Map<string, FuncDef>,
 ): string | undefined {
   switch (e.t) {
     case 'bitsel':
@@ -2555,22 +3341,28 @@ function outOfRange(
       return e.hi >= w(e.name) || e.lo < 0
         ? `part-select ${e.name}[${e.hi}:${e.lo}] is out of range on the ${w(e.name)}-bit net "${e.name}" —`
         : undefined
+    case 'idxsel':
+      return outOfRange(e.base, w, sgn, funcs) ?? indexedSelectFault(e, w, sgn)
     case 'un':
-      return outOfRange(e.a, w, sgn)
+      return outOfRange(e.a, w, sgn, funcs)
     case 'bin':
-      return outOfRange(e.a, w, sgn) ?? outOfRange(e.b, w, sgn)
+      return outOfRange(e.a, w, sgn, funcs) ?? outOfRange(e.b, w, sgn, funcs)
     case 'tern':
-      return outOfRange(e.c, w, sgn) ?? outOfRange(e.a, w, sgn) ?? outOfRange(e.b, w, sgn)
+      return (
+        outOfRange(e.c, w, sgn, funcs) ??
+        outOfRange(e.a, w, sgn, funcs) ??
+        outOfRange(e.b, w, sgn, funcs)
+      )
     case 'concat':
       for (const p of e.parts) {
-        const r = outOfRange(p, w, sgn)
+        const r = outOfRange(p, w, sgn, funcs)
         if (r !== undefined) return r
       }
       return undefined
     case 'repl':
-      return outOfRange(e.of, w, sgn)
+      return outOfRange(e.of, w, sgn, funcs)
     case 'memread': {
-      const inner = outOfRange(e.idx, w, sgn)
+      const inner = outOfRange(e.idx, w, sgn, funcs)
       if (inner !== undefined) return inner
       const v = foldConst(e.idx, w, sgn)
       return v !== undefined && v >= e.depth
@@ -2579,14 +3371,17 @@ function outOfRange(
     }
     case 'call': {
       for (const a of e.args) {
-        const r = outOfRange(a, w, sgn)
+        const r = outOfRange(a, w, sgn, funcs)
         if (r !== undefined) return r
       }
-      return undefined
+      // The call's BODY is part of what this driver is about to build, so it is part of what this gate must
+      // prove. Without this the body was the one place a select could reach past its net unchallenged.
+      const inner = callBodyFault(e, w, sgn, funcs)
+      return inner === undefined ? undefined : `inside function "${e.name}", ${inner}`
     }
     case 'sized':
     case 'cast':
-      return outOfRange(e.of, w, sgn)
+      return outOfRange(e.of, w, sgn, funcs)
     default:
       return undefined
   }
@@ -3120,9 +3915,9 @@ function resolveStrengthDrivers(
       }
       return priv
     })
-    joins.push(...lowerTruthTable(table, privates, net, fresh))
+    appendAll(joins, lowerTruthTable(table, privates, net, fresh))
   }
-  mod.gates.push(...joins)
+  appendAll(mod.gates, joins)
   if (refused.length > 0) {
     const gone = new Set(refused.map((r) => r.net))
     mod.gates = retractOutputs(mod.gates, gone)
@@ -3190,7 +3985,7 @@ function combineResolvedDrivers(
       acc = out
     }
   }
-  mod.gates.push(...joins)
+  appendAll(mod.gates, joins)
   if (refused.length > 0) {
     const gone = new Set(refused.map((r) => r.net))
     mod.gates = retractOutputs(mod.gates, gone)
@@ -3384,6 +4179,55 @@ type ProcParse = {
  *  a design that computes a different function with nothing said. */
 const MAX_UNROLLED_ITERATIONS = 4096
 
+/** Every statement a procedural statement is built from. One list, so the depth walk below reads a
+ *  statement's children the same way every other walk over a `ProcStmt` does. */
+function statementChildren(s: ProcStmt): readonly ProcStmt[] {
+  if (s.t === 'seq') return s.body
+  if (s.t === 'if') return s.els === undefined ? [s.conseq] : [s.conseq, s.els]
+  return []
+}
+
+/**
+ * Why this statement tree is deeper than this importer will walk, or undefined if it is within the cap. Asked
+ * on every parsed body and again on every one a task call has been inlined into, BEFORE any other walk,
+ * because every other walk over a `ProcStmt` is plain recursion and a tree past the cap is exactly what they
+ * cannot finish.
+ *
+ * Deliberately iterative, over an explicit stack, for the same reason `oversized` is: a walk that recursed
+ * would hit the depth it is measuring and throw while measuring it. Each DISTINCT statement is visited once,
+ * so a body a task expansion has shared nodes into is still answered in one pass.
+ */
+function overNested(root: ProcStmt): string | undefined {
+  const depth = new Map<ProcStmt, number>()
+  const opened = new Set<ProcStmt>()
+  const stack: ProcStmt[] = [root]
+  while (stack.length > 0) {
+    const s = stack[stack.length - 1] as ProcStmt
+    if (depth.has(s)) {
+      stack.pop()
+      continue
+    }
+    if (!opened.has(s)) {
+      opened.add(s)
+      for (const child of statementChildren(s)) if (!depth.has(child)) stack.push(child)
+      continue
+    }
+    stack.pop()
+    let d = 1
+    for (const child of statementChildren(s)) d = Math.max(d, 1 + (depth.get(child) ?? 1))
+    depth.set(s, d)
+  }
+  if ((depth.get(root) ?? 1) <= MAX_STATEMENT_DEPTH) return undefined
+  return `it is a statement nested more than ${MAX_STATEMENT_DEPTH} levels deep, which is past what this importer will build`
+}
+
+/** The parsed statement, or a refusal naming the depth when it is past the cap. */
+function withinNesting(s: ProcStmt): ProcStmt {
+  if (s.t === 'bad') return s
+  const deep = overNested(s)
+  return deep === undefined ? s : { t: 'bad', why: deep }
+}
+
 /** Parse a clocked always body (its inner statements, no wrapping begin/end) into one procedural statement. */
 function parseProcedural(
   body: Tok[],
@@ -3396,15 +4240,23 @@ function parseProcedural(
   const p: ProcParse = { mems, comb, widthOf, signedOf, budget: { left: MAX_UNROLLED_ITERATIONS } }
   const stmts: ProcStmt[] = []
   while (ts.peek() !== undefined) {
-    const s = parseStmt(ts, p)
+    const s = parseStmt(ts, p, 0)
     if (s.t === 'bad') return s
     stmts.push(s)
   }
   if (stmts.length === 0) return { t: 'bad', why: 'the always block is empty' }
-  return stmts.length === 1 ? (stmts[0] as ProcStmt) : { t: 'seq', body: stmts }
+  return withinNesting(stmts.length === 1 ? (stmts[0] as ProcStmt) : { t: 'seq', body: stmts })
 }
 
-function parseStmt(ts: TokStream, p: ProcParse): ProcStmt {
+/** `depth` is how many statements enclose this one, so the parser's own recursion is bounded by the same cap
+ *  the tree it builds is: without it a source nested past the cap overflows here, before there is a tree to
+ *  measure at all. */
+function parseStmt(ts: TokStream, p: ProcParse, depth: number): ProcStmt {
+  if (depth > MAX_STATEMENT_DEPTH)
+    return {
+      t: 'bad',
+      why: `it is a statement nested more than ${MAX_STATEMENT_DEPTH} levels deep, which is past what this importer will build`,
+    }
   const t = ts.peek()
   if (t === undefined) return { t: 'bad', why: 'unexpected end of the always block' }
   if (t.v === 'begin') {
@@ -3420,7 +4272,7 @@ function parseStmt(ts: TokStream, p: ProcParse): ProcStmt {
       }
     const body: ProcStmt[] = []
     while (ts.peek() !== undefined && ts.peek()?.v !== 'end') {
-      const s = parseStmt(ts, p)
+      const s = parseStmt(ts, p, depth + 1)
       if (s.t === 'bad') return s
       body.push(s)
     }
@@ -3433,16 +4285,16 @@ function parseStmt(ts: TokStream, p: ProcParse): ProcStmt {
     if (ts.peek()?.v !== '(') return { t: 'bad', why: 'if is missing its "("' }
     const cond = parseRhs(readParenToks(ts), p.mems)
     if (cond.t === 'bad') return { t: 'bad', why: `if condition — ${cond.why}` }
-    const conseq = parseStmt(ts, p)
+    const conseq = parseStmt(ts, p, depth + 1)
     if (conseq.t === 'bad') return conseq
     if (ts.peek()?.v !== 'else') return { t: 'if', cond, conseq }
     ts.next()
-    const els = parseStmt(ts, p)
+    const els = parseStmt(ts, p, depth + 1)
     if (els.t === 'bad') return els
     return { t: 'if', cond, conseq, els }
   }
-  if (t.v === 'case' || t.v === 'casex' || t.v === 'casez') return parseCase(ts, p, t.v)
-  if (t.v === 'for' || t.v === 'repeat') return unrollLoop(ts, p, t.v)
+  if (t.v === 'case' || t.v === 'casex' || t.v === 'casez') return parseCase(ts, p, t.v, depth)
+  if (t.v === 'for' || t.v === 'repeat') return unrollLoop(ts, p, t.v, depth)
   if (t.v === 'while')
     return {
       t: 'bad',
@@ -3502,7 +4354,7 @@ function collectLoopCounters(body: Tok[], out: Set<string>): void {
  * and an unroller counting in JavaScript would emit sixteen iterations and publish a design for it. A counter
  * that returns to a value it already held can never terminate and is refused by name.
  */
-function unrollLoop(ts: TokStream, p: ProcParse, kind: 'for' | 'repeat'): ProcStmt {
+function unrollLoop(ts: TokStream, p: ProcParse, kind: 'for' | 'repeat', depth: number): ProcStmt {
   ts.next() // 'for' / 'repeat'
   if (ts.peek()?.v !== '(') return { t: 'bad', why: `${kind} is missing its "("` }
   const header = readParenToks(ts)
@@ -3517,7 +4369,7 @@ function unrollLoop(ts: TokStream, p: ProcParse, kind: 'for' | 'repeat'): ProcSt
         t: 'bad',
         why: 'a repeat count that is not an elaboration-time constant has no iteration count to unroll',
       }
-    return unrollRepeat(bodyToks, p, count)
+    return unrollRepeat(bodyToks, p, count, depth)
   }
   // Without the declared signedness the counter cannot be modelled: `integer` is SIGNED 32-bit, and
   // `for (i = 3; i >= 0; i = i - 1)` runs four times signed and never ends unsigned.
@@ -3529,7 +4381,7 @@ function unrollLoop(ts: TokStream, p: ProcParse, kind: 'for' | 'repeat'): ProcSt
     }
   const counter = loopCounter(header, (toks) => foldSpan(toks, p, widthOf), widthOf, signedOf)
   if ('bad' in counter) return { t: 'bad', why: counter.bad }
-  return unrollFor(bodyToks, p, widthOf, counter)
+  return unrollFor(bodyToks, p, widthOf, counter, depth)
 }
 
 const seqOf = (body: ProcStmt[]): ProcStmt =>
@@ -3549,13 +4401,13 @@ function spendIteration(p: ProcParse): ProcStmt | undefined {
 /** `repeat (n) stmt` — n copies of the body, with no counter to substitute. A count that is zero or NEGATIVE
  *  under its own signedness executes the statement zero times (IEEE 1364-2005 §9.6), which is what Icarus
  *  Verilog 14.0 does with `parameter signed [3:0] R = -2; repeat (R) …` — it leaves the target untouched. */
-function unrollRepeat(bodyToks: Tok[], p: ProcParse, n: ConstVal): ProcStmt {
+function unrollRepeat(bodyToks: Tok[], p: ProcParse, n: ConstVal, depth: number): ProcStmt {
   const count = asInteger(n)
   const body: ProcStmt[] = []
   for (let k = 0n; k < count; k++) {
     const spent = spendIteration(p)
     if (spent !== undefined) return spent
-    const one = parseStmt(new TokStream(bodyToks), p)
+    const one = parseStmt(new TokStream(bodyToks), p, depth + 1)
     if (one.t === 'bad') return one
     body.push(one)
   }
@@ -3567,6 +4419,7 @@ function unrollFor(
   p: ProcParse,
   widthOf: (n: string) => number,
   counter: LoopCounter,
+  depth: number,
 ): ProcStmt {
   const body: ProcStmt[] = []
   const fold = (toks: Tok[]): ConstVal | undefined => foldSpan(toks, p, widthOf)
@@ -3578,7 +4431,7 @@ function unrollFor(
     if (spent !== undefined) return spent
     const iteration = substituteCounter(bodyToks, counter)
     if ('bad' in iteration) return { t: 'bad', why: iteration.bad }
-    const one = parseStmt(new TokStream(iteration), p)
+    const one = parseStmt(new TokStream(iteration), p, depth + 1)
     if (one.t === 'bad') return one
     body.push(one)
     const advanced = loopAdvance(counter, fold)
@@ -3687,8 +4540,15 @@ function selectTarget(
   const name = (lhs[0] as Tok).v
   if (lhs[lhs.length - 1]?.v !== ']')
     return { t: 'bad', why: `malformed bit/part-select target on "${name}"` }
-  const sel = parseSelect(new TokStream(lhs.slice(1)), name)
+  // No memory table: a write target is a register or net, never a memory word (those take the memwrite path),
+  // so a memory name inside the select's base is refused rather than read.
+  const sel = parseSelect(new TokStream(lhs.slice(1)), name, new Map(), 0)
   if (sel.t === 'bad') return { t: 'bad', why: `target ${name}[…] — ${sel.why}` }
+  if (sel.t === 'idxsel')
+    return {
+      t: 'bad',
+      why: `target ${name}[base ${sel.up ? '+' : '-'}: ${sel.width}] has a run-time base — a moving write position is a later increment`,
+    }
   if (sel.t !== 'bitsel' && sel.t !== 'partsel')
     return { t: 'bad', why: `target ${name}[…] is not a constant bit/part-select` }
   const hi = sel.t === 'bitsel' ? sel.index : sel.hi
@@ -3702,41 +4562,145 @@ function selectTarget(
   return { t: 'nbsel', lhs: name, hi, lo, width, rhs, blocking }
 }
 
-/** Forward-substitute a blocking read: replace each read of a signal already assigned in this block with the
- *  value it was assigned (so `t = a&b; y = t` gives y = a&b, and a reassignment `t = c&d` later doesn't
- *  corrupt the earlier read). A whole-signal read substitutes directly; a bit/part-select can only retarget a
- *  simple net-alias, so selecting a bit of a signal assigned a non-trivial expression is reported, not faked. */
-function substBlocking(e: Expr, env: Map<string, Expr>): Expr {
+/**
+ * Bits [`shift` +: `width`] of the in-progress VALUE of a blocking-assigned variable, as an expression.
+ *
+ * Reading a slice of a value is that value shifted down to the slice's bottom bit and walled at the slice's
+ * width, so the select is rewritten into exactly that. The value is first walled at the VARIABLE's declared
+ * width and signedness, because what a later statement reads is what the VARIABLE holds (IEEE 1364-2005
+ * §5.5.1) — the same wall `elaborate`'s `store` applies - and that width is what each range check below is
+ * against. `>>` is a logical shift whatever the operand's sign (§5.1.12), so the bits above the slice fall
+ * away instead of sign-filling it.
+ */
+function valueSlice(
+  value: Expr,
+  name: string,
+  shift: Expr | undefined,
+  width: number,
+  scope: EnvScope,
+): Expr {
+  const held: Expr = {
+    t: 'sized',
+    width: scope.widthOf(name),
+    signed: scope.signedOf(name),
+    of: value,
+  }
+  const moved: Expr = shift === undefined ? held : { t: 'bin', op: '>>', a: held, b: shift }
+  return { t: 'sized', width, signed: false, of: moved }
+}
+
+/**
+ * What one signal holds part-way through a procedural block, and whether a LATER STATEMENT IN THE SAME BLOCK
+ * can see it.
+ *
+ * A blocking `=` takes effect where it is written, so everything after it reads the new value. A nonblocking
+ * `<=` does not: it is scheduled, and every read in the same block still sees the pre-block value (IEEE
+ * 1364-2005 §9.2.2). Both kinds land in the same map — it is the block's next-state for the driver either way
+ * — so which kind wrote an entry has to travel with it, or a read cannot tell the two apart.
+ */
+type Bound = { value: Expr; blocking: boolean }
+
+/** What a later read of `name` in this block sees, or undefined if it must read the signal's own net: the
+ *  value of a blocking store, and never a nonblocking one. */
+function inFlight(env: Map<string, Bound>, name: string): Expr | undefined {
+  const bound = env.get(name)
+  return bound?.blocking === true ? bound.value : undefined
+}
+
+/**
+ * Forward-substitute a blocking read: replace each read of a signal already assigned in this block with the
+ * value it was assigned (so `t = a&b; y = t` gives y = a&b, and a reassignment `t = c&d` later doesn't
+ * corrupt the earlier read).
+ *
+ * A whole-signal read substitutes directly and a select of a plain net-alias retargets; a select of anything
+ * else is answered by `valueSlice`, which reads the slice out of the value the variable holds. That select
+ * used to be refused outright — and since every store into a DECLARED variable is wrapped in a `sized` type
+ * wall, "anything else" is every declared local, so `t = v; f = t[7:0];` inside a function was refused as an
+ * unsupported construct. Refused, then silently answered 0: the function inliner's guard for a body it cannot
+ * build returns zeros, and no gate above it looked for that `bad`. MEASURED against Icarus Verilog 14.0 on
+ * `reg [7:0] t; t = v; f = t[7:0];`: 0x00 0x00 0x00 0x00 where Icarus reads 0xb4 0x5a 0x01 0x80.
+ *
+ * The other half of the same hole is that `sized` and `cast` had no case at all, so substitution stopped at a
+ * type wall instead of descending through it. A task body's stores are pre-walled, so every read inside one
+ * bound to the task local's NET — the LAST value the local takes — rather than to the value in flight. Same
+ * oracle, on a task doing `t = v; u = t; t = 8'h00; o = u;`: 0x00 0x00 0x00 0x00 where Icarus reads
+ * 0xb4 0x5a 0x01 0x80.
+ */
+function substBlocking(e: Expr, env: Map<string, Bound>, scope: EnvScope): Expr {
   switch (e.t) {
     case 'net':
-      return env.get(e.name) ?? e
+      return inFlight(env, e.name) ?? e
     case 'bitsel':
     case 'partsel': {
-      const v = env.get(e.name)
+      const v = inFlight(env, e.name)
       if (v === undefined) return e
       if (v.t === 'net') return { ...e, name: v.name } // aliased net → retarget the select
-      return {
-        t: 'bad',
-        why: `a bit/part-select of "${e.name}" after it was assigned an expression earlier in the same combinational block is a later increment`,
-      }
+      const hi = e.t === 'bitsel' ? e.index : e.hi
+      const lo = e.t === 'bitsel' ? e.index : e.lo
+      const held = scope.widthOf(e.name)
+      // Outside the variable a select reads x (§5.2.1), and a 0/1 netlist has no x, so it is refused here
+      // rather than zero-filled — the same answer `outOfRange` gives a select that still names a net.
+      if (lo < 0 || hi >= held)
+        return {
+          t: 'bad',
+          why: `${e.t === 'bitsel' ? 'bit' : 'part'}-select ${e.name}[${hi}:${lo}] is out of range on the ${held}-bit "${e.name}" assigned earlier in the same combinational block —`,
+        }
+      return valueSlice(
+        v,
+        e.name,
+        lo === 0 ? undefined : bitsOf(BigInt(lo), 32),
+        hi - lo + 1,
+        scope,
+      )
     }
     case 'un':
-      return { ...e, a: substBlocking(e.a, env) }
+      return { ...e, a: substBlocking(e.a, env, scope) }
     case 'bin':
-      return { ...e, a: substBlocking(e.a, env), b: substBlocking(e.b, env) }
+      return { ...e, a: substBlocking(e.a, env, scope), b: substBlocking(e.b, env, scope) }
     case 'tern':
       return {
         ...e,
-        c: substBlocking(e.c, env),
-        a: substBlocking(e.a, env),
-        b: substBlocking(e.b, env),
+        c: substBlocking(e.c, env, scope),
+        a: substBlocking(e.a, env, scope),
+        b: substBlocking(e.b, env, scope),
       }
     case 'concat':
-      return { ...e, parts: e.parts.map((p) => substBlocking(p, env)) }
+      return { ...e, parts: e.parts.map((p) => substBlocking(p, env, scope)) }
     case 'repl':
-      return { ...e, of: substBlocking(e.of, env) }
+      return { ...e, of: substBlocking(e.of, env, scope) }
+    case 'sized':
+      return { ...e, of: substBlocking(e.of, env, scope) }
+    case 'cast':
+      return { ...e, of: substBlocking(e.of, env, scope) }
     case 'memread':
-      return { ...e, idx: substBlocking(e.idx, env) }
+      return { ...e, idx: substBlocking(e.idx, env, scope) }
+    case 'idxsel': {
+      const base = substBlocking(e.base, env, scope)
+      const v = inFlight(env, e.name)
+      if (v === undefined) return { ...e, base }
+      if (v.t === 'net') return { ...e, name: v.name, base } // aliased net → retarget the select
+      const inner = firstBad(base)
+      if (inner !== undefined) return { t: 'bad', why: inner }
+      // The bound is proved against the VARIABLE's declared width, which is the width `valueSlice` walls the
+      // value at — so a base this importer cannot bound inside it is refused, never decoded to zeros.
+      const fault = indexedSelectFault(
+        { name: e.name, base, width: e.width, up: e.up },
+        scope.widthOf,
+        scope.signedOf,
+      )
+      if (fault !== undefined) return { t: 'bad', why: fault }
+      const shift: Expr = e.up
+        ? base
+        : { t: 'bin', op: '-', a: base, b: bitsOf(BigInt(e.width - 1), 32) }
+      return valueSlice(v, e.name, shift, e.width, scope)
+    }
+    // A call's ARGUMENTS are ordinary expressions read where the call sits, so they carry the in-flight value
+    // exactly like every other operand. Falling through to `default` left them bound to the variable's NET —
+    // its last value — and the call was then inlined with it. MEASURED against Icarus Verilog 14.0 on
+    // `t = a; r = g(t[7:0]); t = 8'h00;` with `g(v) = v ^ 8'h0f`: 0x0f 0x0f 0x0f 0x0f where Icarus reads
+    // 0xbb 0x55 0x0e 0x8f.
+    case 'call':
+      return { ...e, args: e.args.map((arg) => substBlocking(arg, env, scope)) }
     default:
       return e // const, bad
   }
@@ -3844,7 +4808,12 @@ function wildcardMatch(sel: Expr, label: WildcardLabel, selWidth: number): Expr 
 /** Parse a `case (sel) … endcase` and desugar it to a nested if/else chain (label match via `sel == label`,
  *  multiple labels OR'd). `casez`/`casex` take the same chain — item order and first-match-wins are the whole
  *  point of a wildcard decoder — with each wildcard label matched through `wildcardMatch` instead of `==`. */
-function parseCase(ts: TokStream, p: ProcParse, kind: 'case' | 'casex' | 'casez'): ProcStmt {
+function parseCase(
+  ts: TokStream,
+  p: ProcParse,
+  kind: 'case' | 'casex' | 'casez',
+  depth: number,
+): ProcStmt {
   const { mems, comb, widthOf } = p
   ts.next() // 'case' / 'casex' / 'casez'
   if (ts.peek()?.v !== '(') return { t: 'bad', why: `${kind} is missing its "("` }
@@ -3861,24 +4830,24 @@ function parseCase(ts: TokStream, p: ProcParse, kind: 'case' | 'casex' | 'casez'
     if (ts.peek()?.v === 'default') {
       ts.next()
       if (ts.peek()?.v === ':') ts.next()
-      const s = parseStmt(ts, p)
+      const s = parseStmt(ts, p, depth + 1)
       if (s.t === 'bad') return s
       dflt = s
       continue
     }
     const labelToks: Tok[][] = []
     let cur: Tok[] = []
-    let depth = 0
+    let brackets = 0
     while (ts.peek() !== undefined) {
       const v = ts.peek()?.v
-      if (depth === 0 && v === ':') {
+      if (brackets === 0 && v === ':') {
         ts.next()
         break
       }
       const tk = ts.next() as Tok
-      if (tk.v === '(' || tk.v === '[' || tk.v === '{') depth++
-      else if (tk.v === ')' || tk.v === ']' || tk.v === '}') depth--
-      if (depth === 0 && tk.v === ',') {
+      if (tk.v === '(' || tk.v === '[' || tk.v === '{') brackets++
+      else if (tk.v === ')' || tk.v === ']' || tk.v === '}') brackets--
+      if (brackets === 0 && tk.v === ',') {
         labelToks.push(cur)
         cur = []
       } else cur.push(tk)
@@ -3906,7 +4875,7 @@ function parseCase(ts: TokStream, p: ProcParse, kind: 'case' | 'casex' | 'casez'
       labels.push(le)
       conds.push({ t: 'bin', op: '==', a: sel, b: le })
     }
-    const s = parseStmt(ts, p)
+    const s = parseStmt(ts, p, depth + 1)
     if (s.t === 'bad') return s
     items.push({ labels, conds, stmt: s })
   }
@@ -3944,9 +4913,14 @@ function parseCase(ts: TokStream, p: ProcParse, kind: 'case' | 'casex' | 'casez'
       let allConst = true
       for (const it of items)
         for (const lab of it.labels) {
-          const v = foldConst(lab, widthOf, labelSignedOf)
-          if (v === undefined) allConst = false
-          else covered.add(v % 2 ** w)
+          // The residue comes off the label's EXACT pattern. Reading it through a JavaScript number rounds a
+          // constant past 2^53, and every rounded 64-bit label landed on residue 0 — filling the coverage set
+          // with a value the case does not actually cover. MEASURED against Icarus Verilog 14.0 on a 2-bit
+          // selector with the labels 64'hFFFFFFFFFFFFFFFD, 1, 2 and 3: selector 0 published 0x44, where
+          // Icarus reads x and the same case with the label plainly missing is refused.
+          const c = foldConstBits(lab, widthOf, labelSignedOf)
+          if (c === undefined) allConst = false
+          else covered.add(Number(c.value % (1n << BigInt(w))))
         }
       full = allConst && covered.size === 2 ** w
     }
@@ -3968,16 +4942,11 @@ function parseCase(ts: TokStream, p: ProcParse, kind: 'case' | 'casex' | 'casez'
  *  store address is validated against this list ONCE — a per-register check would report an address fault
  *  `depth` times over. */
 function collectMemWrites(stmt: ProcStmt): { name: string; idx: Expr; rhs: Expr; depth: number }[] {
-  switch (stmt.t) {
-    case 'memwrite':
-      return [{ name: stmt.name, idx: stmt.idx, rhs: stmt.rhs, depth: stmt.depth }]
-    case 'seq':
-      return stmt.body.flatMap(collectMemWrites)
-    case 'if':
-      return [...collectMemWrites(stmt.conseq), ...(stmt.els ? collectMemWrites(stmt.els) : [])]
-    default:
-      return []
-  }
+  const out: { name: string; idx: Expr; rhs: Expr; depth: number }[] = []
+  eachStatement(stmt, (s) => {
+    if (s.t === 'memwrite') out.push({ name: s.name, idx: s.idx, rhs: s.rhs, depth: s.depth })
+  })
+  return out
 }
 
 /** Elaborate a procedural statement to each written signal's next-state expression. A NONBLOCKING read binds
@@ -3989,19 +4958,45 @@ function elaborate(
   stmt: ProcStmt,
   env: Map<string, Expr>,
   written: Set<string>,
+  scope: EnvScope,
+): Map<string, Expr> {
+  const seed = new Map<string, Bound>()
+  for (const [name, value] of env) seed.set(name, { value, blocking: false })
+  const out = new Map<string, Expr>()
+  for (const [name, bound] of elaborateBound(stmt, seed, written, scope)) out.set(name, bound.value)
+  return out
+}
+
+/**
+ * The body of `elaborate`, carrying whether each in-progress value came from a BLOCKING store.
+ *
+ * Substitution is decided by the WRITE, not by the read: a value a blocking `=` put there is what every later
+ * statement in the block reads, and one a nonblocking `<=` put there is invisible until the block ends. The
+ * old code decided at the read instead — a blocking statement substituted the whole map and a nonblocking one
+ * substituted nothing — which read the wrong side of both rules. Blocking `=` in a CLOCKED block is refused at
+ * import, so no entry in a clocked block is ever blocking and nothing there substitutes at all.
+ */
+function elaborateBound(
+  stmt: ProcStmt,
+  env: Map<string, Bound>,
+  written: Set<string>,
   // Each assignment to a declared signal is wrapped in a `sized` TYPE wall, so the value a later read sees is
   // the value the VARIABLE holds — truncated to its declared width and read at its declared signedness — and
-  // not whatever expression happened to be substituted for it (IEEE 1364-2005 §6.2 + §5.5.1).
-  declOf: (name: string) => Decl | undefined,
-): Map<string, Expr> {
+  // not whatever expression happened to be substituted for it (IEEE 1364-2005 §6.2 + §5.5.1). The same scope
+  // tells `substBlocking` what a select of one of those walled values may reach.
+  scope: EnvScope,
+): Map<string, Bound> {
   const store = (sig: string, expr: Expr): Expr => {
-    const d = declOf(sig)
+    const d = scope.declOf(sig)
     return d === undefined ? expr : { t: 'sized', width: d.width, signed: d.signed, of: expr }
   }
   switch (stmt.t) {
     case 'nb': {
       const e = new Map(env)
-      e.set(stmt.lhs, store(stmt.lhs, stmt.blocking ? substBlocking(stmt.rhs, env) : stmt.rhs))
+      e.set(stmt.lhs, {
+        value: store(stmt.lhs, substBlocking(stmt.rhs, env, scope)),
+        blocking: stmt.blocking === true,
+      })
       written.add(stmt.lhs)
       return e
     }
@@ -4014,7 +5009,7 @@ function elaborate(
       // it, so two disjoint 8-bit writes to one 16-bit register cost 224 cells where a hand-written single
       // write costs 96. Correct, and dearer — pruning those dead cells is not done.
       const e = new Map(env)
-      const prior: Expr = env.get(stmt.lhs) ?? { t: 'net', name: stmt.lhs }
+      const prior: Expr = env.get(stmt.lhs)?.value ?? { t: 'net', name: stmt.lhs }
       const keep: ConstBit[] = []
       for (let i = 0; i < stmt.width; i++) keep.push(i >= stmt.lo && i <= stmt.hi ? 0 : 1)
       const placed: Expr = {
@@ -4024,7 +5019,7 @@ function elaborate(
           t: 'sized',
           width: stmt.hi - stmt.lo + 1,
           signed: false, // a part-write target is a slice of bits, never a signed number (§5.5.1)
-          of: stmt.blocking === true ? substBlocking(stmt.rhs, env) : stmt.rhs,
+          of: substBlocking(stmt.rhs, env, scope),
         },
         b: bitsOf(BigInt(stmt.lo), 32),
       }
@@ -4034,7 +5029,10 @@ function elaborate(
         a: { t: 'bin', op: '&', a: prior, b: { t: 'const', bits: keep } },
         b: placed,
       }
-      e.set(stmt.lhs, store(stmt.lhs, { t: 'sized', width: stmt.width, signed: false, of: next }))
+      e.set(stmt.lhs, {
+        value: store(stmt.lhs, { t: 'sized', width: stmt.width, signed: false, of: next }),
+        blocking: stmt.blocking === true,
+      })
       written.add(stmt.lhs)
       return e
     }
@@ -4044,31 +5042,53 @@ function elaborate(
       // each of these via the normal tern merge, giving exactly the gate Data RAM's per-word load logic.
       const e = new Map(env)
       const addrBits = clog2(stmt.depth)
+      const idx = substBlocking(stmt.idx, env, scope)
+      const rhs = substBlocking(stmt.rhs, env, scope)
       for (let k = 0; k < stmt.depth; k++) {
         const wsig = memWord(stmt.name, k)
-        const prior: Expr = env.get(wsig) ?? { t: 'net', name: wsig }
-        const hit: Expr = { t: 'bin', op: '==', a: stmt.idx, b: bitsOf(BigInt(k), addrBits) }
-        e.set(wsig, { t: 'tern', c: hit, a: stmt.rhs, b: prior })
+        const prior: Expr = env.get(wsig)?.value ?? { t: 'net', name: wsig }
+        const hit: Expr = { t: 'bin', op: '==', a: idx, b: bitsOf(BigInt(k), addrBits) }
+        // A memory WORD is never forward-substituted — `substBlocking` reads a memory through its net — so the
+        // flag on it is never consulted; false keeps it out of every substitution decision.
+        e.set(wsig, { value: { t: 'tern', c: hit, a: rhs, b: prior }, blocking: false })
         written.add(wsig)
       }
       return e
     }
     case 'seq': {
       let e = env
-      for (const s of stmt.body) e = elaborate(s, e, written, declOf)
+      for (const s of stmt.body) e = elaborateBound(s, e, written, scope)
       return e
     }
     case 'if': {
       const wThen = new Set<string>()
       const wElse = new Set<string>()
-      const eThen = elaborate(stmt.conseq, env, wThen, declOf)
-      const eElse = stmt.els !== undefined ? elaborate(stmt.els, env, wElse, declOf) : env
+      // The CONDITION is read where the `if` sits, so it sees the in-flight value like any other read. It used
+      // to be carried in raw, which bound it to the signal's net — its LAST value in the block. MEASURED
+      // against Icarus Verilog 14.0 on `t = a; if (t[7]) r = 8'h11; else r = 8'h22; t = 8'h00;`:
+      // 0x22 0x22 0x22 0x22 where Icarus reads 0x11 0x22 0x22 0x11. A `case` is parsed into these same
+      // conditions, so its selector was reading the last value too.
+      const cond = substBlocking(stmt.cond, env, scope)
+      const eThen = elaborateBound(stmt.conseq, env, wThen, scope)
+      const eElse = stmt.els !== undefined ? elaborateBound(stmt.els, env, wElse, scope) : env
       const merged = new Map(env)
+      // A branch that does not assign `sig` holds whatever the block already had, so it is only substitutable
+      // later if THAT was — and an entry that isn't there yet is the signal's own net, which every later read
+      // may name. A merge is substitutable only when both sides are.
+      const priorBlocking = (sig: string): boolean => env.get(sig)?.blocking ?? true
+      const sideBlocking = (
+        side: Map<string, Bound>,
+        assigned: Set<string>,
+        sig: string,
+      ): boolean => (assigned.has(sig) ? (side.get(sig)?.blocking ?? false) : priorBlocking(sig))
       for (const sig of new Set([...wThen, ...wElse])) {
-        const hold: Expr = env.get(sig) ?? { t: 'net', name: sig }
-        const a = eThen.get(sig) ?? hold
-        const b = eElse.get(sig) ?? hold
-        merged.set(sig, store(sig, { t: 'tern', c: stmt.cond, a, b }))
+        const hold: Expr = env.get(sig)?.value ?? { t: 'net', name: sig }
+        const a = eThen.get(sig)?.value ?? hold
+        const b = eElse.get(sig)?.value ?? hold
+        merged.set(sig, {
+          value: store(sig, { t: 'tern', c: cond, a, b }),
+          blocking: sideBlocking(eThen, wThen, sig) && sideBlocking(eElse, wElse, sig),
+        })
         written.add(sig)
       }
       return merged
