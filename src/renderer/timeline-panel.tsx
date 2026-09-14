@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TransientResult } from '../transient-solver.ts'
 import { transientRan } from '../transient-solver.ts'
+import type { CausalReplay } from './causal-replay.ts'
+import { CausalReplayPanel } from './causal-replay-panel.tsx'
 import { THEME } from './theme.ts'
 import { clampIndex } from './timeline.ts'
 import { formatEng } from './units.ts'
+import { WhyPanel } from './why-panel.tsx'
 
 /**
  * Timeline panel (Sprint 22) — the playback bar. It scrubs the transient the
@@ -20,11 +23,15 @@ export function TimelinePanel({
   index,
   onIndex,
   light,
+  replay,
+  onReplayIndex,
 }: {
   result: TransientResult | null
   index: number
   onIndex: (next: number) => void
   light: boolean
+  replay?: CausalReplay | null
+  onReplayIndex?: (index: number) => void
 }) {
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -84,6 +91,15 @@ export function TimelinePanel({
         {result === null
           ? 'No simulation yet — it runs while this panel is open.'
           : `Could not run: ${result.status}${result.warnings[0] !== undefined ? ` — ${result.warnings[0]}` : ''}`}
+        {replay ? (
+          <CausalReplayPanel
+            replay={replay}
+            {...(onReplayIndex ? { onJump: onReplayIndex } : {})}
+          />
+        ) : null}
+        {result?.analysis?.why ? (
+          <WhyPanel system={result.analysis.why} title="Why the run stopped" />
+        ) : null}
       </div>
     )
   }
@@ -203,6 +219,12 @@ export function TimelinePanel({
         Scrub or play — the canvas shows the circuit at this instant; the physics never re-runs,
         only the view moves through the same solved result.
       </div>
+      {replay ? (
+        <CausalReplayPanel replay={replay} {...(onReplayIndex ? { onJump: onReplayIndex } : {})} />
+      ) : null}
+      {result?.analysis?.why ? (
+        <WhyPanel system={result.analysis.why} title="Why this run looks this way" />
+      ) : null}
     </div>
   )
 }

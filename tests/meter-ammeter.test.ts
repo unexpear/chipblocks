@@ -63,6 +63,7 @@ describe('the correct procedure: open the circuit, bridge the gap', () => {
       'milliamp',
     )
     if (result.status !== 'measured') throw new Error(`expected a reading, got ${result.status}`)
+    expect(result.why?.state).toBe('complete')
     expect(result.amps).toBeCloseTo(9 / (1 + 470 + 1.8), 9)
     // The burden is the shunt's real drop — what insertion costs.
     expect(result.burdenVolts).toBeCloseTo(result.amps * 1.8, 12)
@@ -124,6 +125,7 @@ describe('the famous mistake: probes across a live source', () => {
       'milliamp',
     )
     if (result.status !== 'blew') throw new Error(`expected the fuse to blow, got ${result.status}`)
+    expect(result.why?.state).toBe('failed')
     expect(Math.abs(result.amps)).toBeGreaterThan(3)
     expect(Math.abs(result.amps)).toBeLessThan(3.5)
     expect(Math.abs(result.amps)).toBeGreaterThan(AMMETER_JACKS.milliamp.fuseAmps)

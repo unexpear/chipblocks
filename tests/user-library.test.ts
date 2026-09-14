@@ -15,6 +15,7 @@ import {
   withPart,
 } from '../src/renderer/user-library.ts'
 import type { UserPart } from '../src/renderer/user-parts.ts'
+import { opampPart } from './drawn-symbol-fixture.ts'
 
 const sensor: UserPart = {
   id: 'my_sensor',
@@ -177,5 +178,29 @@ describe('withPart — the library grows by authoring, deduped by id', () => {
     const result = withPart([sensor, poweredIc], edited)
     expect(result).toHaveLength(2)
     expect(result.find((p) => p.id === 'my_sensor')?.designatorPrefix).toBe('Q')
+  })
+})
+
+describe('a drawn symbol follows its part through the personal library (v3)', () => {
+  test('the drawing and the datasheet survive a write → read round-trip', () => {
+    const drawn = opampPart({ datasheet: 'https://example.com/opamp.pdf' })
+    const r = deserializeUserLibrary(serializeUserLibrary([sensor, drawn]))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.parts).toEqual([sensor, drawn])
+  })
+
+  test('the library is written as v3 — a v2 build refuses it rather than erasing its drawings', () => {
+    // A v2 build would drop the unknown `symbol` field on read, and a library save rewrites the whole
+    // file from that read. Refusing the whole file (and so never overwriting it) is what keeps the
+    // drawings: persistAuthoredPart never writes over a library it could not read.
+    expect(USER_LIBRARY_VERSION).toBe(3)
+    expect(JSON.parse(serializeUserLibrary([opampPart()])).version).toBe(3)
+  })
+
+  test('a v2 library (parts + footprints, no drawings) still loads', () => {
+    const v2 = JSON.stringify({ format: USER_LIBRARY_FORMAT, version: 2, userParts: [sensor] })
+    const r = deserializeUserLibrary(v2)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.parts).toEqual([sensor])
   })
 })

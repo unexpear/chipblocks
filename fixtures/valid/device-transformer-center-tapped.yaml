@@ -64,7 +64,7 @@ parameters:
     type: quantity
     units: dimensionless
     required: true
-    description: k, strictly between 0 and 1 — field linkage between all windings on the shared core. Iron-core transformers reach 0.95-0.998; k = 1 is unphysical and rejected by the solver.
+    description: k, from above 0 through 1 — field linkage between all windings on the shared core. Iron-core transformers reach 0.95-0.998; k = 1 is the ideal perfectly coupled boundary and is accepted when the declared winding/core resistances make the circuit well-posed.
   primary_resistance:
     type: quantity
     units: ohm
@@ -79,7 +79,7 @@ parameters:
     type: quantity
     units: ohm
     required: false
-    description: Core (iron) loss modeled as the classic equivalent-circuit parallel resistance across the primary — hysteresis + eddy-current losses drawn in proportion to the flux swing. Draws nothing at DC (no changing flux, no core loss); absent = lossless core.
+    description: Core (iron) loss modeled as a linear equivalent resistance across the changing-flux/magnetizing branch — a first-order approximation of hysteresis + eddy-current loss. It draws nothing at steady DC because the inductive branch has no changing-flux voltage; frequency- and amplitude-dependent core laws are not yet modeled. Absent = lossless core.
   saturation_flux_linkage:
     type: quantity
     units: weber
@@ -110,11 +110,13 @@ extensions:
   user_extensible: true
   allowed_origins: [builtin, community, user_local, project]
 notes: |
-  Solved by both engines (S19-v3-49): the transient solver inverts the 3×3
-  inductance matrix [[Lh, Mpp, Mps], [Mpp, Lh, Mps], [Mps, Mps, L2]] per
-  backward-Euler step, where Lh = L1/4, Mpp = k·Lh (half-to-half) and
-  Mps = k·√(Lh·L2) (half-to-secondary) — positive-definite exactly when k < 1.
-  The DC solver stamps each of the three windings as a 0 V source through its
-  share of winding resistance (each half gets primary_resistance/2). Magnetizing
-  current, saturation, and core losses are not modeled — same honest omissions
-  as the two-winding transformer.
+  Solved by both engines (S19-v3-49): the transient solver solves the 3×3
+  coupled backward-Euler companion, including the changing-flux core-loss
+  branch, where Lh = L1/4, Mpp = k·Lh (half-to-half) and
+  Mps = k·√(Lh·L2) (half-to-secondary). The underlying inductance matrix is
+  singular at the ideal k = 1 boundary, but the augmented winding/core-resistance
+  system remains solvable when the declared circuit is well-posed. The DC solver
+  stamps each winding as a 0 V source through its share of winding resistance
+  (each half gets primary_resistance/2). Magnetizing current and saturation are
+  modeled; core loss remains a linear first-order approximation rather than a
+  frequency/flux-dependent hysteresis and eddy-current law.

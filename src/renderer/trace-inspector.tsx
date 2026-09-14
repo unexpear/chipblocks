@@ -7,9 +7,13 @@
  */
 
 import { type JSX, useEffect, useMemo, useState } from 'react'
-import type { BlockData } from './blocks.ts'
+import { type BlockTestResult, createBlockTestCase, runBlockTests } from './block-tests.ts'
+import type { BlockData, BlockTestCase } from './blocks.ts'
+import { buildTraceCausalReplay } from './causal-replay.ts'
+import { CausalReplayPanel } from './causal-replay-panel.tsx'
 import { type Anomaly, runTrace, type TraceResult } from './run-trace.ts'
 import { buildLogicHarness } from './verilog-debug.ts'
+import { WhyPanel } from './why-panel.tsx'
 
 export type TraceBlock = { id: string; label: string; block: BlockData }
 
@@ -26,17 +30,31 @@ const ANOMALY_LABEL: Record<Anomaly['kind'], string> = {
   'slow-cycle': 'slow cycle',
 }
 
+const testButtonStyle: React.CSSProperties = {
+  padding: '4px 8px',
+  borderRadius: 5,
+  border: '1px solid var(--borderStrong)',
+  background: 'var(--surfaceInput)',
+  color: 'var(--textPrimary)',
+  cursor: 'pointer',
+  fontSize: 11,
+}
+
 export function TraceInspector({
   blocks,
   onClose,
+  onTestsChange,
 }: {
   blocks: TraceBlock[]
   onClose: () => void
+  onTestsChange?: (blockId: string, tests: BlockTestCase[]) => void
 }): JSX.Element {
   const [sel, setSel] = useState(0)
   const [cycles, setCycles] = useState(32)
   const [inputVals, setInputVals] = useState<Map<string, number>>(new Map())
   const [result, setResult] = useState<TraceResult | null>(null)
+  const [testName, setTestName] = useState('Test 1')
+  const [testResults, setTestResults] = useState<BlockTestResult[]>([])
 
   const chosen = blocks[Math.min(sel, blocks.length - 1)]
   // Key on the block's stable node id, NOT the `chosen` wrapper: App rebuilds the blocks list (new wrapper
@@ -50,17 +68,71 @@ export function TraceInspector({
   useEffect(() => {
     setInputVals(new Map())
     setResult(null)
+    setTestResults([])
+    setTestName(`Test ${(chosen?.block.tests?.length ?? 0) + 1}`)
   }, [chosen?.id])
 
   const run = () => {
     if (chosen) setResult(runTrace(chosen.block, cycles, inputVals))
   }
 
+  const savedTests = chosen?.block.tests ?? []
+  const saveTest = () => {
+    if (!chosen || !onTestsChange) return
+    const test = createBlockTestCase(
+      chosen.block,
+      `${chosen.id}-test-${Date.now()}`,
+      testName,
+      cycles,
+      inputVals,
+    )
+    if (!test) return
+    const next = [...savedTests, test]
+    onTestsChange(chosen.id, next)
+    setTestResults(runBlockTests(chosen.block, next))
+    setTestName(`Test ${next.length + 1}`)
+  }
+
+  const runSavedTests = () => {
+    if (chosen) setTestResults(runBlockTests(chosen.block, savedTests))
+  }
+
+  const runSavedTest = (id: string) => {
+    if (!chosen) return
+    const test = savedTests.find((candidate) => candidate.id === id)
+    if (!test) return
+    const [testResult] = runBlockTests(chosen.block, [test])
+    if (!testResult) return
+    setTestResults((current) => [
+      ...current.filter((testResult) => testResult.test.id !== id),
+      testResult,
+    ])
+  }
+
+  const deleteTest = (id: string) => {
+    if (!chosen || !onTestsChange) return
+    const next = savedTests.filter((test) => test.id !== id)
+    onTestsChange(chosen.id, next)
+    setTestResults((current) => current.filter((result) => result.test.id !== id))
+  }
+
+  const resultByTest = useMemo(
+    () => new Map(testResults.map((testResult) => [testResult.test.id, testResult])),
+    [testResults],
+  )
+
   const anomalyCycles = useMemo(() => {
     const m = new Map<number, Anomaly>()
     for (const a of result?.anomalies ?? []) if (!m.has(a.cycle)) m.set(a.cycle, a)
     return m
   }, [result])
+  const chosenBlock = chosen?.block
+  const chosenId = chosen?.id
+  const chosenLabel = chosen?.label
+  const replay = useMemo(() => {
+    if (!result || !chosenBlock || !chosenId || !chosenLabel) return null
+    return buildTraceCausalReplay(result, chosenBlock, { id: chosenId, label: chosenLabel })
+  }, [result, chosenBlock, chosenId, chosenLabel])
 
   const panel: React.CSSProperties = {
     position: 'absolute',
@@ -220,7 +292,121 @@ export function TraceInspector({
             </div>
           )}
 
-          {result && <Results result={result} anomalyCycles={anomalyCycles} />}
+          {(onTestsChange || savedTests.length > 0) && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                padding: 8,
+                border: '1px solid var(--borderSubtle)',
+                borderRadius: 6,
+              }}
+            >
+              <div style={{ color: 'var(--textBright)', fontSize: 12, fontWeight: 600 }}>
+                Saved block tests
+              </div>
+              {onTestsChange ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <input
+                    aria-label="Test name"
+                    value={testName}
+                    onChange={(event) => setTestName(event.target.value)}
+                    style={{
+                      flex: '1 1 150px',
+                      minWidth: 130,
+                      background: 'var(--surfaceInput)',
+                      color: 'var(--textPrimary)',
+                      border: '1px solid var(--borderStrong)',
+                      borderRadius: 6,
+                      padding: '4px 6px',
+                      fontSize: 12,
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={saveTest}
+                    disabled={!harness}
+                    style={testButtonStyle}
+                  >
+                    Save current vector
+                  </button>
+                </div>
+              ) : null}
+              {savedTests.length > 0 ? (
+                <>
+                  <button type="button" onClick={runSavedTests} style={testButtonStyle}>
+                    Run saved tests
+                  </button>
+                  {savedTests.map((test) => {
+                    const testResult = resultByTest.get(test.id)
+                    return (
+                      <div
+                        key={test.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          flexWrap: 'wrap',
+                          fontSize: 11,
+                          color: 'var(--textSoft)',
+                        }}
+                      >
+                        <span style={{ flex: '1 1 180px' }}>
+                          {test.name} · {test.cycles} cycles
+                          {testResult ? (
+                            <strong
+                              style={{
+                                color: testResult.passed
+                                  ? 'var(--statusOk)'
+                                  : 'var(--statusDanger)',
+                                marginLeft: 6,
+                              }}
+                            >
+                              {testResult.passed ? 'PASS' : `FAIL (${testResult.failures.length})`}
+                            </strong>
+                          ) : null}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => runSavedTest(test.id)}
+                          style={testButtonStyle}
+                        >
+                          Run
+                        </button>
+                        {onTestsChange ? (
+                          <button
+                            type="button"
+                            onClick={() => deleteTest(test.id)}
+                            style={testButtonStyle}
+                          >
+                            Delete
+                          </button>
+                        ) : null}
+                        {testResult && !testResult.passed ? (
+                          <span style={{ flexBasis: '100%', color: 'var(--statusDanger)' }}>
+                            {testResult.failures
+                              .slice(0, 2)
+                              .map(
+                                (failure) =>
+                                  `${failure.signal} cycle ${failure.cycle}: expected ${failure.expected ?? '—'}, got ${failure.actual ?? '—'}`,
+                              )
+                              .join(' · ')}
+                          </span>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </>
+              ) : (
+                <div style={{ color: 'var(--textSoft)', fontSize: 11 }}>
+                  Save the current input vector to create a repeatable expected-output test.
+                </div>
+              )}
+            </div>
+          )}
+
+          {result && <Results result={result} anomalyCycles={anomalyCycles} replay={replay} />}
         </div>
       )}
     </div>
@@ -230,9 +416,11 @@ export function TraceInspector({
 function Results({
   result,
   anomalyCycles,
+  replay,
 }: {
   result: TraceResult
   anomalyCycles: Map<number, Anomaly>
+  replay: ReturnType<typeof buildTraceCausalReplay> | null
 }): JSX.Element {
   return (
     <>
@@ -240,6 +428,9 @@ function Results({
         {result.cycles.length} cycles · {result.clocked ? 'clocked' : 'combinational (no clock)'} ·{' '}
         {result.registerCount} register{result.registerCount === 1 ? '' : 's'}
       </div>
+
+      {replay ? <CausalReplayPanel replay={replay} /> : null}
+      <WhyPanel system={result.why} title="Why this trace has this state" />
 
       {result.anomalies.length === 0 ? (
         <div style={{ color: 'var(--statusOk)', fontSize: 12 }}>

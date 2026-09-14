@@ -1,12 +1,15 @@
 import { Position } from '@xyflow/react'
 import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
+import { type DrawnSymbol, type PlacedDrawnSymbol, placeDrawnSymbol } from './symbol-geometry.ts'
+import { symbolProblems } from './user-symbol-validate.ts'
 
 /**
  * USER-MADE PARTS — the data model + symbol GEOMETRY for a part the user authors (not hardcoded in
  * symbols.tsx). A user part draws itself from a PIN SPEC — a labelled box with pins on chosen sides —
- * so a definition that isn't in the code can still render on the canvas and wire up. This is the
- * foundation the authoring UI + persistence build on.
+ * so a definition that isn't in the code can still render on the canvas and wire up. A part may instead
+ * carry a DRAWN symbol (symbol-geometry.ts), the picture its author drew; `userPartDisplay` picks which.
+ * This is the foundation the authoring UI + persistence build on.
  *
  * Honesty: a user part is a BLACK BOX here — it places, wires, appears in the ratsnest, and exports,
  * but the solver honestly reports it "unsupported" (it reads only the placed instance's definition-id +
@@ -14,10 +17,15 @@ import type { Parameters } from './part-defaults.ts'
  * Real simulatable behaviour is a later layer.
  */
 
-/** Which edge of the body a pin sits on — drives both the drawn stub and the wire-handle position. */
+/** Which edge of the body a pin sits on — drives both the drawn stub and the wire-handle position. On a
+ *  drawn symbol it is the way the pin points out of the drawing. */
 export type PinSide = 'left' | 'right' | 'top' | 'bottom'
 
-/** A pin's electrical role — documentation for now (the KiCad pin-type set); not yet read by the solver. */
+/**
+ * A pin's electrical role (a subset of KiCad's pin types). The analog solver never reads it; the mixed
+ * logic co-simulation does — it decides whether a module's pin drives its net or listens to it
+ * (portDriveOf in pipeline/solve-canvas.ts).
+ */
 export type PinElectrical =
   | 'input'
   | 'output'
@@ -36,6 +44,9 @@ export const PIN_ELECTRICAL_TYPES: readonly PinElectrical[] = [
   'power_out',
   'unspecified',
 ]
+
+/** The roles that push current out — their tip dot is drawn filled, every other pin's hollow. */
+export const DRIVING_PINS: ReadonlySet<PinElectrical> = new Set(['output', 'power_out'])
 
 export type UserPin = {
   /** Stable id — the wire-handle id + the terminal name the ratsnest/solver see. */
@@ -62,7 +73,15 @@ export type UserPart = {
   /** Reference-designator letter(s) — 'U' for an IC, 'J' for a connector, etc. */
   designatorPrefix: string
   description?: string
+  /** Where the part's datasheet lives — a link or a document name. Shown as the Datasheet field. */
+  datasheet?: string
   pins: UserPin[]
+  /**
+   * The schematic symbol its author DREW (symbol-geometry.ts) — outline, arcs, text, and a spot for every
+   * pin. A picture only: pin names, pads and electrical roles stay on `pins`, and the solver never reads
+   * this. Absent ⇒ the part draws as the plain labelled box its pins imply, exactly as it always has.
+   */
+  symbol?: DrawnSymbol
   /** The board package this part lands on (a BUILTIN_FOOTPRINTS id) — its pins map to the footprint's
    *  pads in declaration order. Absent ⇒ the part has no footprint yet, so it stays off the board. */
   footprintId?: string
@@ -183,20 +202,63 @@ const SIDE_POSITION: Record<PinSide, Position> = {
   bottom: Position.Bottom,
 }
 
+/** A wire handle, in the shape terminalsOf returns: `offset` px along its edge, or `at` an exact point. */
+export type UserPartTerminal = {
+  id: string
+  position: Position
+  offset?: number
+  at?: { x: number; y: number }
+}
+
 /**
- * The wire handles for a user part, in the shape terminalsOf returns: a handle per pin, on its edge
- * with the along-edge `offset` px (top for left/right pins, left for top/bottom — exactly what the
- * DeviceNode handle-render code consumes). The offset is the pin TIP's cross-axis coordinate, in the
- * same node-box space the glyph draws in, so the handle sits on the drawn pin tip.
+ * How a user part appears on the canvas — its node size, its wire handles and what to draw — decided in
+ * ONE place, so the node box, the handles and the picture can never disagree.
+ *
+ * The plain labelled box: a handle per pin, on its edge with the along-edge `offset` px (top for
+ * left/right pins, left for top/bottom — exactly what the DeviceNode handle-render code consumes). The
+ * offset is the pin TIP's cross-axis coordinate, in the same node-box space the glyph draws in.
+ *
+ * A drawn symbol: a handle placed `at` each drawn tip, which symbol-geometry.ts keeps on the box edge the
+ * pin points out of. A drawing that breaks any rule is never shown — a handle could then sit off its pin
+ * or a pin have no handle at all — so such a part draws as its plain box instead.
  */
-export function userPartTerminals(
-  part: UserPart,
-): { id: string; position: Position; offset: number }[] {
-  return userPartGeometry(part).pins.map((p) => ({
-    id: p.id,
-    position: SIDE_POSITION[p.side],
-    offset: p.side === 'left' || p.side === 'right' ? p.tipY : p.tipX,
-  }))
+export type UserPartDisplay = { width: number; height: number; terminals: UserPartTerminal[] } & (
+  | { kind: 'box'; box: UserPartGeometry }
+  | { kind: 'drawn'; drawn: PlacedDrawnSymbol }
+)
+
+export function userPartDisplay(part: UserPart): UserPartDisplay {
+  if (part.symbol === undefined || symbolProblems(part.symbol, part.pins).length > 0) {
+    const box = userPartGeometry(part)
+    return {
+      kind: 'box',
+      box,
+      width: box.width,
+      height: box.height,
+      terminals: box.pins.map((p) => ({
+        id: p.id,
+        position: SIDE_POSITION[p.side],
+        offset: p.side === 'left' || p.side === 'right' ? p.tipY : p.tipX,
+      })),
+    }
+  }
+  const drawn = placeDrawnSymbol(part.symbol, part.pins)
+  return {
+    kind: 'drawn',
+    drawn,
+    width: drawn.width,
+    height: drawn.height,
+    terminals: drawn.pins.map((p) => ({
+      id: p.pin,
+      position: SIDE_POSITION[p.side],
+      at: { x: p.at.x, y: p.at.y },
+    })),
+  }
+}
+
+/** The wire handles for a user part — the one set terminalsOf hands the canvas. */
+export function userPartTerminals(part: UserPart): UserPartTerminal[] {
+  return userPartDisplay(part).terminals
 }
 
 // The runtime registry of user parts — populated by the authoring UI + project load (later slices); the

@@ -64,6 +64,8 @@ import {
   updateVacuumDiodeGuess,
   updateZenerGuess,
 } from './nr-loop.ts'
+import type { RuntimeAnalysis } from './runtime-contracts.ts'
+import { runtimeAnalysisWithWhy } from './runtime-why.ts'
 import {
   MAX_MNA_UNKNOWNS,
   overBudgetMessage,
@@ -227,6 +229,7 @@ export type Solution = {
   iterations: number
   /** Whether the nonlinear solve converged. Always true for linear circuits. */
   converged: boolean
+  analysis?: RuntimeAnalysis
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +479,11 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
       warnings,
       iterations: 1,
       converged: true,
+      analysis: runtimeAnalysisWithWhy(
+        'dc',
+        hasUnsupported ? 'unsupported-element' : 'solved',
+        warnings,
+      ),
     }
   }
 
@@ -1249,6 +1257,11 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
     warnings,
     iterations,
     converged,
+    analysis: runtimeAnalysisWithWhy(
+      'dc',
+      hasUnsupported ? 'unsupported-element' : 'solved',
+      warnings,
+    ),
   }
 }
 
@@ -1266,6 +1279,7 @@ function emptyResult(
     warnings,
     iterations: 0,
     converged: false,
+    analysis: runtimeAnalysisWithWhy('dc', status, warnings),
   }
 }
 

@@ -486,8 +486,9 @@ describe('a declared value the solve does not read is named, not hidden', () => 
     expect(acLossNoticeText(world) ?? '').toContain('dut declares internal_resistance')
   })
 
-  test("a MOSFET's declared gate capacitance is not in the AC answer, and says so", () => {
-    // 60 pF at 1 kHz would be −j2.653 MΩ at the gate. The gate reads the gmin open instead.
+  test("a MOSFET's declared gate capacitance appears in the AC answer", () => {
+    // 60 pF at 1 kHz is −j2.653 MΩ from gate to source. The gate remains DC-open but has AC
+    // displacement current.
     const parameters = defaultParameters('transistor_mosfet_nmos')
     expect((parameters.gate_capacitance?.value as { amount: number }).amount).toBe(60e-12)
     const world = makeWorld()
@@ -504,9 +505,9 @@ describe('a declared value the solve does not read is named, not hidden', () => 
     const ifStamped = -1 / (2 * Math.PI * 1e3 * 60e-12)
     expect(ifStamped).toBeCloseTo(-2652582.38, 2)
     const zin = zinAt(world, 1e3)
-    expect(zin.im).not.toBeCloseTo(ifStamped, -3)
-    expect(zin.re).toBeCloseTo(OPEN_PORT_OHMS, -3)
-    expect(acLossNoticeText(world) ?? '').toContain('dut declares gate_capacitance')
+    expect(zin.im).toBeCloseTo(ifStamped, -3)
+    expect(zin.re).toBeCloseTo(acGminFloorOhms(ifStamped), -2)
+    expect(acLossNoticeText(world) ?? '').not.toContain('dut declares gate_capacitance')
   })
 
   test('a value declared as zero is NOT reported as ignored — nothing is being discarded', () => {

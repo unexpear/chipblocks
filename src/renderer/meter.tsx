@@ -2,6 +2,8 @@ import { useInternalNode } from '@xyflow/react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
 import { solveElectroThermal, solveTransientThermal, worldAtAmbient } from '../electro-thermal.ts'
+import type { RuntimeWhySystem } from '../runtime-contracts.ts'
+import { measurementWhy } from '../runtime-why.ts'
 import { solveTransient, transientRan } from '../transient-solver.ts'
 import { FlowViewportPortal } from './flow-portals.tsx'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
@@ -470,11 +472,17 @@ const CAP_DECAY_RATIO = 0.02
 const CAP_OPEN_AMPS = 5e-11
 
 export type CapacitanceResult =
-  | { status: 'measured'; farads: number }
-  | { status: 'parallel-leak' }
-  | { status: 'over-range' }
-  | { status: 'open' }
-  | { status: 'failed' }
+  | { status: 'measured'; farads: number; why?: RuntimeWhySystem }
+  | { status: 'parallel-leak'; why?: RuntimeWhySystem }
+  | { status: 'over-range'; why?: RuntimeWhySystem }
+  | { status: 'open'; why?: RuntimeWhySystem }
+  | { status: 'failed'; why?: RuntimeWhySystem }
+
+const capacitanceWhy = (status: string, summary: string) =>
+  measurementWhy('meter', 'capacitance', status, summary)
+
+const ammeterWhy = (status: string, summary: string) =>
+  measurementWhy('meter', 'ammeter', status, summary)
 
 type ChargeWindow = {
   endVolts: number
@@ -544,31 +552,101 @@ function runChargeWindow(
  *  - nothing conducting at all → open (a bench meter shows ~0 there).
  */
 export function capacitanceTest(world: World, netA: string, netB: string): CapacitanceResult {
-  if (netA === netB) return { status: 'parallel-leak' } // shorted probes
+  if (netA === netB) {
+    return {
+      status: 'parallel-leak',
+      why: capacitanceWhy('parallel-leak', 'The probes are on the same net.'),
+    }
+  } // shorted probes
   const testWorld = poweredOffWorld(world, netA, netB, CAP_TEST_VOLTS, CAP_TEST_OHMS)
   const runs: ChargeWindow[] = []
   for (const window of CAP_WINDOWS) {
     const coarse = runChargeWindow(testWorld, netA, netB, window, 120)
-    if (coarse === null) return { status: 'failed' }
+    if (coarse === null) {
+      return {
+        status: 'failed',
+        why: capacitanceWhy('failed', 'The capacitance test could not solve the probe network.'),
+      }
+    }
     runs.push(coarse)
     if (!(coarse.flat && coarse.decayed)) continue
     // The charge curve fits this window — re-run finer for the number (1200
     // steps keeps backward-Euler's systematic charge error under ~1 %).
     const fine = runChargeWindow(testWorld, netA, netB, window, 1200)
-    if (fine === null) return { status: 'failed' }
-    if (!fine.decayed) return { status: 'parallel-leak' }
-    if (fine.peakAmps < CAP_OPEN_AMPS || fine.endVolts <= 0) return { status: 'open' }
+    if (fine === null) {
+      return {
+        status: 'failed',
+        why: capacitanceWhy(
+          'failed',
+          'The fine capacitance test could not solve the probe network.',
+        ),
+      }
+    }
+    if (!fine.decayed) {
+      return {
+        status: 'parallel-leak',
+        why: capacitanceWhy(
+          'parallel-leak',
+          'The probe current did not decay because a resistive path remains in parallel.',
+        ),
+      }
+    }
+    if (fine.peakAmps < CAP_OPEN_AMPS || fine.endVolts <= 0) {
+      return {
+        status: 'open',
+        why: capacitanceWhy(
+          'open',
+          'The probe network stored less than the measurable charge threshold.',
+        ),
+      }
+    }
     const farads = (fine.coulombs - fine.endAmps * fine.duration) / fine.endVolts
-    return farads < 1e-12 ? { status: 'open' } : { status: 'measured', farads }
+    return farads < 1e-12
+      ? {
+          status: 'open',
+          why: capacitanceWhy('open', 'The measured capacitance is below the meter resolution.'),
+        }
+      : {
+          status: 'measured',
+          farads,
+          why: capacitanceWhy(
+            'measured',
+            'The charge curve settled and produced a capacitance reading.',
+          ),
+        }
   }
   // Never settled cleanly. A leak plateaus (same end voltage every window); a
   // too-big capacitor keeps climbing decade after decade. Compare the last two.
   const last = runs[runs.length - 1]
   const prev = runs[runs.length - 2]
-  if (last === undefined || prev === undefined) return { status: 'failed' }
-  if (last.peakAmps < CAP_OPEN_AMPS) return { status: 'open' }
+  if (last === undefined || prev === undefined) {
+    return {
+      status: 'failed',
+      why: capacitanceWhy('failed', 'The capacitance test did not produce enough samples.'),
+    }
+  }
+  if (last.peakAmps < CAP_OPEN_AMPS) {
+    return {
+      status: 'open',
+      why: capacitanceWhy('open', 'Nothing measurable conducted between the probes.'),
+    }
+  }
   const stillClimbing = last.endVolts > 2 * Math.max(prev.endVolts, 1e-12)
-  return stillClimbing ? { status: 'over-range' } : { status: 'parallel-leak' }
+  return stillClimbing
+    ? {
+        status: 'over-range',
+        why: capacitanceWhy(
+          'over-range',
+          'The capacitor was still charging at the longest honest test window.',
+        ),
+      }
+    : {
+        status: 'parallel-leak',
+        why: capacitanceWhy(
+          'parallel-leak',
+          'The probe network never reached a cleanly isolated charge curve.',
+        ),
+      }
 }
 
 /**
@@ -616,9 +694,9 @@ export const AMMETER_JACKS: Record<
 const AMMETER_SHUNT_ID = 'meter_ammeter_shunt'
 
 export type AmmeterResult =
-  | { status: 'measured'; amps: number; burdenVolts: number }
-  | { status: 'blew'; amps: number }
-  | { status: 'failed' }
+  | { status: 'measured'; amps: number; burdenVolts: number; why?: RuntimeWhySystem }
+  | { status: 'blew'; amps: number; why?: RuntimeWhySystem }
+  | { status: 'failed'; why?: RuntimeWhySystem }
 
 /**
  * Insert the meter's shunt between the probe nets of the LIVE circuit and
@@ -653,10 +731,29 @@ export function seriesAmmeter(
     { ...world, instances },
     projectAmbientC === undefined ? undefined : { projectAmbientC },
   )
-  if (solution.status !== 'solved') return { status: 'failed' }
+  if (solution.status !== 'solved') {
+    return {
+      status: 'failed',
+      why: ammeterWhy(
+        'failed',
+        `The inserted ammeter could not solve the circuit (${solution.status}).`,
+      ),
+    }
+  }
   const amps = solution.branches.get(AMMETER_SHUNT_ID) ?? 0
-  if (Math.abs(amps) > spec.fuseAmps) return { status: 'blew', amps }
-  return { status: 'measured', amps, burdenVolts: amps * spec.shuntOhms }
+  if (Math.abs(amps) > spec.fuseAmps) {
+    return {
+      status: 'blew',
+      amps,
+      why: ammeterWhy('blew', `${Math.abs(amps)} A exceeded the ${spec.fuseAmps} A fuse rating.`),
+    }
+  }
+  return {
+    status: 'measured',
+    amps,
+    burdenVolts: amps * spec.shuntOhms,
+    why: ammeterWhy('measured', 'The inserted shunt produced a current reading.'),
+  }
 }
 
 /** A probe needle pinned to its terminal, riding along when the part moves.

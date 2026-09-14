@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://chipblocks.example/schemas/user-part.schema.json",
   "title": "UserPart",
-  "description": "A user-authored custom part as persisted in a project file (and later a user-local library). It is a BLACK BOX drawn from a pin spec — deliberately NOT a full catalog Definition: a built-in primitive_device (see definition.schema.json) must declare its internal composition (what it is physically built from), which a custom part does not have yet. Faking one to pass the definition schema would violate the anti-placeholder rule. So a user part gets its own schema, validated with the same engine + strictness the catalog uses; when the user later gives it real internals/behaviours it can graduate to definition.schema.json. Values are the user's own, so (per OBJECT-MODEL.md §12, origin project/user_local) no provenance is required — but everything is typed and unit-valid. NOTE: the runtime loader (user-part-validate.ts) enforces two extra rules JSON Schema can't express, both in the stricter/safe direction, so it may reject a part this schema accepts: (1) pin ids must be UNIQUE within the part (JSON Schema's uniqueItems can't key on a field), and (2) a parameter amount must be FINITE (an overflow literal like 1e400 parses to Infinity, which is a valid JSON number but poisons downstream math).",
+  "description": "A user-authored custom part as persisted in a project file (and later a user-local library). It is a BLACK BOX drawn from a pin spec — deliberately NOT a full catalog Definition: a built-in primitive_device (see definition.schema.json) must declare its internal composition (what it is physically built from), which a custom part does not have yet. Faking one to pass the definition schema would violate the anti-placeholder rule. So a user part gets its own schema, validated with the same engine + strictness the catalog uses; when the user later gives it real internals/behaviours it can graduate to definition.schema.json. Values are the user's own, so (per OBJECT-MODEL.md §12, origin project/user_local) no provenance is required — but everything is typed and unit-valid. NOTE: the runtime loader (user-part-validate.ts) enforces two extra rules JSON Schema can't express, both in the stricter/safe direction, so it may reject a part this schema accepts: (1) pin ids must be UNIQUE within the part (JSON Schema's uniqueItems can't key on a field), and (2) a parameter amount must be FINITE (an overflow literal like 1e400 parses to Infinity, which is a valid JSON number but poisons downstream math). The drawn `symbol` is the one place it goes the other way: a drawing that breaks a rule (its own extra rules are listed on $defs/drawnSymbol) is set aside and the rest of the part still loads, because losing a picture must never cost a working part.",
   "type": "object",
   "properties": {
     "id": {
@@ -18,6 +18,10 @@
       "description": "The reference-designator letters — U for a chip, J for a connector, etc."
     },
     "description": { "type": "string" },
+    "datasheet": {
+      "type": "string",
+      "description": "Where the part's datasheet lives — a link or a document name. It is the text of the drawn symbol's Datasheet field. A blank one is dropped on load (none given)."
+    },
     "footprintId": {
       "type": "string",
       "minLength": 1,
@@ -43,11 +47,19 @@
               "power_out",
               "unspecified"
             ]
+          },
+          "pad": {
+            "type": "string",
+            "description": "The footprint pad this pin solders to, named as the package labels it ('1', 'A5'). Absent or blank ⇒ matched by the pin's name, then by declaration order."
           }
         },
         "required": ["id", "name", "side", "electrical"],
         "additionalProperties": false
       }
+    },
+    "symbol": {
+      "$ref": "#/$defs/drawnSymbol",
+      "description": "Optional DRAWN schematic symbol — the picture the part's author drew, in place of the plain labelled box its pins imply. Presentation only: pin names, pads and electrical roles stay on `pins`, and the solver never reads it. Each pin points out of its own `side`."
     },
     "behavesAs": {
       "type": "object",
@@ -106,6 +118,142 @@
     "$comment": "A part simulates ONE way — as a single device (behavesAs) or as its internal circuit (internal), never both."
   },
   "$defs": {
+    "point": {
+      "type": "object",
+      "description": "A point in the drawing's own px space; y grows downward, like the canvas.",
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+      "required": ["x", "y"],
+      "additionalProperties": false
+    },
+    "strokeWidth": { "type": "number", "exclusiveMinimum": 0 },
+    "fill": {
+      "enum": ["none", "outline", "background"],
+      "description": "KiCad's fill types: hollow, filled with the line colour, or filled with the body colour."
+    },
+    "graphic": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "polyline" },
+            "points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+            "strokeWidth": { "$ref": "#/$defs/strokeWidth" },
+            "fill": { "$ref": "#/$defs/fill" }
+          },
+          "required": ["kind", "points", "strokeWidth", "fill"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "rectangle" },
+            "start": { "$ref": "#/$defs/point" },
+            "end": { "$ref": "#/$defs/point" },
+            "strokeWidth": { "$ref": "#/$defs/strokeWidth" },
+            "fill": { "$ref": "#/$defs/fill" }
+          },
+          "required": ["kind", "start", "end", "strokeWidth", "fill"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "circle" },
+            "center": { "$ref": "#/$defs/point" },
+            "radius": { "type": "number", "exclusiveMinimum": 0 },
+            "strokeWidth": { "$ref": "#/$defs/strokeWidth" },
+            "fill": { "$ref": "#/$defs/fill" }
+          },
+          "required": ["kind", "center", "radius", "strokeWidth", "fill"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "An arc through three points: it starts at start, passes mid, ends at end (KiCad's form).",
+          "properties": {
+            "kind": { "const": "arc" },
+            "start": { "$ref": "#/$defs/point" },
+            "mid": { "$ref": "#/$defs/point" },
+            "end": { "$ref": "#/$defs/point" },
+            "strokeWidth": { "$ref": "#/$defs/strokeWidth" },
+            "fill": { "$ref": "#/$defs/fill" }
+          },
+          "required": ["kind", "start", "mid", "end", "strokeWidth", "fill"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "Text centred on `at`; angle 90 reads bottom-to-top.",
+          "properties": {
+            "kind": { "const": "text" },
+            "at": { "$ref": "#/$defs/point" },
+            "text": { "type": "string", "pattern": "\\S" },
+            "size": { "type": "number", "exclusiveMinimum": 0 },
+            "angle": { "enum": [0, 90] }
+          },
+          "required": ["kind", "at", "text", "size"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "symbolPin": {
+      "type": "object",
+      "description": "Where one of the part's pins is drawn. `pin` is that pin's id; `at` is its tip — the connection point, where the wire lands; `length` runs from the tip to the body.",
+      "properties": {
+        "pin": { "type": "string", "minLength": 1 },
+        "at": { "$ref": "#/$defs/point" },
+        "length": { "type": "number", "exclusiveMinimum": 0 },
+        "style": { "enum": ["line", "inverted", "clock", "inverted_clock"] },
+        "hideName": { "type": "boolean" },
+        "hideNumber": { "type": "boolean" }
+      },
+      "required": ["pin", "at", "length", "style"],
+      "additionalProperties": false,
+      "if": {
+        "properties": { "style": { "enum": ["inverted", "inverted_clock"] } },
+        "required": ["style"]
+      },
+      "then": {
+        "properties": { "length": { "minimum": 6 } },
+        "$comment": "An inverted pin must be long enough to hold its 3 px-radius bubble."
+      }
+    },
+    "symbolField": {
+      "type": "object",
+      "properties": { "at": { "$ref": "#/$defs/point" }, "visible": { "type": "boolean" } },
+      "required": ["at", "visible"],
+      "additionalProperties": false
+    },
+    "drawnSymbol": {
+      "type": "object",
+      "description": "The drawn symbol: its shapes, a spot for each pin, and where its four fields go. The runtime loader (user-symbol-validate.ts) adds rules JSON Schema can't express, and sets aside a drawing that breaks one (the part keeps everything else and draws as its plain box): (1) every pin of the part is drawn exactly once, and nothing else; (2) every pin's tip lies ON the outer edge it points out of — all left-pointing tips share the drawing's leftmost x, and nothing drawn (text aside) reaches past them — so each wire lands outside the body; (3) an arc's three points are not on one straight line; (4) a rectangle has both a width and a height; (5) the drawing has a width and a height.",
+      "properties": {
+        "graphics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/graphic" },
+          "contains": {
+            "type": "object",
+            "properties": { "kind": { "enum": ["polyline", "rectangle", "circle", "arc"] } },
+            "required": ["kind"]
+          },
+          "$comment": "At least one shape that isn't text — the body the pins attach to."
+        },
+        "pins": { "type": "array", "items": { "$ref": "#/$defs/symbolPin" } },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "reference": { "$ref": "#/$defs/symbolField" },
+            "value": { "$ref": "#/$defs/symbolField" },
+            "footprint": { "$ref": "#/$defs/symbolField" },
+            "datasheet": { "$ref": "#/$defs/symbolField" }
+          },
+          "required": ["reference", "value", "footprint", "datasheet"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["graphics", "pins", "fields"],
+      "additionalProperties": false
+    },
     "blockCore": {
       "type": "object",
       "description": "The solve core of an internal circuit — the same shape a canvas circuit block flattens from: the real parts (nodes), the wires between them (edges, with their drawn geometry so inner wire lengths stay physically real), and the ports that expose internal terminals. Presentation extras a canvas block can carry (display faces, gate symbols, pin drive marks) are deliberately not persisted here.",

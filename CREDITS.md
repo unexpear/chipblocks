@@ -2,7 +2,7 @@
 
 > Centralized credits, acknowledgments, and references for the ChipBlocks project. Citations also appear inline in per-fixture provenance fields and per-doc verification sections; this file consolidates the full picture.
 >
-> **Last updated:** 2026-07-05
+> **Last updated:** 2026-08-16
 
 ---
 
@@ -13,6 +13,12 @@
 | Project lead | **unexpear** | Originator, maintainer, direction setter. Per CLA.md, copyright holder for original contributions. |
 
 Future contributors will be listed here after their first merged contribution. Per [CLA.md](CLA.md), contributions are licensed to the project under MIT (or whatever the project's then-current license is); contributors retain copyright in their original work.
+
+### Third-party author whose work is carried in this repository
+
+| Work | Author | License | Notes |
+|---|---|---|---|
+| **vm80a** — [github.com/1801BM1/vm80a](https://github.com/1801BM1/vm80a) | **1801BM1@gmail.com** (Viacheslav Ovsiienko) | **CC-BY 3.0** | An Intel 8080 recovered from a decapped 580BM80A die — the real gate-level topology, photographed and transcribed to Verilog, not written from the datasheet. Carried verbatim as `fixtures/cpu8080-vm80a-core.v` and exercised by `tests/verilog-8080.test.ts`; ChipBlocks' own `fixtures/cpu8080-system.v` supplies only the clock, ROM and RAM around it. This entry is the attribution CC-BY 3.0 §4(b) requires, placed with the project's own author credits because §4(b) asks for a credit at least as prominent as those. Full terms and compliance detail: [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). |
 
 ---
 
@@ -140,7 +146,7 @@ All values cited from manufacturer datasheets are factual measurements (not copy
 
 ## Open-source projects referenced
 
-None bundled at v3 Sprint 11 close. Projects referenced as design inspiration, future-integration candidates, or comparison references:
+None bundled in the shipped app. One project's source is **carried in the repository as a test fixture** — 1801BM1's die-derived 8080, credited under [Project authors](#third-party-author-whose-work-is-carried-in-this-repository) above. Everything below is referenced as design inspiration, a future-integration candidate, or a comparison reference:
 
 ### Verified for symbol-library use
 

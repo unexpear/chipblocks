@@ -59,7 +59,7 @@ parameters:
     type: quantity
     units: dimensionless
     required: true
-    description: k, strictly between 0 and 1 — field linkage between the windings. Iron-core transformers reach 0.95-0.998; k = 1 (a perfectly ideal transformer) is unphysical and rejected by the solver.
+    description: k, from above 0 through 1 — field linkage between the windings. Iron-core transformers reach 0.95-0.998; k = 1 is the ideal perfectly coupled boundary and is accepted when the declared winding/core resistances make the circuit well-posed.
   primary_resistance:
     type: quantity
     units: ohm
@@ -74,7 +74,7 @@ parameters:
     type: quantity
     units: ohm
     required: false
-    description: Core (iron) loss modeled as the classic equivalent-circuit parallel resistance across the primary — hysteresis + eddy-current losses drawn in proportion to the flux swing. Draws nothing at DC (no changing flux, no core loss); absent = lossless core.
+    description: Core (iron) loss modeled as a linear equivalent resistance across the changing-flux/magnetizing branch — a first-order approximation of hysteresis + eddy-current loss. It draws nothing at steady DC because the inductive branch has no changing-flux voltage; frequency- and amplitude-dependent core laws are not yet modeled. Absent = lossless core.
   saturation_flux_linkage:
     type: quantity
     units: weber
@@ -103,10 +103,11 @@ extensions:
   user_extensible: true
   allowed_origins: [builtin, community, user_local, project]
 notes: |
-  Solved by both engines (S19-v3-47): the transient solver inverts the 2x2
-  inductance matrix [[L1, M], [M, L2]] per backward-Euler step (well-posed for
-  k < 1) so AC transforms and DC decays away; the DC solver stamps each winding
+  Solved by both engines (S19-v3-47): the transient solver solves the coupled
+  backward-Euler companion, including the changing-flux core-loss branch, so AC
+  transforms and DC decays away; the DC solver stamps each winding
   as a 0 V source in series with its winding resistance (the exact steady state).
-  Magnetizing current, core saturation, and core (iron) losses are not modeled —
-  honest omissions for the lumped two-winding model. Center-tapped windings
-  (push-pull inverter primaries) are a future variant.
+  Magnetizing current and core saturation detection are modeled; the core-loss
+  resistance is intentionally a linear first-order approximation rather than a
+  frequency/flux-dependent hysteresis and eddy-current law. Center-tapped
+  windings use the same changing-flux loss treatment.

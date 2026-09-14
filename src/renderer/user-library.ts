@@ -29,13 +29,17 @@ import type { UserPart } from './user-parts.ts'
  */
 
 export const USER_LIBRARY_FORMAT = 'chipblocks-user-library'
-export const USER_LIBRARY_VERSION = 2
+export const USER_LIBRARY_VERSION = 3
 /**
  * Versions this build can READ. v1 held parts only; v2 adds the footprints you author, so that a
- * package you drew follows you between projects the way a part already does. A v1 library still loads
- * (it simply has no footprints) and is written back as v2.
+ * package you drew follows you between projects the way a part already does; v3 lets a part carry the
+ * symbol you drew for it (and its datasheet). An older library still loads and is written back as v3.
+ *
+ * v3 is a real bump, not tidiness: a v2 build reads a v3 part by dropping the fields it doesn't know,
+ * and every library save rewrites the whole file from that read — so without the bump, authoring any
+ * part in an older build would silently erase every symbol you had drawn.
  */
-const READABLE_VERSIONS = new Set([1, 2])
+const READABLE_VERSIONS = new Set([1, 2, 3])
 
 export type UserLibraryFile = {
   format: typeof USER_LIBRARY_FORMAT
@@ -81,7 +85,7 @@ export function deserializeUserLibrary(text: string): LibraryResult {
   if (typeof file.version !== 'number' || !READABLE_VERSIONS.has(file.version)) {
     return {
       ok: false,
-      reason: `Unsupported parts-library version ${String(file.version)} (this build reads ${[...READABLE_VERSIONS].join(' and ')}).`,
+      reason: `Unsupported parts-library version ${String(file.version)} (this build reads ${[...READABLE_VERSIONS].join(', ')}).`,
     }
   }
   const list = Array.isArray(file.userParts) ? file.userParts : []

@@ -11,6 +11,7 @@ import {
   serializeCircuit,
 } from '../src/renderer/circuit-file.ts'
 import type { UserPart } from '../src/renderer/user-parts.ts'
+import { opampPart, plainOpampPart } from './drawn-symbol-fixture.ts'
 
 const sensor: UserPart = {
   id: 'my_sensor',
@@ -210,5 +211,43 @@ describe('malformed user parts are dropped, not fatal', () => {
     const result = deserializeCircuit(JSON.stringify(file))
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.file.userParts).toBeUndefined()
+  })
+})
+
+describe('a drawn symbol travels with its part in the project file', () => {
+  test('the drawing and the datasheet survive a save → reload round-trip intact', () => {
+    const drawn = opampPart({ datasheet: 'https://example.com/opamp.pdf' })
+    expect(roundTrip([drawn]).userParts).toEqual([drawn])
+  })
+
+  test('the file version is unchanged: an older build still opens it, and just draws the plain box', () => {
+    // The drawing is an optional extra on a part. An older build's loader ignores fields it doesn't
+    // know, so the part (and every wire on its pins, which key off pin ids) still loads there.
+    const file = serializeCircuit(
+      [{ id: 'u1', position: { x: 0, y: 0 }, data: { definition: 'my_opamp' } }],
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [opampPart()],
+    )
+    expect(file.version).toBe(CIRCUIT_FILE_VERSION)
+    expect(file.userParts?.[0]?.symbol).toEqual(opampPart().symbol)
+  })
+
+  test('a damaged drawing loads as the part without it — never a lost part', () => {
+    const damaged = { ...opampPart(), symbol: { graphics: [], pins: [], fields: {} } }
+    const result = deserializeCircuit(
+      JSON.stringify({
+        format: CIRCUIT_FILE_FORMAT,
+        version: CIRCUIT_FILE_VERSION,
+        nodes: [{ id: 'u1', definition: 'my_opamp', x: 0, y: 0 }],
+        wires: [],
+        userParts: [damaged],
+      }),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.file.userParts).toEqual([plainOpampPart()])
   })
 })

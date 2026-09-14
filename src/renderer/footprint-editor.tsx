@@ -18,6 +18,16 @@
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  CanvasButton,
+  fieldLabel,
+  fieldRow,
+  NumberField,
+  primaryButton,
+  Section,
+  subtleButton,
+  textInput,
+} from './editor-form.tsx'
+import {
   type Courtyard,
   extentOfRect,
   type Footprint,
@@ -1149,125 +1159,3 @@ function withBodySide(
 
 type FootprintSourceType = Footprint['provenance']['source_type']
 type FootprintConfidence = Footprint['provenance']['confidence']
-
-function Section({
-  title,
-  hint,
-  children,
-}: {
-  title: string
-  hint?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: THEME.textPrimary }}>{title}</span>
-        {hint ? <span style={{ fontSize: 10, color: THEME.textFaint }}>{hint}</span> : null}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function NumberField({
-  label,
-  value,
-  step,
-  onChange,
-}: {
-  label: string
-  value: number
-  step: number
-  onChange: (value: number) => void
-}) {
-  return (
-    <label style={fieldLabel}>
-      {label}
-      <input
-        style={textInput}
-        type="number"
-        step={step}
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(e) => {
-          const parsed = Number(e.target.value)
-          if (Number.isFinite(parsed)) onChange(parsed)
-        }}
-      />
-    </label>
-  )
-}
-
-function CanvasButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: '3px 9px',
-        borderRadius: 6,
-        border: `1px solid ${active ? THEME.accentBlue : THEME.borderStrong}`,
-        background: active ? THEME.surfaceActive : THEME.surfaceRaised,
-        color: THEME.textPrimary,
-        fontSize: 11,
-        cursor: 'pointer',
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
-const fieldRow: React.CSSProperties = { display: 'flex', gap: 6 }
-
-const fieldLabel: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 3,
-  flex: 1,
-  minWidth: 0,
-  fontSize: 10,
-  textTransform: 'uppercase',
-  letterSpacing: 0.4,
-  color: THEME.textMuted,
-}
-
-const textInput: React.CSSProperties = {
-  boxSizing: 'border-box',
-  width: '100%',
-  padding: '5px 7px',
-  borderRadius: 6,
-  border: `1px solid ${THEME.borderStrong}`,
-  background: THEME.surfaceInput,
-  color: THEME.textPrimary,
-  fontSize: 12,
-  outline: 'none',
-}
-
-const primaryButton: React.CSSProperties = {
-  padding: '6px 12px',
-  borderRadius: 6,
-  border: `1px solid ${THEME.accentBlueDeep}`,
-  background: THEME.surfaceActive,
-  color: THEME.textBright,
-  fontSize: 12,
-  cursor: 'pointer',
-}
-
-const subtleButton: React.CSSProperties = {
-  padding: '6px 12px',
-  borderRadius: 6,
-  border: `1px solid ${THEME.borderStrong}`,
-  background: THEME.surfaceRaised,
-  color: THEME.textPrimary,
-  fontSize: 12,
-  cursor: 'pointer',
-}

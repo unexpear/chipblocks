@@ -6,7 +6,9 @@ A free, open-source, ground-up electronics builder. Real physical blocks all the
 >
 > **Errors may exist.** Cited values can have transcription errors, datasheet errata, or condition-dependent variation. Found something wrong? Open an issue or submit a PR with the corrected value and a source citation — community-curated errata is how data quality improves over time (same model KiCad uses).
 
-**Status:** A working desktop app lives on `master` — Electron + React + TypeScript. What's shipped: a fully-cited, JSON-Schema-validated catalog (19 materials, 13 behaviors, 28 primitive-device definitions — diodes, LEDs, BJTs, MOSFETs, transformers, plus switches, potentiometer, relay, fuse, thermistor, photodiode/phototransistor and more — with 17 example instances) checked by a cross-reference validator; **two physics solvers** — DC (Modified Nodal Analysis + Newton–Raphson, with electro-thermal feedback) and transient/time-domain (backward-Euler); a **full interactive schematic editor** (standard IEC 60617 / IEEE 315 symbols, CAD-style wiring, selection, undo/redo, reusable circuit blocks); a **multimeter** and a **complete oscilloscope + curve tracer**; a Math panel, failure-mode checks, five visualization lenses, and circuit Save/Load. The digital chapter — logic gates built from real transistors → adders → flip-flops and a 4-bit register — is in. Nine JSON schemas; **947 tests** plus type-check, lint, and build gate every commit. Through Sprint 21.
+**Status:** A working desktop app lives on `master` — Electron + React + TypeScript. What's shipped: a fully-cited, JSON-Schema-validated catalog (19 materials, 13 behaviors, 28 primitive-device definitions — diodes, LEDs, BJTs, MOSFETs, transformers, plus switches, potentiometer, relay, fuse, thermistor, photodiode/phototransistor and more — with 17 example instances) checked by a cross-reference validator; **two physics solvers** — DC (Modified Nodal Analysis + Newton–Raphson, with electro-thermal feedback) and transient/time-domain (backward-Euler); a **full interactive schematic editor** (standard IEC 60617 / IEEE 315 symbols, CAD-style wiring, selection, undo/redo, reusable circuit blocks); in-app user symbol and footprint editors plus a board workspace; a **multimeter** and a **complete oscilloscope + curve tracer**; a Math panel, failure-mode checks, five visualization lenses, and circuit Save/Load. The digital chapter — logic gates built from real transistors → adders → flip-flops and a 4-bit register — is in. Nine JSON schemas; **5,712 tests** plus type-check, lint, and build commands. Work continued beyond Sprint 21.
+
+Canonical measured implementation status and gate results: [PROJECT-STATUS.md](PROJECT-STATUS.md).
 
 This is a working tool, not a finished product — heed the disclaimer above. The docs in this repo track the design and the reasoning behind it.
 
@@ -48,7 +50,7 @@ chipblocks/
 ├── electron/                   main process (native menu, Save/Load) + preload bridge
 ├── schemas/                    nine JSON Schemas (definition, instance, behavior, net, …)
 ├── fixtures/valid/             the cited catalog (materials, behaviors, devices, instances, nets)
-├── tests/                      918 Vitest tests
+├── tests/                      5,712 Vitest tests
 ├── sprints/                    sprint plans + close-outs (sprint-2 … sprint-21)
 ├── OBJECT-MODEL.md             canonical v3 foundation spec
 ├── README.md                   this file

@@ -180,6 +180,8 @@ import {
   updateVacuumDiodeGuess,
   updateZenerGuess,
 } from './nr-loop.ts'
+import type { RuntimeAnalysis } from './runtime-contracts.ts'
+import { runtimeAnalysisWithWhy } from './runtime-why.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
 import {
   MAX_MNA_UNKNOWNS,
@@ -385,6 +387,7 @@ export type TransientResult = {
   series: TransientPoint[]
   ground: string | undefined
   warnings: string[]
+  analysis?: RuntimeAnalysis
 }
 
 /** A power source resolved for the time loop: V(t) = dcOffset + amplitude·sin(2πft). */
@@ -618,10 +621,10 @@ type TransformerElement = {
   m: number // mutual inductance k·√(L1·L2)
   r1: number // primary winding resistance (Ω)
   r2: number // secondary winding resistance (Ω)
-  rCore: number // core-loss resistance across the primary (Ω); 0 ⇒ lossless
+  rCore: number // core-loss resistance across the changing-flux branch (Ω); 0 ⇒ lossless
   satFluxVs: number // saturation flux linkage (V·s); Infinity ⇒ not rated
-  i1Prev: number // primary current (pA → pB) at the previous step
-  i2Prev: number // secondary current (sA → sB) at the previous step
+  i1Prev: number // primary inductive-branch current (pA → pB) at the previous step
+  i2Prev: number // secondary inductive-branch current (sA → sB) at the previous step
   fluxVs: number // running ∫v_primary·dt (V·s) — the core's real flux linkage
   saturationWarned: boolean
 }
@@ -644,7 +647,7 @@ type CtTransformerElement = {
   lMatrix: number[][]
   /** Per-winding series resistance (each half gets primary_resistance/2). */
   r: [number, number, number]
-  rCore: number // core-loss resistance across the full primary (Ω); 0 ⇒ lossless
+  rCore: number // core-loss resistance across the changing-flux branch (Ω); 0 ⇒ lossless
   satFluxVs: number // saturation flux linkage (V·s); Infinity ⇒ not rated
   iPrev: [number, number, number]
   fluxVs: number // running ∫v_full_primary·dt (V·s)
@@ -1692,10 +1695,8 @@ function resolveTransformer(
     warnings.push(`Skipped transformer '${inst.id}' (missing/invalid inductances or coupling)`)
     return null
   }
-  if (k <= 0 || k >= 1) {
-    // k = 1 (a perfectly ideal transformer) makes the inductance matrix singular —
-    // and is unphysical; every real transformer has k < 1. Skip rather than fake.
-    warnings.push(`Skipped transformer '${inst.id}' (coupling_coefficient must be 0 < k < 1)`)
+  if (k <= 0 || k > 1) {
+    warnings.push(`Skipped transformer '${inst.id}' (coupling_coefficient must be 0 < k ≤ 1)`)
     return null
   }
   const net = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
@@ -1743,8 +1744,8 @@ function resolveCtTransformer(
     warnings.push(`Skipped CT transformer '${inst.id}' (missing/invalid inductances or coupling)`)
     return null
   }
-  if (k <= 0 || k >= 1) {
-    warnings.push(`Skipped CT transformer '${inst.id}' (coupling_coefficient must be 0 < k < 1)`)
+  if (k <= 0 || k > 1) {
+    warnings.push(`Skipped CT transformer '${inst.id}' (coupling_coefficient must be 0 < k ≤ 1)`)
     return null
   }
   const net = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
@@ -1815,50 +1816,146 @@ export function transformerSaturationFactor(fluxVs: number, satFluxVs: number): 
 }
 
 /**
- * The CT transformer's backward-Euler companion for one step: with three coupled
- * windings, invert A = diag(r) + L/Δt so the winding currents are i = G·v + I_h
- * (G = A⁻¹, history from the previous currents). Positive-definite for k < 1.
+ * The center-tapped transformer's backward-Euler companion. The two primary halves and the secondary
+ * are the inductive unknowns; a fourth unknown is the core-loss current across the changing-flux path
+ * spanning both primary halves. As with the two-winding transformer, the returned G/Ih relation is for
+ * total terminal currents, while J/Jh advances only the inductive branch history.
  */
-function ctTransformerStep(tr: CtTransformerElement, dt: number): { G: number[][]; ih: number[] } {
-  const s = transformerSaturationFactor(tr.fluxVs, tr.satFluxVs)
-  const A = tr.lMatrix.map((row, w) =>
-    row.map((l, v) => (s * l) / dt + (w === v ? (tr.r[w as 0 | 1 | 2] ?? 0) : 0)),
+type CtTransformerCompanion = {
+  G: number[][]
+  ih: number[]
+  J: number[][]
+  jh: number[]
+}
+
+function ctTransformerStep(tr: CtTransformerElement, dt: number): CtTransformerCompanion {
+  const saturationFactor = transformerSaturationFactor(tr.fluxVs, tr.satFluxVs)
+  const inductive = tr.lMatrix.map((row) => row.map((value) => (saturationFactor * value) / dt))
+  const history = inductive.map((row) =>
+    row.reduce(
+      (sum, coefficient, column) => sum + coefficient * (tr.iPrev[column as 0 | 1 | 2] ?? 0),
+      0,
+    ),
   )
-  const G = math.inv(A) as number[][]
-  const h = tr.lMatrix.map((row) =>
-    row.reduce((acc, l, v) => acc + ((s * l) / dt) * (tr.iPrev[v as 0 | 1 | 2] ?? 0), 0),
-  )
-  const ih = G.map((row) => row.reduce((acc, g, v) => acc + g * (h[v] ?? 0), 0))
-  return { G, ih }
+  const coreConductance = tr.rCore > 0 ? 1 / tr.rCore : 0
+  const system = [
+    [
+      (inductive[0]?.[0] ?? 0) + (tr.r[0] ?? 0),
+      inductive[0]?.[1] ?? 0,
+      inductive[0]?.[2] ?? 0,
+      tr.r[0] ?? 0,
+    ],
+    [
+      inductive[1]?.[0] ?? 0,
+      (inductive[1]?.[1] ?? 0) + (tr.r[1] ?? 0),
+      inductive[1]?.[2] ?? 0,
+      tr.r[1] ?? 0,
+    ],
+    [inductive[2]?.[0] ?? 0, inductive[2]?.[1] ?? 0, (inductive[2]?.[2] ?? 0) + (tr.r[2] ?? 0), 0],
+    [
+      -coreConductance * ((inductive[0]?.[0] ?? 0) + (inductive[1]?.[0] ?? 0)),
+      -coreConductance * ((inductive[0]?.[1] ?? 0) + (inductive[1]?.[1] ?? 0)),
+      -coreConductance * ((inductive[0]?.[2] ?? 0) + (inductive[1]?.[2] ?? 0)),
+      1,
+    ],
+  ]
+  const inverse = math.inv(system) as number[][]
+  const solve = (rightHandSide: number[]) =>
+    inverse.map((row) =>
+      row.reduce((sum, coefficient, column) => sum + coefficient * (rightHandSide[column] ?? 0), 0),
+    )
+  const unitVoltage = [solve([1, 0, 0, 0]), solve([0, 1, 0, 0]), solve([0, 0, 1, 0])]
+  const historySolution = solve([
+    history[0] ?? 0,
+    history[1] ?? 0,
+    history[2] ?? 0,
+    -coreConductance * ((history[0] ?? 0) + (history[1] ?? 0)),
+  ])
+  const terminalCurrent = (solution: number[]) => [
+    (solution[0] ?? 0) + (solution[3] ?? 0),
+    (solution[1] ?? 0) + (solution[3] ?? 0),
+    solution[2] ?? 0,
+  ]
+  const terminalSolutions = unitVoltage.map(terminalCurrent)
+  return {
+    G: [0, 1, 2].map((output) => terminalSolutions.map((solution) => solution[output] ?? 0)),
+    ih: terminalCurrent(historySolution),
+    J: [0, 1, 2].map((output) => unitVoltage.map((solution) => solution[output] ?? 0)),
+    jh: [historySolution[0] ?? 0, historySolution[1] ?? 0, historySolution[2] ?? 0],
+  }
 }
 
 /**
- * The transformer's backward-Euler companion coefficients for one step: invert
- * the 2×2 [[r1 + L1/Δt, M/Δt], [M/Δt, r2 + L2/Δt]] so each winding current is
- *   i1 = g11·v1 + g12·v2 + ih1,   i2 = g12·v1 + g22·v2 + ih2
- * (v = the winding's terminal voltage; history from the previous currents).
- * The determinant is positive exactly when k < 1 (M² < L1·L2).
+ * The transformer's backward-Euler companion for one step. The winding copper is in series with the
+ * coupled inductive branch, while core loss is a conductance across that changing-flux branch. Putting
+ * the core resistor directly across the copper-inclusive terminals would make it draw V/R under a DC
+ * winding drop, even though real eddy-current and hysteresis loss needs changing flux.
  *
- * Past core saturation L1/L2/M are all scaled by the same flux-dependent factor,
- * so k (= M/√(L1·L2)) is preserved and the matrix stays positive-definite, but the
- * magnetizing inductance collapses — the primary draws a large magnetizing current,
- * the real saturation inrush.
+ * The three unknowns are the primary inductive current, secondary inductive current, and core-loss current:
+ *
+ *   v = R·i_terminal + L/Δt·(i_inductive − i_prev)
+ *   i_terminal = i_inductive + [i_core, 0]
+ *   i_core = v_inductive_primary / R_core
+ *
+ * Solving this augmented system also keeps perfectly coupled transformers (k = 1) well-defined whenever
+ * their declared winding/core resistances make the physical circuit well-posed.
+ *
+ * Past core saturation L1/L2/M are all scaled by the same flux-dependent factor, so k is preserved and
+ * the magnetizing inductance collapses — the primary draws a large magnetizing current, the real inrush.
  */
-function transformerStep(tr: TransformerElement, dt: number) {
-  const s = transformerSaturationFactor(tr.fluxVs, tr.satFluxVs)
-  const l1 = s * tr.l1
-  const l2 = s * tr.l2
-  const m = s * tr.m
-  const a11 = tr.r1 + l1 / dt
-  const a22 = tr.r2 + l2 / dt
-  const a12 = m / dt
-  const det = a11 * a22 - a12 * a12
-  const g11 = a22 / det
-  const g22 = a11 / det
-  const g12 = -a12 / det
-  const h1 = (l1 * tr.i1Prev + m * tr.i2Prev) / dt
-  const h2 = (m * tr.i1Prev + l2 * tr.i2Prev) / dt
-  return { g11, g12, g22, ih1: g11 * h1 + g12 * h2, ih2: g12 * h1 + g22 * h2 }
+type TransformerCompanion = {
+  g11: number
+  g12: number
+  g21: number
+  g22: number
+  ih1: number
+  ih2: number
+  j11: number
+  j12: number
+  j21: number
+  j22: number
+  jh1: number
+  jh2: number
+}
+
+function transformerStep(tr: TransformerElement, dt: number): TransformerCompanion {
+  const saturationFactor = transformerSaturationFactor(tr.fluxVs, tr.satFluxVs)
+  const l1 = saturationFactor * tr.l1
+  const l2 = saturationFactor * tr.l2
+  const mutualInductance = saturationFactor * tr.m
+  const inductive11 = l1 / dt
+  const inductive12 = mutualInductance / dt
+  const inductive22 = l2 / dt
+  const history1 = inductive11 * tr.i1Prev + inductive12 * tr.i2Prev
+  const history2 = inductive12 * tr.i1Prev + inductive22 * tr.i2Prev
+  const coreConductance = tr.rCore > 0 ? 1 / tr.rCore : 0
+  const system = [
+    [tr.r1 + inductive11, inductive12, tr.r1],
+    [inductive12, tr.r2 + inductive22, 0],
+    [-coreConductance * inductive11, -coreConductance * inductive12, 1],
+  ]
+  const inverse = math.inv(system) as number[][]
+  const solve = (rightHandSide: number[]) =>
+    inverse.map((row) =>
+      row.reduce((sum, coefficient, column) => sum + coefficient * (rightHandSide[column] ?? 0), 0),
+    )
+  const unitVoltage1 = solve([1, 0, 0])
+  const unitVoltage2 = solve([0, 1, 0])
+  const history = solve([history1, history2, -coreConductance * history1])
+  return {
+    g11: (unitVoltage1[0] ?? 0) + (unitVoltage1[2] ?? 0),
+    g12: (unitVoltage2[0] ?? 0) + (unitVoltage2[2] ?? 0),
+    g21: unitVoltage1[1] ?? 0,
+    g22: unitVoltage2[1] ?? 0,
+    ih1: (history[0] ?? 0) + (history[2] ?? 0),
+    ih2: history[1] ?? 0,
+    j11: unitVoltage1[0] ?? 0,
+    j12: unitVoltage2[0] ?? 0,
+    j21: unitVoltage1[1] ?? 0,
+    j22: unitVoltage2[1] ?? 0,
+    jh1: history[0] ?? 0,
+    jh2: history[1] ?? 0,
+  }
 }
 
 /**
@@ -2298,7 +2395,7 @@ function stampTransformerCompanion(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): void {
-  const { g11, g12, g22, ih1, ih2 } = transformerStep(tr, dt)
+  const { g11, g12, g21, g22, ih1, ih2 } = transformerStep(tr, dt)
   const add = (i: number | undefined, j: number | undefined, val: number) => {
     if (i !== undefined && j !== undefined) M.set([i, j], (M.get([i, j]) ?? 0) + val)
   }
@@ -2317,7 +2414,7 @@ function stampTransformerCompanion(
     ih: number
   }> = [
     { a: tr.iPA, b: tr.iPB, gSelf: g11, gOther: g12, oA: tr.iSA, oB: tr.iSB, ih: ih1 },
-    { a: tr.iSA, b: tr.iSB, gSelf: g22, gOther: g12, oA: tr.iPA, oB: tr.iPB, ih: ih2 },
+    { a: tr.iSA, b: tr.iSB, gSelf: g22, gOther: g21, oA: tr.iPA, oB: tr.iPB, ih: ih2 },
   ]
   for (const p of ports) {
     add(p.a, p.a, p.gSelf)
@@ -2330,16 +2427,6 @@ function stampTransformerCompanion(
     add(p.b, p.oB, p.gOther)
     addB(p.a, -p.ih)
     addB(p.b, p.ih)
-  }
-  // Core (iron) loss: the equivalent-circuit parallel resistance across the
-  // primary — draws real loss current in proportion to the flux swing, and
-  // nothing at DC (no changing flux), exactly like a real core.
-  if (tr.rCore > 0) {
-    const gCore = 1 / tr.rCore
-    add(tr.iPA, tr.iPA, gCore)
-    add(tr.iPB, tr.iPB, gCore)
-    add(tr.iPA, tr.iPB, -gCore)
-    add(tr.iPB, tr.iPA, -gCore)
   }
 }
 
@@ -2374,16 +2461,6 @@ function stampCtTransformerCompanion(
     }
     addB(aW, -(ih[w] ?? 0))
     addB(bW, ih[w] ?? 0)
-  }
-  // Core loss across the FULL primary (primary_a ↔ primary_b) — one shared core.
-  if (tr.rCore > 0) {
-    const gCore = 1 / tr.rCore
-    const [pA] = tr.idx[0]
-    const [, pB] = tr.idx[1]
-    add(pA, pA, gCore)
-    add(pB, pB, gCore)
-    add(pA, pB, -gCore)
-    add(pB, pA, -gCore)
   }
 }
 
@@ -2530,13 +2607,25 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   const dt = options.timeStep
   const duration = options.duration
   if (!(dt > 0) || !(duration > 0) || dt > duration) {
-    return { status: 'bad-options', series: [], ground: undefined, warnings }
+    return {
+      status: 'bad-options',
+      series: [],
+      ground: undefined,
+      warnings,
+      analysis: runtimeAnalysisWithWhy('transient', 'bad-options', warnings),
+    }
   }
   const deadline = solveDeadline(options.deadline)
 
   const ground = identifyGround(inputWorld, options, warnings)
   if (ground === undefined) {
-    return { status: 'no-ground', series: [], ground: undefined, warnings }
+    return {
+      status: 'no-ground',
+      series: [],
+      ground: undefined,
+      warnings,
+      analysis: runtimeAnalysisWithWhy('transient', 'no-ground', warnings),
+    }
   }
 
   // Multi-circuit: sub-circuits with no path to the ground reference would make the whole matrix
@@ -2973,11 +3062,13 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   const largestSystem = N + S + C + caps.length + icList.length
   const maxUnknowns = options.maxUnknowns ?? MAX_MNA_UNKNOWNS
   if (largestSystem > maxUnknowns) {
+    const sizeWarning = tooLargeMessage(largestSystem, maxUnknowns)
     return {
       status: 'too-large',
       series: [],
       ground,
-      warnings: [tooLargeMessage(largestSystem, maxUnknowns), ...warnings],
+      warnings: [sizeWarning, ...warnings],
+      analysis: runtimeAnalysisWithWhy('transient', 'too-large', [sizeWarning, ...warnings]),
     }
   }
 
@@ -3350,16 +3441,14 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
         i1 = tr.i1Prev
         i2 = tr.i2Prev
       } else {
-        const { g11, g12, g22, ih1, ih2 } = transformerStep(tr, dt)
+        const { g11, g12, g21, g22, ih1, ih2 } = transformerStep(tr, dt)
         const v1 = volts(tr.pA) - volts(tr.pB)
         const v2 = volts(tr.sA) - volts(tr.sB)
         i1 = g11 * v1 + g12 * v2 + ih1
-        i2 = g12 * v1 + g22 * v2 + ih2
+        i2 = g21 * v1 + g22 * v2 + ih2
       }
-      // Core loss rides the primary terminals alongside the winding current.
-      const iCore = tr.rCore > 0 ? (volts(tr.pA) - volts(tr.pB)) / tr.rCore : 0
-      into.set(`${tr.id}/primary_a`, i1 + iCore)
-      into.set(`${tr.id}/primary_b`, -i1 - iCore)
+      into.set(`${tr.id}/primary_a`, i1)
+      into.set(`${tr.id}/primary_b`, -i1)
       through(tr.id, 'secondary_a', 'secondary_b', i2)
     }
 
@@ -3374,12 +3463,10 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
           (w) => (G[w] ?? []).reduce((acc, g, j) => acc + g * (v[j] ?? 0), 0) + (ih[w] ?? 0),
         ) as [number, number, number]
       }
-      const vFullPrimary = volts(tr.nets[0][0]) - volts(tr.nets[1][1])
-      const iCore = tr.rCore > 0 ? vFullPrimary / tr.rCore : 0
       // Windings: pA→ct, ct→pB, sA→sB; the center tap carries both halves.
-      into.set(`${tr.id}/primary_a`, (i[0] ?? 0) + iCore)
+      into.set(`${tr.id}/primary_a`, i[0] ?? 0)
       into.set(`${tr.id}/primary_ct`, -(i[0] ?? 0) + (i[1] ?? 0))
-      into.set(`${tr.id}/primary_b`, -(i[1] ?? 0) - iCore)
+      into.set(`${tr.id}/primary_b`, -(i[1] ?? 0))
       through(tr.id, 'secondary_a', 'secondary_b', i[2] ?? 0)
     }
 
@@ -3557,10 +3644,24 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   let initial = solveConverged('initial', 0)
   // Stiff instant — retry hard before giving up (see stepRetryMaxIter).
   if (initial === 'no-convergence') initial = solveConverged('initial', 0, stepRetryMaxIter)
-  if (initial === 'singular') return { status: 'singular-matrix', series: [], ground, warnings }
+  if (initial === 'singular') {
+    return {
+      status: 'singular-matrix',
+      series: [],
+      ground,
+      warnings,
+      analysis: runtimeAnalysisWithWhy('transient', 'singular-matrix', warnings),
+    }
+  }
   if (initial === 'no-convergence') {
     warnings.push('Newton-Raphson did not converge at t = 0')
-    return { status: 'did-not-converge', series: [], ground, warnings }
+    return {
+      status: 'did-not-converge',
+      series: [],
+      ground,
+      warnings,
+      analysis: runtimeAnalysisWithWhy('transient', 'did-not-converge', warnings),
+    }
   }
   series.push({
     time: 0,
@@ -3597,17 +3698,37 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       const note = overBudgetMessage(
         `${(k - 1).toLocaleString()} of ${steps.toLocaleString()} time steps`,
       )
-      return { status: 'over-budget', series, ground, warnings: [note, ...warnings] }
+      return {
+        status: 'over-budget',
+        series,
+        ground,
+        warnings: [note, ...warnings],
+        analysis: runtimeAnalysisWithWhy('transient', 'over-budget', [note, ...warnings]),
+      }
     }
     const t = k * dt
     options.onStepBegin?.(k, t, series[series.length - 1]?.nodes ?? new Map<string, number>())
     let solved = solveConverged('step', t)
     // Stiff step — retry hard before giving up (see stepRetryMaxIter).
     if (solved === 'no-convergence') solved = solveConverged('step', t, stepRetryMaxIter)
-    if (solved === 'singular') return { status: 'singular-matrix', series, ground, warnings }
+    if (solved === 'singular') {
+      return {
+        status: 'singular-matrix',
+        series,
+        ground,
+        warnings,
+        analysis: runtimeAnalysisWithWhy('transient', 'singular-matrix', warnings),
+      }
+    }
     if (solved === 'no-convergence') {
       warnings.push(`Newton-Raphson did not converge at t = ${t}`)
-      return { status: 'did-not-converge', series, ground, warnings }
+      return {
+        status: 'did-not-converge',
+        series,
+        ground,
+        warnings,
+        analysis: runtimeAnalysisWithWhy('transient', 'did-not-converge', warnings),
+      }
     }
     const nodes = solved.nodes
     const currents = recordCurrents(nodes, solved.x, 'step')
@@ -3711,11 +3832,11 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     for (const line of lines) recordLineSample(line, t, nodes)
     for (const tr of transformers) {
       // Same: this step's winding currents from the companion at the OLD history.
-      const { g11, g12, g22, ih1, ih2 } = transformerStep(tr, dt)
+      const { j11, j12, j21, j22, jh1, jh2 } = transformerStep(tr, dt)
       const v1 = (nodes.get(tr.pA) ?? 0) - (nodes.get(tr.pB) ?? 0)
       const v2 = (nodes.get(tr.sA) ?? 0) - (nodes.get(tr.sB) ?? 0)
-      tr.i1Prev = g11 * v1 + g12 * v2 + ih1
-      tr.i2Prev = g12 * v1 + g22 * v2 + ih2
+      tr.i1Prev = j11 * v1 + j12 * v2 + jh1
+      tr.i2Prev = j21 * v1 + j22 * v2 + jh2
       // The core's real flux linkage IS the primary's volt-second integral —
       // exceeding the rated capacity is genuine core saturation (too-low
       // frequency, overvoltage, DC bias, or switch-on inrush all get here).
@@ -3730,10 +3851,10 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       }
     }
     for (const tr of ctTransformers) {
-      const { G, ih } = ctTransformerStep(tr, dt) // OLD history
+      const { J, jh } = ctTransformerStep(tr, dt) // OLD history
       const v = tr.nets.map(([from, to]) => (nodes.get(from) ?? 0) - (nodes.get(to) ?? 0))
       tr.iPrev = [0, 1, 2].map(
-        (w) => (G[w] ?? []).reduce((acc, g, j) => acc + g * (v[j] ?? 0), 0) + (ih[w] ?? 0),
+        (w) => (J[w] ?? []).reduce((acc, g, j) => acc + g * (v[j] ?? 0), 0) + (jh[w] ?? 0),
       ) as [number, number, number]
       // Shared core: flux from the FULL primary's volt-seconds (both halves).
       tr.fluxVs += ((nodes.get(tr.nets[0][0]) ?? 0) - (nodes.get(tr.nets[1][1]) ?? 0)) * dt
@@ -3779,5 +3900,12 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     )
   }
 
-  return { status: hasUnsupported ? 'unsupported-element' : 'solved', series, ground, warnings }
+  const status = hasUnsupported ? 'unsupported-element' : 'solved'
+  return {
+    status,
+    series,
+    ground,
+    warnings,
+    analysis: runtimeAnalysisWithWhy('transient', status, warnings),
+  }
 }

@@ -14,6 +14,7 @@ import { alignSweep, autoLevel, type TriggerEdge, type TriggerMode } from './sco
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 import { measureSeries, phaseBetweenDeg } from './waveform-measure.ts'
+import { WhyPanel } from './why-panel.tsx'
 
 /**
  * Scope (Sprint 19 S19-v3-42..45 arc; TRIGGERING S19-v3-75): run the canvas
@@ -583,6 +584,9 @@ export function ScopePlot({
       <div style={{ fontSize: 11, color: textColor, maxWidth: 300, fontFamily: 'system-ui' }}>
         Scope could not run: {result?.status ?? 'no simulation yet'}
         {result !== null && result.warnings.length > 0 ? ` — ${result.warnings[0]}` : ''}
+        {result?.analysis?.why ? (
+          <WhyPanel system={result.analysis.why} title="Why the scope stopped" />
+        ) : null}
       </div>
     )
   }
@@ -1919,6 +1923,9 @@ export function ScopePlot({
           time. Add an AC source (Source → type → "AC signal") or wire in a capacitor / inductor to
           see voltages move.
         </div>
+      ) : null}
+      {result?.analysis?.why ? (
+        <WhyPanel system={result.analysis.why} title="Why this scope looks this way" />
       ) : null}
     </div>
   )

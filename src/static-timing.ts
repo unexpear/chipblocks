@@ -1,3 +1,14 @@
+import {
+  type AnalysisState,
+  asBlockId,
+  asDiagnosticId,
+  asSubgraphId,
+  type RuntimeDiagnostic,
+  type RuntimeWhySystem,
+  type SubgraphId,
+} from './runtime-contracts.ts'
+import { whyForDiagnostic, whySystemFor, whySystemForAnalysis } from './runtime-why.ts'
+
 /**
  * Static timing — the math that turns gate delays + a clock into "does this chip work at speed?".
  *
@@ -53,6 +64,7 @@ export type TimingPath = {
   logicDelayMin: number
   /** The gate ids on the path, in order — so the critical path can be highlighted on the canvas. */
   gates: string[]
+  subgraphId?: SubgraphId
 }
 
 /**
@@ -163,6 +175,9 @@ export type TimingReport = {
   setupViolated: boolean
   /** Every path whose fastest route violates hold (these break at ANY clock speed). */
   holdViolations: TimingPath[]
+  state: AnalysisState
+  diagnostics: RuntimeDiagnostic[]
+  why: RuntimeWhySystem
 }
 
 /** Analyse a whole design: critical path, max frequency, setup slack at `clockPeriod`, hold failures. */
@@ -175,6 +190,82 @@ export function analyzeTiming(
   const critical = criticalPath(paths)
   const setup = critical ? setupCheck(critical, reg, clockPeriod, skew) : undefined
   const holdViolations = paths.filter((p) => holdCheck(p, reg, skew).violated)
+  const diagnostics: RuntimeDiagnostic[] = []
+  if (setup?.violated && critical !== undefined) {
+    const target = {
+      blockId: asBlockId(critical.to),
+      subgraphId: critical.subgraphId ?? asSubgraphId('timing'),
+    }
+    diagnostics.push({
+      id: asDiagnosticId(`timing-setup-${critical.from}-${critical.to}`),
+      code: 'setup-violation',
+      severity: 'error',
+      state: 'failed',
+      message: `setup slack is ${setup.slack} s on path ${critical.from} → ${critical.to}`,
+      target,
+      repair: {
+        action: 'select',
+        message: 'Inspect the critical path and reduce its logic delay or clock rate.',
+        target,
+      },
+    })
+  }
+  for (const path of holdViolations) {
+    const target = {
+      blockId: asBlockId(path.to),
+      subgraphId: path.subgraphId ?? asSubgraphId('timing'),
+    }
+    diagnostics.push({
+      id: asDiagnosticId(`timing-hold-${path.from}-${path.to}`),
+      code: 'hold-violation',
+      severity: 'error',
+      state: 'failed',
+      message: `hold timing is violated on path ${path.from} → ${path.to}`,
+      target,
+      repair: {
+        action: 'select',
+        message: 'Inspect the fastest path and add delay or correct the hold budget.',
+        target,
+      },
+    })
+  }
+  const state: AnalysisState =
+    diagnostics.length > 0 ? 'failed' : paths.length === 0 ? 'waiting' : 'complete'
+  const why =
+    diagnostics.length > 0
+      ? whySystemFor(
+          diagnostics.map((diagnostic) =>
+            whyForDiagnostic(diagnostic, {
+              ...(critical === undefined
+                ? {}
+                : {
+                    source: {
+                      kind: 'source',
+                      label: critical.from,
+                      target: { blockId: asBlockId(critical.from) },
+                    },
+                    terminal: {
+                      kind: 'terminal',
+                      label: critical.to,
+                      target: { blockId: asBlockId(critical.to) },
+                    },
+                  }),
+              deviceState: {
+                kind: 'device-state',
+                label: 'timing path',
+                state: 'failed',
+                detail: diagnostic.message,
+              },
+            }),
+          ),
+          state,
+        )
+      : whySystemForAnalysis({
+          engine: 'timing',
+          status: state === 'complete' ? 'complete' : 'waiting',
+          state,
+          diagnostics,
+        })
   return {
     critical,
     minPeriod: setup?.minPeriod ?? 0,
@@ -182,6 +273,9 @@ export function analyzeTiming(
     setupSlack: setup?.slack ?? Number.POSITIVE_INFINITY,
     setupViolated: setup?.violated ?? false,
     holdViolations,
+    state,
+    diagnostics,
+    why,
   }
 }
 

@@ -9,6 +9,13 @@
  * is what the actual gates + flip-flops settle to. Pure (no React) and unit-tested against known designs.
  */
 
+import {
+  asDiagnosticId,
+  type RuntimeAnalysis,
+  type RuntimeDiagnostic,
+  type RuntimeWhySystem,
+} from '../runtime-contracts.ts'
+import { type RuntimeWhyNode, whyExplanation, whySystemFor } from '../runtime-why.ts'
 import type { BlockData } from './blocks.ts'
 import { type LogicResult, stepLogic } from './logic-sim.ts'
 import {
@@ -46,6 +53,8 @@ export type TraceResult = {
   clocked: boolean
   cycles: CycleSnapshot[]
   anomalies: Anomaly[]
+  analysis: RuntimeAnalysis
+  why: RuntimeWhySystem
 }
 
 /** Constant input values to hold across the whole run, by signal name (LSB→bit0). Missing inputs = 0. */
@@ -143,6 +152,72 @@ export function runTrace(
   ]
   const anomalies = detectAnomalies(cyclesLow, harness.outputSignals, powerUpRuns)
 
+  const state = anomalies.some((anomaly) => anomaly.kind === 'unsettled')
+    ? 'failed'
+    : anomalies.length > 0
+      ? 'waiting'
+      : 'complete'
+  const diagnostics: RuntimeDiagnostic[] = anomalies.map((anomaly, index) => ({
+    id: asDiagnosticId(`trace-${anomaly.kind}-${anomaly.cycle}-${index + 1}`),
+    code: `trace-${anomaly.kind}`,
+    severity: anomaly.kind === 'unsettled' ? 'error' : 'warning',
+    state: anomaly.kind === 'unsettled' ? 'failed' : 'waiting',
+    message: anomaly.detail,
+    repair: {
+      action: 'select',
+      message: 'Select the affected output or register path and inspect the recorded cycle.',
+    },
+  }))
+  const explanations = anomalies.map((anomaly, index) => {
+    const diagnostic = diagnostics[index]
+    const path: RuntimeWhyNode[] = [
+      { kind: 'source', label: block.name, state: 'complete' },
+      {
+        kind: 'device-state',
+        label: `cycle ${anomaly.cycle}`,
+        state: diagnostic?.state ?? state,
+        detail: anomaly.detail,
+      },
+      {
+        kind: 'output',
+        label: anomaly.signal ?? anomaly.kind,
+        state: diagnostic?.state ?? state,
+      },
+    ]
+    return whyExplanation({
+      id: `trace-${anomaly.kind}-${anomaly.cycle}-${index + 1}`,
+      state: diagnostic?.state ?? state,
+      summary: anomaly.detail,
+      path,
+      ...(diagnostic === undefined
+        ? {}
+        : {
+            cause: {
+              kind: anomaly.kind === 'unsettled' ? ('blocked-hop' as const) : ('solver' as const),
+              message: anomaly.detail,
+              ...(diagnostic.repair === undefined ? {} : { repair: diagnostic.repair }),
+            },
+            diagnostics: [diagnostic],
+          }),
+      transitions: [{ from: 'ready', to: diagnostic?.state ?? state, detail: anomaly.detail }],
+      observations: [
+        {
+          source: 'run-trace',
+          label: anomaly.signal ?? anomaly.kind,
+          detail: anomaly.detail,
+        },
+      ],
+    })
+  })
+  const why = whySystemFor(explanations, state)
+  const analysis: RuntimeAnalysis = {
+    engine: 'run-trace',
+    status: anomalies.length === 0 ? 'complete' : 'anomalies',
+    state,
+    diagnostics,
+    why,
+  }
+
   return {
     inputs: harness.inputSignals,
     outputs: harness.outputSignals,
@@ -150,6 +225,8 @@ export function runTrace(
     clocked: clockPortId !== null,
     cycles: cyclesLow,
     anomalies,
+    analysis,
+    why,
   }
 }
 

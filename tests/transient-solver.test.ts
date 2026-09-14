@@ -806,6 +806,7 @@ describe('solveTransient — transformer (coupled windings)', () => {
     seriesOhms?: number
     loadOhms: number
     coreLossOhms?: number
+    couplingCoefficient?: number
     satFluxVs?: number
   }): World {
     const world: World = {
@@ -858,7 +859,7 @@ describe('solveTransient — transformer (coupled windings)', () => {
       parameters: {
         primary_inductance: scalar(0.1, 'henry'),
         secondary_inductance: scalar(10, 'henry'),
-        coupling_coefficient: scalar(0.98, 'dimensionless'),
+        coupling_coefficient: scalar(opts.couplingCoefficient ?? 0.98, 'dimensionless'),
         primary_resistance: scalar(0.5, 'ohm'),
         secondary_resistance: scalar(50, 'ohm'),
         ...(opts.coreLossOhms !== undefined
@@ -906,6 +907,29 @@ describe('solveTransient — transformer (coupled windings)', () => {
     expect(ratio).toBeLessThan(10)
   })
 
+  test('perfect coupling k = 1 remains consistent with the transient engine', () => {
+    const f = 60
+    const period = 1 / f
+    const res = solveTransient(
+      transformerCircuit({
+        dc: 0,
+        ac: { amplitude: 1, frequency: f },
+        couplingCoefficient: 1,
+        loadOhms: 10000,
+      }),
+      { timeStep: period / 200, duration: 3 * period },
+    )
+    expect(res.status).toBe('solved')
+    const lastPeriod = res.series.filter((point) => point.time >= 2 * period)
+    const swing = (net: string) => {
+      const values = lastPeriod.map((point) => point.nodes.get(net) ?? 0)
+      return Math.max(...values) - Math.min(...values)
+    }
+    const ratio = swing('out') / swing('in')
+    expect(ratio).toBeGreaterThan(9.5)
+    expect(ratio).toBeLessThan(10.5)
+  })
+
   test('steady DC does not pass — only the switch-on kick couples, then it decays', () => {
     // τ = L1/(r1 + series) = 0.1/5 = 20 ms; simulate 15τ.
     const res = solveTransient(transformerCircuit({ dc: 5, seriesOhms: 4.5, loadOhms: 10000 }), {
@@ -917,6 +941,36 @@ describe('solveTransient — transformer (coupled windings)', () => {
     const vOutEnd = vNodeAt(res.series, 'out', 0.3) // steady DC: di/dt → 0
     expect(Math.abs(vOutEarly)).toBeGreaterThan(3) // transformer coupled the change
     expect(Math.abs(vOutEnd)).toBeLessThan(0.1) // …but blocks steady DC
+  })
+
+  test('core loss draws nothing under steady DC', () => {
+    const lossless = solveTransient(
+      transformerCircuit({ dc: 5, seriesOhms: 4.5, loadOhms: 10000 }),
+      { timeStep: 0.002, duration: 0.3 },
+    )
+    const res = solveTransient(
+      transformerCircuit({
+        dc: 5,
+        seriesOhms: 4.5,
+        loadOhms: 10000,
+        coreLossOhms: 200,
+      }),
+      { timeStep: 0.002, duration: 0.3 },
+    )
+    expect(res.status).toBe('solved')
+    expect(lossless.status).toBe('solved')
+    const final = res.series[res.series.length - 1]
+    const losslessFinal = lossless.series[lossless.series.length - 1]
+    expect(
+      Math.abs((final?.nodes.get('p_in') ?? 0) - (losslessFinal?.nodes.get('p_in') ?? 0)),
+    ).toBeLessThan(1e-5)
+    expect(
+      Math.abs(
+        (final?.currents?.get('t1/primary_a') ?? 0) -
+          (losslessFinal?.currents?.get('t1/primary_a') ?? 0),
+      ),
+    ).toBeLessThan(1e-5)
+    expect(Math.abs(final?.nodes.get('out') ?? 0)).toBeLessThan(1e-4)
   })
 
   test('the DC solver agrees: windings conduct through their DCR, nothing couples', () => {
@@ -1047,6 +1101,7 @@ describe('solveTransient — center-tapped transformer (three coupled windings)'
     ac?: { amplitude: number; frequency: number }
     seriesOhms?: number
     loadOhms: number
+    coreLossOhms?: number
     satFluxVs?: number
   }): World {
     const world: World = {
@@ -1106,6 +1161,9 @@ describe('solveTransient — center-tapped transformer (three coupled windings)'
         coupling_coefficient: scalar(0.98, 'dimensionless'),
         primary_resistance: scalar(1, 'ohm'),
         secondary_resistance: scalar(50, 'ohm'),
+        ...(opts.coreLossOhms !== undefined
+          ? { core_loss_resistance: scalar(opts.coreLossOhms, 'ohm') }
+          : {}),
         ...(opts.satFluxVs !== undefined
           ? { saturation_flux_linkage: scalar(opts.satFluxVs, 'weber') }
           : {}),
@@ -1179,6 +1237,36 @@ describe('solveTransient — center-tapped transformer (three coupled windings)'
     expect(dc.nodes.get('p_in')).toBeCloseTo(0.5, 6)
     expect(dc.branches.get('t1')).toBeCloseTo(1, 6)
     expect(dc.nodes.get('out')).toBeCloseTo(0, 9)
+  })
+
+  test('center-tapped core loss draws nothing under steady DC', () => {
+    const lossless = solveTransient(
+      ctCircuit({ drive: 'half', dc: 5, seriesOhms: 4.5, loadOhms: 100000 }),
+      { timeStep: 0.002, duration: 1 },
+    )
+    const withCoreLoss = solveTransient(
+      ctCircuit({
+        drive: 'half',
+        dc: 5,
+        seriesOhms: 4.5,
+        loadOhms: 100000,
+        coreLossOhms: 200,
+      }),
+      { timeStep: 0.002, duration: 1 },
+    )
+    expect(lossless.status).toBe('solved')
+    expect(withCoreLoss.status).toBe('solved')
+    const losslessFinal = lossless.series[lossless.series.length - 1]
+    const final = withCoreLoss.series[withCoreLoss.series.length - 1]
+    expect(
+      Math.abs((final?.nodes.get('p_in') ?? 0) - (losslessFinal?.nodes.get('p_in') ?? 0)),
+    ).toBeLessThan(1e-5)
+    expect(
+      Math.abs(
+        (final?.currents?.get('t1/primary_a') ?? 0) -
+          (losslessFinal?.currents?.get('t1/primary_a') ?? 0),
+      ),
+    ).toBeLessThan(1e-5)
   })
 
   test('the shared core saturates too: full-drive primary current spikes past the rating', () => {

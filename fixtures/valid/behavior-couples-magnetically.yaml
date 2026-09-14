@@ -8,7 +8,7 @@ id: couples_magnetically
 origin: builtin
 layer: behavior
 name: "Couples magnetically (mutual inductance)"
-description: "Two windings share a magnetic field: a changing current in either induces a voltage in both, via the mutual inductance M = k * sqrt(L1 * L2) where k (0 < k < 1) is the coupling coefficient. v1 = L1*di1/dt + M*di2/dt and v2 = M*di1/dt + L2*di2/dt. With steady DC (di/dt = 0) nothing couples — a transformer passes only CHANGING current, which is why it transforms AC and blocks DC. The open-circuit voltage ratio approaches k * sqrt(L2/L1), the turns ratio."
+description: "Two windings share a magnetic field: a changing current in either induces a voltage in both, via the mutual inductance M = k * sqrt(L1 * L2) where 0 < k ≤ 1 is the coupling coefficient (real transformers are below 1; k = 1 is the ideal boundary). v1 = L1*di1/dt + M*di2/dt and v2 = M*di1/dt + L2*di2/dt. With steady DC (di1/dt = di2/dt = 0) nothing couples — a transformer passes only CHANGING current, which is why it transforms AC and blocks DC. The open-circuit voltage ratio approaches k * sqrt(L2/L1), the turns ratio."
 parameters_required:
   - name: primary_inductance
     type: quantity
@@ -21,7 +21,7 @@ parameters_required:
   - name: coupling_coefficient
     type: quantity
     units: dimensionless
-    description: k, between 0 and 1 (exclusive) — how much of the field links both windings. Real iron-core transformers reach 0.95-0.998.
+    description: k, above 0 through 1 — how much of the field links both windings. Real iron-core transformers reach 0.95-0.998; k = 1 is the ideal perfectly coupled boundary.
 evaluates: "v1 = L1*di1/dt + M*di2/dt; v2 = M*di1/dt + L2*di2/dt; M = k*sqrt(L1*L2)"
 consequences: []
 law: mutual_inductance
@@ -33,9 +33,9 @@ extensions:
   user_extensible: true
   allowed_origins: [builtin, community, user_local, project]
 notes: |
-  Solved by both engines: the transient solver inverts the 2x2 inductance matrix
-  per backward-Euler step (a coupled companion model — well-posed exactly when
-  k < 1, since M^2 < L1*L2); the DC solver stamps each winding as a 0 V source in
-  series with its winding resistance (steady DC: di/dt = 0, no coupling). An
-  ideal k = 1 transformer would make the matrix singular; the solver requires
-  k < 1, which is also physically true of every real transformer.
+  Solved by both engines: the transient solver uses an augmented coupled
+  backward-Euler companion, with core loss on the changing-flux branch; the DC
+  solver stamps each winding as a 0 V source in series with its winding resistance
+  (steady DC: di/dt = 0, no coupling). The underlying inductance matrix is
+  singular at ideal k = 1, but the augmented winding/core-resistance system can
+  still solve a well-posed circuit; the solver refuses k ≤ 0 or k > 1.

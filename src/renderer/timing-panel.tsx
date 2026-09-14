@@ -1,5 +1,6 @@
 import type { TimingReport } from '../static-timing.ts'
 import { THEME } from './theme.ts'
+import { WhyPanel } from './why-panel.tsx'
 
 /**
  * Timing panel (rung 3c) — the static-timing readout for a clocked circuit. It shows the max clock
@@ -41,6 +42,7 @@ export function TimingPanel({
       <div style={{ width: 240, fontSize: 11, color: text }}>
         No register-to-register paths yet — wire combinational logic between flip-flops to analyse
         the clock speed.
+        <WhyPanel system={report.why} title="Why timing is waiting" />
       </div>
     )
   }
@@ -84,6 +86,7 @@ export function TimingPanel({
         / setup / hold are traced from its master-slave latch depths × a real NAND delay (worst
         case).
       </div>
+      <WhyPanel system={report.why} title="Why this timing result" />
     </div>
   )
 }

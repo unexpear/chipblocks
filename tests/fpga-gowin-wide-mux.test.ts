@@ -560,7 +560,7 @@ describe('an unrouted select is the constant the fabric powers up with', () => {
   test('mux8 leaves one select unrouted, and that multiplexer passes its high choice', () => {
     // `R9C7_SEL7` is absent from the second reader's routed list, and the multiplexer at OF7 of that tile is
     // not one this design uses — so the constant is what the multiplexers ABOVE an unused one would see.
-    expect(muxesOf('mux8').selectRouted['R9C7']).not.toContain(7)
+    expect(muxesOf('mux8').selectRouted.R9C7).not.toContain(7)
     const selects = mux8.netlist.cells
       .filter((cell) => cell.ref.cell >= GOWIN_WIDE_MUX_OFFSET)
       .map((cell) => cell.inputs[2])

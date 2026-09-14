@@ -60,6 +60,7 @@ import {
   type CanvasEdgeLike as BlockEdgeLike,
   type CanvasNodeLike as BlockNodeLike,
   type BlockPort,
+  type BlockTestCase,
   blockLayout,
   cloneBlockData,
   edgeTouchesPort,
@@ -168,6 +169,8 @@ import {
   WireColorContext,
   WireGeomContext,
 } from './net-edge.tsx'
+import { inspectNet, type NetInspectorNode } from './net-inspector.ts'
+import { NetInspector } from './net-inspector.tsx'
 import { nodesNeedingRemeasure, useCoalescedUpdateNodeInternals } from './node-internals.ts'
 import { routeAllWires, type WireReq } from './orthogonal-route.ts'
 import { detectOutputContention } from './output-contention.ts'
@@ -252,6 +255,7 @@ import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { StagedDrawSession } from './staged-draw-session.ts'
 import { runStressSweep } from './stress-bench.ts'
 import { StressBench } from './stress-bench-panel.tsx'
+import { SCHEMATIC_GRID_PX } from './symbol-geometry.ts'
 import { type DeviceNodeData, type Fidelity, nodeTypes, terminalsOf } from './symbols.tsx'
 import { tileRow } from './tiling.ts'
 import { frameLensRange } from './timeline.ts'
@@ -307,6 +311,7 @@ import {
 import { buildDemoCpu, buildDemoCpu8 } from './verilog-cpu-demo.ts'
 import { STARTER_VERILOG, VerilogEditor } from './verilog-editor.tsx'
 import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
+import { WhyPanel } from './why-panel.tsx'
 import {
   markableWireCrossings,
   netColor,
@@ -2451,8 +2456,9 @@ function templateFlow(template: string): { nodes: Node[]; edges: Edge[] } {
   return { nodes, edges }
 }
 
-/** Snap-to-grid step (px) — parts align to the 20 px major grid (the bold lines) when snap is on. */
-const SNAP_GRID: [number, number] = [20, 20]
+/** Snap-to-grid step (px) — parts align to the 20 px major grid (the bold lines) when snap is on. The
+ *  same grid a drawn symbol squares its box to, so a snapped part's drawn pin tips land on it too. */
+const SNAP_GRID: [number, number] = [SCHEMATIC_GRID_PX, SCHEMATIC_GRID_PX]
 
 type PersonalLibrary = { parts: UserPart[]; footprints: Footprint[] }
 
@@ -3585,6 +3591,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     frameEdges,
     frontState,
     displayResult,
+    timelineReplay,
   } = useTimeline({ nodes, edges, solvedWorld, projectAmbientRef })
   timelineRef.current = {
     open: timelineOpen,
@@ -3624,6 +3631,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     }
     return out
   }, [traceOpen, nodes])
+  const onUpdateBlockTests = useCallback(
+    (blockId: string, tests: BlockTestCase[]) => {
+      checkpointAction('block-tests')
+      setNodes((current) =>
+        current.map((node) => {
+          if (node.id !== blockId) return node
+          const block = (node.data as { block?: BlockData }).block
+          if (!block) return node
+          return { ...node, data: { ...node.data, block: { ...block, tests } } }
+        }),
+      )
+    },
+    [setNodes, checkpointAction],
+  )
   // Which surface the MAIN building area shows: the schematic canvas (default) or the full-size board /
   // chip workspace — a first-class editing surface, not just the dock panel. Opening a Board/Chip project
   // from the launcher lands the editor directly on that level (else Circuit); the breadcrumb travels.
@@ -9309,6 +9330,29 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           amps: typeof selectedEdge.data?.amps === 'number' ? selectedEdge.data.amps : null,
         }
       : null
+  const selectedNet =
+    selectedEdge && !selectedPart && selectedEdge.sourceHandle && selectedEdge.targetHandle
+      ? inspectNet(
+          nodes.map(
+            (node): NetInspectorNode => ({
+              id: node.id,
+              ...(node.data === undefined
+                ? {}
+                : { data: node.data as NonNullable<NetInspectorNode['data']> }),
+            }),
+          ),
+          edges.map((edge) => ({
+            id: edge.id,
+            source: edge.source,
+            sourceHandle: edge.sourceHandle ?? null,
+            target: edge.target,
+            targetHandle: edge.targetHandle ?? null,
+            ...(edge.data === undefined ? {} : { data: edge.data }),
+          })),
+          `${selectedEdge.source} ${selectedEdge.sourceHandle}`,
+          live,
+        )
+      : null
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: the dock-grid is the drop target for palette parts; keyboard-accessible placement is future work
@@ -9853,7 +9897,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                 <Background
                                   id="grid-major"
                                   variant={BackgroundVariant.Lines}
-                                  gap={20}
+                                  gap={SCHEMATIC_GRID_PX}
                                   lineWidth={1}
                                   color={gridColor}
                                 />
@@ -10127,7 +10171,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           />
         ) : null}
         {traceOpen ? (
-          <TraceInspector blocks={traceBlocks} onClose={() => setTraceOpen(false)} />
+          <TraceInspector
+            blocks={traceBlocks}
+            onClose={() => setTraceOpen(false)}
+            onTestsChange={onUpdateBlockTests}
+          />
         ) : null}
         {stressOpen ? (
           <StressBench
@@ -10389,6 +10437,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             >
               HOLD
             </button>
+          </div>
+        ) : null}
+        {meterReadout?.why !== undefined ? (
+          <div
+            style={{
+              position: 'absolute',
+              top: 55,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 35,
+              width: 260,
+            }}
+          >
+            <WhyPanel system={meterReadout.why} title="Why this meter reading" />
           </div>
         ) : null}
 
@@ -10715,11 +10777,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             title: 'Properties',
             visible: true,
             content: selectedWire ? (
-              <WireInspector
-                wire={selectedWire}
-                onGauge={(gaugeAwg) => onEditWireGauge(selectedWire.id, gaugeAwg)}
-                onMaterial={(material) => onEditWireMaterial(selectedWire.id, material)}
-              />
+              <div style={{ display: 'grid', gap: 12 }}>
+                {selectedNet ? <NetInspector inspection={selectedNet} /> : null}
+                <WireInspector
+                  wire={selectedWire}
+                  onGauge={(gaugeAwg) => onEditWireGauge(selectedWire.id, gaugeAwg)}
+                  onMaterial={(material) => onEditWireMaterial(selectedWire.id, material)}
+                />
+              </div>
             ) : selectedBlock && selectedNode ? (
               <BlockInspector
                 ports={selectedBlock.ports}
@@ -10865,6 +10930,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   index={timelineIndex}
                   onIndex={setTimelineIndex}
                   light={light}
+                  replay={timelineReplay}
+                  onReplayIndex={setTimelineIndex}
                 />
                 <button
                   type="button"

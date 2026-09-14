@@ -3,6 +3,8 @@ import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { detectFailures } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { asBlockId, asDiagnosticId, type RuntimeWhySystem } from '../runtime-contracts.ts'
+import { mergeWhySystems, whyForDiagnostic, whySystemFor } from '../runtime-why.ts'
 import { acrossVolts, bulbFilamentTemperatureC } from '../thermal-model.ts'
 import type { ContentionFinding } from './output-contention.ts'
 
@@ -25,6 +27,7 @@ export type NodeHealth = {
   /** A non-fatal caution (e.g. a shared-bus output combination that needs care) — amber, no burst. */
   warned?: boolean
   note?: string
+  why?: RuntimeWhySystem
 }
 
 /** Default LED peak wavelength (nm) when an instance declares none — red AlGaInP. */
@@ -134,9 +137,34 @@ export function canvasHealth(
   for (const inst of world.instances.values()) {
     const failure = failures.get(inst.id)
     if (failure) {
+      const target = { blockId: asBlockId(failure.source) }
+      const diagnostic = {
+        id: asDiagnosticId(`failure-${failure.source}-${failure.code}`),
+        code: failure.code,
+        severity: 'error' as const,
+        state: 'failed' as const,
+        message: `${failure.source}: ${failure.kind.replace(/_/g, ' ')} is ${failure.ratio.toFixed(1)}× over its rated limit.`,
+        target,
+        repair: {
+          action: 'select' as const,
+          message: 'Select this part and reduce its stress or increase the declared rating.',
+          target,
+        },
+      }
       health.set(inst.id, {
         failed: true,
         note: `${failure.ratio.toFixed(1)}× over ${failure.kind.replace(/_/g, ' ')}`,
+        why: whySystemFor([
+          whyForDiagnostic(diagnostic, {
+            deviceState: {
+              kind: 'device-state',
+              label: inst.id,
+              state: 'failed',
+              target,
+              detail: diagnostic.message,
+            },
+          }),
+        ]),
       })
       continue
     }
@@ -195,9 +223,36 @@ export function contentionHealth(findings: ContentionFinding[]): Map<string, Nod
   const map = new Map<string, NodeHealth>()
   for (const finding of findings) {
     for (const { nodeId } of finding.pins) {
-      if (finding.severity === 'error') map.set(nodeId, { failed: true, note: finding.message })
+      const target = { blockId: asBlockId(nodeId) }
+      const state = finding.severity === 'error' ? ('failed' as const) : ('waiting' as const)
+      const diagnostic = {
+        id: asDiagnosticId(`contention-${finding.code}-${nodeId}`),
+        code: finding.code,
+        severity: finding.severity,
+        state,
+        message: finding.message,
+        target,
+        repair: {
+          action: 'select' as const,
+          message: 'Select the affected outputs and inspect their shared net.',
+          target,
+        },
+      }
+      const why = whySystemFor([
+        whyForDiagnostic(diagnostic, {
+          source: { kind: 'source', label: nodeId, state: 'complete', target },
+          deviceState: {
+            kind: 'device-state',
+            label: 'shared output net',
+            state,
+            detail: finding.message,
+          },
+        }),
+      ])
+      if (finding.severity === 'error')
+        map.set(nodeId, { failed: true, note: finding.message, why })
       else if (map.get(nodeId)?.failed !== true)
-        map.set(nodeId, { warned: true, note: finding.message })
+        map.set(nodeId, { warned: true, note: finding.message, why })
     }
   }
   return map
@@ -218,12 +273,14 @@ export function mergeHealth(
       continue
     }
     const failed = bh.failed === true || oh.failed === true
+    const why = mergeWhySystems([bh.why, oh.why])
     out.set(id, {
       ...bh,
       ...oh,
       failed,
       warned: (bh.warned === true || oh.warned === true) && !failed,
       note: [bh.note, oh.note].filter(Boolean).join(' · '),
+      ...(why === undefined ? {} : { why }),
     })
   }
   return out

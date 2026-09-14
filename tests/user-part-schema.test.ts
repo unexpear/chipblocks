@@ -11,6 +11,7 @@ import AjvModule from 'ajv/dist/2020.js'
 import addFormatsModule from 'ajv-formats'
 import { describe, expect, test } from 'vitest'
 import { validateUserPart } from '../src/renderer/user-part-validate.ts'
+import { OPAMP_SYMBOL, opampPart, plainOpampPart } from './drawn-symbol-fixture.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: CJS interop for Ajv default export
 const Ajv = (AjvModule as any).default ?? AjvModule
@@ -170,6 +171,152 @@ const agreementCases: { label: string; part: unknown; ok: boolean }[] = [
     part: { ...valid(), parameters: { Vcc: { value: { kind: 'scalar', amount: 5, unit: 'V' } } } },
     ok: false,
   },
+  {
+    label: 'a pin that names the footprint pad it solders to',
+    part: {
+      ...valid(),
+      pins: [{ id: 'in', name: 'IN', side: 'left', electrical: 'input', pad: '3' }],
+    },
+    ok: true,
+  },
+  {
+    label: 'a pin pad that is not a string',
+    part: {
+      ...valid(),
+      pins: [{ id: 'in', name: 'IN', side: 'left', electrical: 'input', pad: 3 }],
+    },
+    ok: false,
+  },
+  {
+    label: 'a datasheet link',
+    part: { ...valid(), datasheet: 'https://example.com/ds.pdf' },
+    ok: true,
+  },
+  { label: 'a datasheet that is not text', part: { ...valid(), datasheet: 42 }, ok: false },
+  { label: 'a drawn symbol', part: opampPart(), ok: true },
+]
+
+// Symbol cases: the rest of the part is fine, so the schema's verdict on the whole part must match
+// whether the runtime KEEPS the drawing (the runtime keeps the part either way — see the next block).
+const symbolCases: { label: string; symbol: unknown; ok: boolean }[] = [
+  { label: 'the op-amp drawing', symbol: OPAMP_SYMBOL, ok: true },
+  {
+    label: 'every pin style and every fill',
+    symbol: {
+      ...OPAMP_SYMBOL,
+      graphics: [
+        ...OPAMP_SYMBOL.graphics,
+        { kind: 'circle', center: { x: 10, y: 0 }, radius: 4, strokeWidth: 1, fill: 'outline' },
+        {
+          kind: 'arc',
+          start: { x: 0, y: -10 },
+          mid: { x: 10, y: 0 },
+          end: { x: 0, y: 10 },
+          strokeWidth: 1,
+          fill: 'none',
+        },
+        {
+          kind: 'rectangle',
+          start: { x: 0, y: -5 },
+          end: { x: 5, y: 5 },
+          strokeWidth: 1,
+          fill: 'none',
+        },
+        { kind: 'text', at: { x: 20, y: 0 }, text: 'A', size: 8, angle: 90 },
+      ],
+      pins: OPAMP_SYMBOL.pins.map((p, i) => ({
+        ...p,
+        style: ['line', 'inverted', 'clock', 'inverted_clock', 'line'][i],
+      })),
+    },
+    ok: true,
+  },
+  {
+    label: 'an unknown shape kind',
+    symbol: { ...OPAMP_SYMBOL, graphics: [{ kind: 'bezier' }] },
+    ok: false,
+  },
+  {
+    label: 'an unknown pin style',
+    symbol: { ...OPAMP_SYMBOL, pins: OPAMP_SYMBOL.pins.map((p) => ({ ...p, style: 'input_low' })) },
+    ok: false,
+  },
+  {
+    label: 'a zero line width',
+    symbol: {
+      ...OPAMP_SYMBOL,
+      graphics: [{ ...(OPAMP_SYMBOL.graphics[0] as object), strokeWidth: 0 }],
+    },
+    ok: false,
+  },
+  {
+    label: 'an unknown fill',
+    symbol: {
+      ...OPAMP_SYMBOL,
+      graphics: [{ ...(OPAMP_SYMBOL.graphics[0] as object), fill: 'solid' }],
+    },
+    ok: false,
+  },
+  {
+    label: 'a one-point line',
+    symbol: {
+      ...OPAMP_SYMBOL,
+      graphics: [{ ...(OPAMP_SYMBOL.graphics[0] as object), points: [{ x: 0, y: 0 }] }],
+    },
+    ok: false,
+  },
+  {
+    label: 'only text, no body',
+    symbol: { ...OPAMP_SYMBOL, graphics: [OPAMP_SYMBOL.graphics[1]] },
+    ok: false,
+  },
+  {
+    label: 'blank text',
+    symbol: {
+      ...OPAMP_SYMBOL,
+      graphics: [
+        ...OPAMP_SYMBOL.graphics,
+        { kind: 'text', at: { x: 0, y: 0 }, text: ' ', size: 8 },
+      ],
+    },
+    ok: false,
+  },
+  {
+    label: 'a text angle other than 0 or 90',
+    symbol: {
+      ...OPAMP_SYMBOL,
+      graphics: [
+        ...OPAMP_SYMBOL.graphics,
+        { kind: 'text', at: { x: 0, y: 0 }, text: 'A', size: 8, angle: 45 },
+      ],
+    },
+    ok: false,
+  },
+  {
+    label: 'an inverted pin too short for its bubble',
+    symbol: {
+      ...OPAMP_SYMBOL,
+      pins: OPAMP_SYMBOL.pins.map((p) =>
+        p.pin === 'out' ? { ...p, style: 'inverted', length: 5, at: { x: 65, y: 0 } } : p,
+      ),
+    },
+    ok: false,
+  },
+  {
+    label: 'a missing field',
+    symbol: { ...OPAMP_SYMBOL, fields: { ...OPAMP_SYMBOL.fields, value: undefined } },
+    ok: false,
+  },
+  {
+    label: 'a field that does not say whether it shows',
+    symbol: { ...OPAMP_SYMBOL, fields: { ...OPAMP_SYMBOL.fields, value: { at: { x: 0, y: 0 } } } },
+    ok: false,
+  },
+  {
+    label: 'a zero-length pin',
+    symbol: { ...OPAMP_SYMBOL, pins: OPAMP_SYMBOL.pins.map((p) => ({ ...p, length: 0 })) },
+    ok: false,
+  },
 ]
 
 describe('user-part.schema.json (ajv, the same rigor as the catalog)', () => {
@@ -182,6 +329,103 @@ describe('user-part.schema.json (ajv, the same rigor as the catalog)', () => {
   test('the schema forbids unknown top-level keys (additionalProperties:false)', () => {
     expect(validateSchema({ ...valid(), bogus: 1 })).toBe(false)
   })
+})
+
+describe('a drawn symbol: the schema and the loader agree on the drawing', () => {
+  for (const c of symbolCases) {
+    const part = { ...opampPart(), symbol: c.symbol }
+    test(`schema ${c.ok ? 'accepts' : 'rejects'}: ${c.label}`, () => {
+      expect(validateSchema(part)).toBe(c.ok)
+    })
+    test(`runtime ${c.ok ? 'keeps' : 'sets aside'} the drawing: ${c.label}`, () => {
+      const loaded = validateUserPart(part)
+      expect(loaded).not.toBeNull() // the PART always loads — only a bad picture is lost
+      expect(loaded?.symbol !== undefined).toBe(c.ok)
+    })
+  }
+
+  test('a drawing round-trips through the loader unchanged', () => {
+    expect(validateUserPart(opampPart())).toEqual(opampPart())
+  })
+
+  test('a set-aside drawing costs nothing else: pins, ids and order are exactly as saved', () => {
+    const loaded = validateUserPart({ ...opampPart(), symbol: { graphics: 'scribble' } })
+    expect(loaded).toEqual(plainOpampPart())
+  })
+
+  test('a blank datasheet is "none given", and a real one is kept trimmed', () => {
+    expect(validateUserPart({ ...valid(), datasheet: '   ' })).toEqual(valid())
+    expect(validateUserPart({ ...valid(), datasheet: ' ds.pdf ' })?.datasheet).toBe('ds.pdf')
+  })
+})
+
+describe('the drawn-symbol rules JSON Schema cannot express (the loader is stricter, and drops the drawing)', () => {
+  const pinMoved = (pinId: string, at: { x: number; y: number }) => ({
+    ...OPAMP_SYMBOL,
+    pins: OPAMP_SYMBOL.pins.map((p) => (p.pin === pinId ? { ...p, at } : p)),
+  })
+  const cases: { label: string; symbol: unknown }[] = [
+    {
+      label: 'a tip pulled inside the body (off its outer edge)',
+      symbol: pinMoved('out', { x: 40, y: 0 }),
+    },
+    {
+      label: 'a pin of the part left undrawn',
+      symbol: { ...OPAMP_SYMBOL, pins: OPAMP_SYMBOL.pins.slice(1) },
+    },
+    {
+      label: 'a drawn pin that is not one of the part’s',
+      symbol: {
+        ...OPAMP_SYMBOL,
+        pins: [
+          ...OPAMP_SYMBOL.pins,
+          { pin: 'ghost', at: { x: 0, y: 0 }, length: 5, style: 'line' },
+        ],
+      },
+    },
+    {
+      label: 'an arc whose three points sit on one line',
+      symbol: {
+        ...OPAMP_SYMBOL,
+        graphics: [
+          ...OPAMP_SYMBOL.graphics,
+          {
+            kind: 'arc',
+            start: { x: 0, y: 0 },
+            mid: { x: 1, y: 1 },
+            end: { x: 2, y: 2 },
+            strokeWidth: 1,
+            fill: 'none',
+          },
+        ],
+      },
+    },
+    {
+      label: 'a rectangle with no height',
+      symbol: {
+        ...OPAMP_SYMBOL,
+        graphics: [
+          ...OPAMP_SYMBOL.graphics,
+          {
+            kind: 'rectangle',
+            start: { x: 0, y: 5 },
+            end: { x: 9, y: 5 },
+            strokeWidth: 1,
+            fill: 'none',
+          },
+        ],
+      },
+    },
+  ]
+  for (const c of cases) {
+    test(`${c.label}: schema accepts, loader keeps the part but not the drawing`, () => {
+      const part = { ...opampPart(), symbol: c.symbol }
+      expect(validateSchema(part)).toBe(true)
+      const loaded = validateUserPart(part)
+      expect(loaded).not.toBeNull()
+      expect(loaded?.symbol).toBeUndefined()
+    })
+  }
 })
 
 describe('validateUserPart (runtime) agrees with the schema', () => {

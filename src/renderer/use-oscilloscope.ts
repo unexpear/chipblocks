@@ -11,6 +11,7 @@ import type { World } from '../cross-fk-validator.ts'
 import { solveTransientThermal } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { worldWithCastLight } from '../light.ts'
+import { measurementWhy, mergeWhySystems } from '../runtime-why.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { transientRan } from '../transient-solver.ts'
 import { groundedComponent } from './canvas-to-world.ts'
@@ -116,9 +117,26 @@ export function useOscilloscope(deps: {
       duration: windowSec * 3,
       projectAmbientC: projectAmbientRef.current,
     })
+    const scopeWhy = measurementWhy(
+      'scope',
+      'scope-run',
+      thermal.result.status,
+      thermal.result.status === 'solved'
+        ? `Scope captured ${thermal.result.series.length} solved samples.`
+        : `Scope could not capture a complete run: ${thermal.result.status}.`,
+    )
+    const combinedWhy = mergeWhySystems([thermal.result.analysis?.why, scopeWhy]) ?? scopeWhy
     setScopeResult({
       ...thermal.result,
       warnings: [...thermal.result.warnings, ...thermal.warnings],
+      ...(thermal.result.analysis === undefined
+        ? {}
+        : {
+            analysis: {
+              ...thermal.result.analysis,
+              why: combinedWhy,
+            },
+          }),
     })
     // CRT live traces (the spot's locus over this run) for any tube in the circuit — the inspector's
     // screen draws them instead of the single DC spot once the scope has run.

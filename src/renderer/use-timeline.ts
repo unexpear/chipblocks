@@ -7,6 +7,7 @@ import { worldWithCastLight } from '../light.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { transientRan } from '../transient-solver.ts'
 import { groundedComponent } from './canvas-to-world.ts'
+import { buildTimelineCausalReplay } from './causal-replay.ts'
 import { computeFront } from './front-propagation.ts'
 import type { FrontState } from './net-edge.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
@@ -147,6 +148,16 @@ export function useTimeline(deps: {
   }, [frontMode, timelineOpen, timelineIndex, frontSeries, frontData])
   // The panel plays the transient normally, or the front sweep when front mode is on.
   const displayResult = frontMode ? frontSeries : timelineResult
+  const timelineReplay = useMemo(() => {
+    if (frontMode) return null
+    const labels = new Map(
+      nodes.map((node) => {
+        const data = node.data as { block?: { name?: string }; label?: string }
+        return [node.id, data.label ?? data.block?.name ?? node.id]
+      }),
+    )
+    return buildTimelineCausalReplay(timelineResult, [...solvedWorld.instances.values()], labels)
+  }, [frontMode, nodes, solvedWorld, timelineResult])
 
   // The timeline runs its OWN transient record — independent of the scope, so opening the
   // timeline never pops the scope open (or leaves it lingering when closed). Same physics
@@ -188,5 +199,6 @@ export function useTimeline(deps: {
     frameEdges,
     frontState,
     displayResult,
+    timelineReplay,
   }
 }

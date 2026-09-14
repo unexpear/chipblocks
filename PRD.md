@@ -2,6 +2,8 @@
 
 > **Status:** Draft v2.0 (post-reset; supersedes the v1 PRD which lives on `legacy/audio-synth-direction`) · Date: 2026-05-16 · Author: User + Claude Code
 
+> Live implementation status and measured verification gates are maintained in [PROJECT-STATUS.md](PROJECT-STATUS.md). This PRD describes product intent; it is not the source of truth for test counts.
+
 ## Problem Statement
 
 Electronics design — from simple circuits to PCBs to integrated circuits — is locked behind expensive, complex, fragmented tools. Cadence and Synopsys cost $50K-$1M per seat. KiCad and FreeCAD are powerful but assume you know what you're doing. Hobbyist tools (Tinkercad, Fritzing, Cirkit Designer) only cover Arduino-style projects and never go below the module level. Tools that claim "AI-powered chip design" (ChipFoundry, ChipInventor) wrap existing flows behind paywalls.
@@ -127,7 +129,8 @@ ChipBlocks fills the gap: real blocks built from materials and geometry, composa
 ### P1 — Nice to Have
 
 - Anomaly database (ground bounce, EMI, ESD, thermal runaway patterns) with trigger-condition mapping
-- More physics solvers (discrete-time transient, eventually ngspice integration for continuous-time)
+- Higher-fidelity solver options (eventually ngspice integration for continuous-time validation alongside
+  the shipped in-app discrete-time transient solver)
 - More fab targets (FPGA bitstreams, Tiny Tapeout, eFabless shuttle tiers, KiCad PCB export)
 - Community library marketplace (`chipblocks-audio`, `chipblocks-peripherals`, `chipblocks-cpus`, `chipblocks-radios`, `chipblocks-video`)
 - Web-based version (browser-only)
@@ -180,7 +183,8 @@ These were decided in the run-up to the reset and are locked unless something fo
 
 Still open:
 
-- Will we eventually integrate a real SPICE simulator (ngspice) or stay with the in-app deterministic engine? (My lean: eventually integrate ngspice for transient analysis when users push beyond steady-state needs.)
+- Will we eventually integrate a real SPICE simulator (ngspice) alongside the in-app deterministic engine?
+  (The in-app transient solver already exists; ngspice would be an optional higher-fidelity validation path.)
 - How granular should the anomaly database be at v1? (My lean: framework + 0 entries at v1; populate as community contributions land.)
 - When does PCB layout integration land — KiCad export for v1.x or full in-app PCB later? (My lean: KiCad export at v1.x; full in-app PCB is a v2+ ambition.)
 
@@ -197,6 +201,7 @@ Still open:
 
 **Schedule risks:**
 - The visual editor is the make-or-break problem. KiCad has decades of polish; we have one solo dev + AI. Get the canvas right or nothing else matters.
-- Physics correctness is research-grade work. We stop at DC steady-state at v1; ngspice integration is a multi-sprint future investment.
+- Physics correctness is research-grade work. The shipped v1 path includes deterministic DC and transient
+  analysis; ngspice integration remains a multi-sprint optional higher-fidelity investment.
 - Solo + non-technical means Claude Code reliability matters; Anthropic API outages or capability changes could slow specific weeks. The multi-provider AI architecture mitigates lock-in.
 - **Burnout** — solo 12+ month projects often die at month 9 when the early excitement fades. Plan for sustainability: regular breaks, public progress posts, community engagement before it's needed.

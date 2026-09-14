@@ -57,17 +57,29 @@ export function slug(text: string): string {
     .replace(/^_+|_+$/g, '')
 }
 
-/** Generate a unique terminal id per pin — the slug of its name, or pinN, deduped within the part. */
-function pinIds(pins: PinInput[]): string[] {
-  const used = new Set<string>()
-  return pins.map((pin, i) => {
-    const base = slug(pin.name) || `pin${i + 1}`
+/**
+ * THE rule that names pins: each new pin's terminal id is the slug of its name, or pinN (N = its place in
+ * the part), never an id already `taken` nor one handed out earlier in the same call. The New Part form
+ * mints every pin with it; the symbol editor mints only the pins it adds, with the part's existing ids as
+ * `taken` — so a pin that already has an id (and the wires, behaviour and pads keyed off it) keeps it.
+ */
+export function mintPinIds(
+  pins: readonly { name: string; index: number }[],
+  taken: Iterable<string> = [],
+): string[] {
+  const used = new Set(taken)
+  return pins.map(({ name, index }) => {
+    const base = slug(name) || `pin${index + 1}`
     let id = base
     let n = 2
     while (used.has(id)) id = `${base}_${n++}`
     used.add(id)
     return id
   })
+}
+
+function pinIds(pins: PinInput[]): string[] {
+  return mintPinIds(pins.map((pin, index) => ({ name: pin.name, index })))
 }
 
 export type DraftResult = { ok: true; part: UserPart } | { ok: false; error: string }

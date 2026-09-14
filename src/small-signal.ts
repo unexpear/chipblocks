@@ -101,6 +101,8 @@ export type MosfetSmallSignal = {
   gm: number
   /** dI_D/dV_DS — the output conductance g_ds (siemens). */
   gds: number
+  /** Lumped gate-input capacitance (farads), using the declared C_iss-class value. */
+  gateCapacitance: number
 }
 
 function resolveFetLike(inst: Instance, temperatureC?: number): MosfetElement | null {
@@ -124,8 +126,10 @@ function resolveFetLike(inst: Instance, temperatureC?: number): MosfetElement | 
  * MOSFET / JFET / constant-current-diode small-signal model for AC, linearized at the DC operating
  * point. g_m and g_ds come straight from the same operating-point Jacobian the DC companion uses
  * (mosfetOperatingPoint), so AC and DC stay consistent by construction. The gate draws no DC current
- * (an ideal insulated gate), so there is no input conductance; gate capacitance is a future addition,
- * like the BJT's. Returns null for a non-FET instance or one missing parameters.
+ * (an ideal insulated gate), but its declared gate_capacitance is included as a lumped gate-to-source
+ * input capacitance. This uses the shipped C_iss-class value honestly; separate C_gd/Miller behavior can
+ * be added when the catalog carries those separate values. Returns null for a non-FET instance or one
+ * missing parameters.
  */
 export function mosfetSmallSignalModel(
   inst: Instance,
@@ -143,6 +147,7 @@ export function mosfetSmallSignalModel(
     sourceNet: fet.sourceNet,
     gm: op.gm,
     gds: op.gds,
+    gateCapacitance: readScalarParam(inst, 'gate_capacitance') ?? 0,
   }
 }
 

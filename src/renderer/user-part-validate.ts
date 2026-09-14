@@ -1,6 +1,7 @@
 import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
 import type { PinElectrical, PinSide, UserPart } from './user-parts.ts'
+import { validateDrawnSymbol } from './user-symbol-validate.ts'
 
 /**
  * The runtime validator for a persisted user part (user-made parts, slice 3). It mirrors
@@ -10,10 +11,15 @@ import type { PinElectrical, PinSide, UserPart } from './user-parts.ts'
  *
  * IMPORTANT: this module must stay import-pure (no @xyflow / React value imports) — `circuit-file.ts`
  * pulls it in, and that file is imported by the Electron MAIN (Node) process, which can't load React.
- * The UserPart / Pin* imports above are TYPE-ONLY (erased at compile), so nothing React reaches Node.
+ * The UserPart / Pin* imports above are TYPE-ONLY (erased at compile), and the one value import — the
+ * drawn-symbol validator — is import-pure by the same rule, so nothing React reaches Node.
  *
  * It is strict on the shape of known fields (a bad id/pin/param → the part is rejected, i.e. dropped on
  * load, never half-loaded) and lenient on UNKNOWN keys (ignored, so a newer file still loads its parts).
+ *
+ * The one exception is the DRAWN SYMBOL: a drawing that breaks a rule is set aside and the part keeps
+ * everything else, drawing as its plain labelled box. The drawing is only a picture, so losing it must
+ * never cost a working part — nor the wires already landed on that part's pins.
  */
 
 const ID_RE = /^[a-z0-9](?:[a-z0-9_]*[a-z0-9])?$/
@@ -215,6 +221,9 @@ export function validateUserPart(raw: unknown): UserPart | null {
     return null
   }
   if (raw.description !== undefined && typeof raw.description !== 'string') return null
+  if (raw.datasheet !== undefined && typeof raw.datasheet !== 'string') return null
+  // A blank datasheet is "none given", not a link to the empty string — the same rule as a blank pad.
+  const datasheet = typeof raw.datasheet === 'string' ? raw.datasheet.trim() : ''
   if (
     raw.footprintId !== undefined &&
     (typeof raw.footprintId !== 'string' || raw.footprintId.length < 1)
@@ -259,15 +268,19 @@ export function validateUserPart(raw: unknown): UserPart | null {
   // A part simulates ONE way: as a single device (behavesAs) or as its internal circuit — never both.
   if (behavesAs !== undefined && internal !== undefined) return null
 
+  const symbol = raw.symbol === undefined ? null : validateDrawnSymbol(raw.symbol, pins)
+
   return {
     id: raw.id,
     name: raw.name,
     designatorPrefix: raw.designatorPrefix,
     ...(typeof raw.description === 'string' ? { description: raw.description } : {}),
+    ...(datasheet.length > 0 ? { datasheet } : {}),
     ...(typeof raw.footprintId === 'string' ? { footprintId: raw.footprintId } : {}),
     ...(behavesAs ? { behavesAs } : {}),
     ...(internal ? { internal } : {}),
     pins,
+    ...(symbol ? { symbol } : {}),
     ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
   }
 }

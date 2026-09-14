@@ -2,7 +2,10 @@
 
 > The forward plan to make ChipBlocks a **full, KiCad-equivalent design toolchain** — every tool KiCad
 > has, but with always-on live simulation underneath. Started 2026-06-24 after walking KiCad 10's
-> launcher tool-by-tool ("i want them all"). Status checked against the real app + catalog, not prose.
+> launcher tool-by-tool ("i want them all"). Status last checked 2026-09-14 against the real app + catalog,
+> not prose.
+
+Canonical measured implementation status and verification gates: [PROJECT-STATUS.md](PROJECT-STATUS.md).
 
 ## The target — KiCad's nine tools, mapped
 
@@ -11,14 +14,14 @@
 | Schematic Editor | draw the circuit | ✅ **have** — + always-on live sim (KiCad invokes ngspice on request; ours is live) |
 | Calculator Tools | trace width, resistor values, … | ✅ **have** — the Math panel, computed on your REAL live circuit |
 | Drawing Sheet Editor | page border + title block | ✅ **have** — just added |
-| Symbol Editor | author a part's schematic symbol | ◐ catalog accepts user parts (4 origins); no in-app authoring UI |
+| Symbol Editor | author a part's schematic symbol | ✅ **have** — in-app authoring from the New Part dialog; saved drawings persist with user parts |
 | Plugin & Content Manager | install community libraries | ◐ catalog is origin-extensible; no install UI |
-| Footprint Editor | a part's physical pads / outline | ❌ the foundational physical gap |
-| PCB Editor | place parts + route copper | ❌ the big unbuilt half |
+| Footprint Editor | a part's physical pads / outline | ✅ **have** — in-app pad/courtyard authoring with validation and persistence |
+| PCB Editor | place parts + route copper | ◐ board workspace, placement, routing, DRC, and fab export are mounted; broader PCB parity remains |
 | Gerber Viewer | check the factory files | ❌ — the "manufacturing ZIP" (second deliverable) |
 | Image Converter | logo → symbol / footprint | ❌ niche |
 
-Have 3 (deeper than KiCad on each), 2 half-there (only the UI is missing), 4 to build.
+Have 5 (deeper than KiCad on each), 2 half-there, 2 to build.
 
 ## Track 1 — the manufacturing spine (the board road; the prize)
 
@@ -38,8 +41,8 @@ already have; ticks the PRD's defining metric (an outside user exports a manufac
 
 ## Track 2 — authoring & extensibility (parallel; reuses Track 1's rendering)
 
-5. **User-made parts** — in-app Symbol + Footprint authoring (the catalog already accepts user parts;
-   this is the missing UI). A flagged frontier.
+5. **User-made parts** — in-app Symbol + Footprint authoring is shipped; continue tightening the shared
+   library and edit/reload flows.
 6. **Plugin / Content Manager** — install community catalogs (community/user origins exist; the install
    UI doesn't).
 
@@ -155,8 +158,9 @@ neither level has both:
   literals (`footprint.ts` `BUILTIN_FOOTPRINTS`), assigned per device-kind (`footprint-assignment.ts`
   `PART_FOOTPRINTS`, e.g. resistor → 0603), and `deriveBoard` (`pcb-board.ts:206`, live in an App
   useMemo at `App.tsx:3545`) re-projects them onto the board on *every* edit — the board is always a
-  rotate+translate of fixed footprint geometry plus an auto-fit outline. But there is **no editor**:
-  `footprint-view.tsx` is a read-only viewer; the inspector only *picks* from the fixed set.
+  rotate+translate of footprint geometry plus an auto-fit outline. The in-app `footprint-editor.tsx`
+  now authors pads and courtyard geometry, validates it, and persists user footprints; the remaining
+  work is richer board/fabrication parity.
 - The **chip** already does *place → derive*: a standard cell's geometry is **computed from the gates it
   contains** (`cell-polygons.ts` / `cell-layout.ts` — Euler-path netlist → per-mask rectangles), not
   authored. On the chip side the footprint-analog is already auto-derived from what you built.
@@ -166,10 +170,8 @@ that can be *authored* OR *derived*, always present, always matching.
 
 **Three gaps to close:**
 
-1. **No authoring surface.** You can't create/edit a footprint's pads/silk/courtyard — only pick a
-   built-in. (One whole direction is missing on the board side.) Natural home: the user-part editor
-   (`user-part-editor.tsx`) + a new user/project-origin footprint store layered *under*
-   `BUILTIN_FOOTPRINTS` as a fallback, resolved through `footprintForPart` (`footprint-assignment.ts:79`).
+1. **Authoring parity.** Symbol and footprint authoring surfaces now exist. Remaining work is to make
+   edit/reload flows and terminal→pad assignment equally complete for every user-part path.
 2. **"A footprint always exists" isn't guaranteed.** Device kinds not in `PART_FOOTPRINTS` (op-amp,
    switch, transformer, circuit blocks, ill-fitting user parts) resolve to `undefined`, and `deriveBoard`
    **silently skips** them (`pcb-board.ts:224` `if (fp === undefined) continue`) — surfaced as "N wired
@@ -183,6 +185,6 @@ that can be *authored* OR *derived*, always present, always matching.
    placement with no other change. An authored footprint also needs a terminal→pad map (today
    `TERMINAL_PADS` is hand-authored per device kind).
 
-Extends the **Footprint Editor** row above (❌ the foundational physical gap) and **Track 2 item 5**
-(footprint authoring), and ties into the "edit on the canvas, not in side dialogs" preference — authoring
-a footprint should happen *on* a canvas. Not started; captured so it isn't lost.
+Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
+the "edit on the canvas, not in side dialogs" preference. The next increment is richer two-way syncing,
+not the initial editor surface.

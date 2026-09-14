@@ -1,3 +1,10 @@
+import type {
+  CircuitDomain,
+  PortDirection,
+  DriveKind as RuntimeDriveKind,
+  TerminalRole,
+  Unit,
+} from '../runtime-contracts.ts'
 import { tooBigCanvasToDrawReason } from './canvas-capacity.ts'
 import type { Parameters } from './part-defaults.ts'
 
@@ -34,7 +41,7 @@ export type GateSymbol = 'and' | 'or' | 'nand' | 'nor' | 'xor' | 'xnor' | 'not' 
  * pull-up), and tri-state (can switch to high-Z to share a bus). Inputs and unspecified pins never
  * drive, so they never contend.
  */
-export type DriveKind = 'input' | 'push_pull' | 'open_collector' | 'tristate'
+export type DriveKind = RuntimeDriveKind
 const OUTPUT_DRIVES: ReadonlySet<DriveKind> = new Set<DriveKind>([
   'push_pull',
   'open_collector',
@@ -55,6 +62,10 @@ export type BlockPort = {
   kind?: PinKind
   /** Signal direction / drive type — the basis of the output-combining (driver-contention) checks. */
   drive?: DriveKind
+  domain?: CircuitDomain
+  role?: TerminalRole
+  direction?: PortDirection
+  unit?: Unit
   /** For a tri-state OUTPUT pin: which pin enables it (a pin id on this block) + its active level. The
    *  live check counts how many tri-states on a shared bus are enabled at once (≥2 = real contention). */
   enable?: { pin: string; activeHigh: boolean }
@@ -89,6 +100,14 @@ export type BlockInnerEdge = {
   curveRadius?: number
 }
 
+export type BlockTestCase = {
+  id: string
+  name: string
+  cycles: number
+  inputs: Record<string, number>
+  expected: Record<string, number[]>
+}
+
 export type BlockData = {
   name: string
   /** The block node's position when grouped — ungroup offsets internals by the displacement. */
@@ -96,6 +115,7 @@ export type BlockData = {
   nodes: BlockInnerNode[]
   edges: BlockInnerEdge[]
   ports: BlockPort[]
+  tests?: BlockTestCase[]
   /** A special on-canvas rendering for this block instead of the plain box. `seven_segment` draws a
    *  figure-8 digit whose segments light from the block's seven inner `led_<a..g>` parts;
    *  `seven_segment_multi` draws `digits` such digits with a decimal point + comma between each pair.
@@ -660,5 +680,16 @@ export function cloneBlockData(block: BlockData, suffix: string): BlockData {
       ...p,
       inner: { nodeId: rename(p.inner.nodeId), handleId: p.inner.handleId },
     })),
+    ...(block.tests
+      ? {
+          tests: block.tests.map((test) => ({
+            ...test,
+            inputs: { ...test.inputs },
+            expected: Object.fromEntries(
+              Object.entries(test.expected).map(([signal, values]) => [signal, [...values]]),
+            ),
+          })),
+        }
+      : {}),
   }
 }

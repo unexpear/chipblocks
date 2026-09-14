@@ -1,10 +1,11 @@
 import { Handle, type NodeProps, Position } from '@xyflow/react'
-import { Fragment, useContext, useEffect } from 'react'
+import { Fragment, useContext, useEffect, useSyncExternalStore } from 'react'
 import { SymbolStyleContext } from './symbol-style.tsx'
 import { THEME } from './theme.ts'
 import './canvas-animations.css'
 import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
+import { footprintForPart } from './footprint-assignment.ts'
 import { CrtScreenContext, HealthContext } from './health.ts'
 import {
   ENERGY_COLOR,
@@ -30,11 +31,11 @@ import {
   wiperFraction,
 } from './part-defaults.ts'
 import { formatEng } from './units.ts'
+import { DrawnSymbolFields, UserPartSymbol } from './user-part-glyphs.tsx'
 import {
-  type PinElectrical,
   resolveUserPart,
-  type UserPart,
-  userPartGeometry,
+  subscribeUserParts,
+  userPartDisplay,
   userPartTerminals,
 } from './user-parts.ts'
 
@@ -2326,102 +2327,6 @@ export type DeviceNodeData = {
   caveat?: string
 }
 
-// A user-authored part's electrical roles that get a filled pin dot (a source of drive), vs the hollow
-// dot every passive/input/bidirectional pin wears — a subtle read of which pins push current out.
-const DRIVING_PINS: ReadonlySet<PinElectrical> = new Set(['output', 'power_out'])
-
-/**
- * A user-authored part's symbol — a labelled box with a pin stub + name at each pin, drawn straight
- * from its pin spec (userPartGeometry). No hand-coded picture: a part that isn't in the code still
- * renders here, and because the glyph and the wire handles (userPartTerminals) read the SAME geometry
- * in the SAME node-box coordinate space, every handle lands exactly on its drawn pin tip.
- */
-export function UserPartGlyph({ part }: { part: UserPart }) {
-  const { width, height, body, pins } = userPartGeometry(part)
-  return (
-    <svg
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      aria-hidden="true"
-      style={{ display: 'block' }}
-    >
-      <rect
-        x={body.x}
-        y={body.y}
-        width={body.width}
-        height={body.height}
-        rx={3}
-        fill={THEME.surfaceRaised}
-        stroke={STROKE}
-        strokeWidth={1.6}
-      />
-      <text
-        x={body.x + body.width / 2}
-        y={body.y + body.height / 2}
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontSize={12}
-        fontFamily="system-ui, sans-serif"
-        fontWeight={600}
-        fill={STROKE}
-        // Squeeze an over-long name to fit the body (never stretch a short one) so it can't spill past
-        // the box — the box-width heuristic can under-guess a wide all-caps name.
-        {...(part.name.length * 8 > body.width - 12
-          ? { textLength: body.width - 12, lengthAdjust: 'spacingAndGlyphs' as const }
-          : {})}
-      >
-        {part.name}
-      </text>
-      {pins.map((p) => {
-        // The name label tucks just INSIDE the body next to the pin root.
-        const label =
-          p.side === 'left'
-            ? { x: p.rootX + 4, y: p.rootY, anchor: 'start' as const }
-            : p.side === 'right'
-              ? { x: p.rootX - 4, y: p.rootY, anchor: 'end' as const }
-              : p.side === 'top'
-                ? { x: p.rootX, y: p.rootY + 9, anchor: 'middle' as const }
-                : { x: p.rootX, y: p.rootY - 9, anchor: 'middle' as const }
-        const driving = DRIVING_PINS.has(p.electrical)
-        return (
-          <Fragment key={p.id}>
-            <line
-              x1={p.rootX}
-              y1={p.rootY}
-              x2={p.tipX}
-              y2={p.tipY}
-              stroke={STROKE}
-              strokeWidth={1.4}
-            />
-            <circle
-              cx={p.tipX}
-              cy={p.tipY}
-              r={2.4}
-              fill={driving ? STROKE : THEME.surfaceRaised}
-              stroke={STROKE}
-              strokeWidth={1.2}
-            />
-            {p.name && (
-              <text
-                x={label.x}
-                y={label.y}
-                textAnchor={label.anchor}
-                dominantBaseline="central"
-                fontSize={9}
-                fontFamily="system-ui, sans-serif"
-                fill={THEME.textFaint}
-              >
-                {p.name}
-              </text>
-            )}
-          </Fragment>
-        )
-      })}
-    </svg>
-  )
-}
-
 /**
  * The bare schematic symbol for a device definition (or a labeled fallback box
  * for kinds without a symbol yet), with no handles — shared by the canvas node
@@ -2431,11 +2336,14 @@ export function DeviceGlyph({
   definition,
   parameters,
   rotation = 0,
+  footprintId,
 }: {
   definition: string
   parameters?: Parameters
   /** The node's rotation — source circles counter-rotate their inner mark. */
   rotation?: number
+  /** The placed part's chosen package — a drawn symbol numbers its pins by the pads they land on. */
+  footprintId?: string
 }) {
   // The text note is an annotation, not a device: its glyph IS its text (multi-line), edited via
   // the note_text parameter in the Properties panel — the same string-parameter plumbing the net
@@ -2549,10 +2457,15 @@ export function DeviceGlyph({
   // and throw. hasOwn only matches a real glyph; anything else falls through to the user-part/name box.
   const Glyph = Object.hasOwn(GLYPHS, definition) ? GLYPHS[definition] : undefined
   if (Glyph) return <Glyph />
-  // A user-authored part draws its own labelled box from its pin spec (matching terminalsOf's handles),
-  // so a definition that isn't hardcoded here still renders instead of falling back to a bare name box.
+  // A user-authored part draws its own labelled box from its pin spec, or the symbol its author drew
+  // (either way matching terminalsOf's handles), so a definition that isn't hardcoded here still renders
+  // instead of falling back to a bare name box.
   const userPart = resolveUserPart(definition)
-  if (userPart !== undefined) return <UserPartGlyph part={userPart} />
+  if (userPart !== undefined) {
+    return (
+      <UserPartSymbol part={userPart} {...(footprintId !== undefined ? { footprintId } : {})} />
+    )
+  }
   return (
     <div
       style={{
@@ -2637,7 +2550,14 @@ function EnergyFlowHalo({ fraction, into }: { fraction: number; into: boolean })
  * + the instance id.
  */
 export function DeviceNode({ id, data }: NodeProps) {
-  const { definition, label, rotation = 0, parameters, caveat } = data as DeviceNodeData
+  const {
+    definition,
+    label,
+    rotation = 0,
+    parameters,
+    caveat,
+    footprintId,
+  } = data as DeviceNodeData
   const value = primaryValue(definition, parameters)
   const health = useContext(HealthContext).get(id)
   // A CRT renders as a real phosphor SCREEN on the canvas (not the tiny tube glyph): a wide TV face
@@ -2645,12 +2565,14 @@ export function DeviceNode({ id, data }: NodeProps) {
   // 5:2-ish width gives a raster enough horizontal room to resolve text (a row of characters).
   const crtScreen = useContext(CrtScreenContext).get(id)
   const isCrtScreen = definition === 'crt'
-  // A user-authored part sizes its box to its own pin-spec geometry, so the fixed W×H symbol box
-  // becomes a labelled pin box exactly as wide/tall as the drawn glyph (handles share its space).
-  const userPartDef = resolveUserPart(definition)
-  const userGeom = userPartDef ? userPartGeometry(userPartDef) : undefined
-  const boxW = isCrtScreen ? 240 : (userGeom?.width ?? W)
-  const boxH = isCrtScreen ? 88 : (userGeom?.height ?? H)
+  // A user-authored part sizes its box to its own geometry — the labelled pin box, or the symbol its
+  // author drew — so the fixed W×H symbol box becomes exactly as wide/tall as what is drawn (handles
+  // share its space). Subscribed, so a part saved again redraws every copy already placed.
+  const userPartDef = useSyncExternalStore(subscribeUserParts, () => resolveUserPart(definition))
+  const userDisplay = userPartDef ? userPartDisplay(userPartDef) : undefined
+  const drawnSymbol = userDisplay?.kind === 'drawn' ? userDisplay.drawn : undefined
+  const boxW = isCrtScreen ? 240 : (userDisplay?.width ?? W)
+  const boxH = isCrtScreen ? 88 : (userDisplay?.height ?? H)
   const lensState = useContext(LensContext)
   // Travelling-charge front: dim the part until the wave reaches it, so it lights up in turn
   // (the far bulb last). partArrival is its earliest terminal-arrival time; null = not in front mode.
@@ -2694,12 +2616,18 @@ export function DeviceNode({ id, data }: NodeProps) {
     energyW !== undefined && lensState.pMax > 0 ? Math.min(1, energyW / lensState.pMax) : 0
   const terminals = terminalsOf(definition, parameters)
   const updateNodeInternals = useCoalescedUpdateNodeInternals()
-  // After a rotation — or a lead-count change (a source's terminals are
-  // parameter-driven) — re-measure the handles so wires follow the terminals.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rotation + the terminal count are intentional re-run triggers — the effect must re-measure when they change, though it doesn't read them
+  // After a rotation — or any change to where the terminals sit (a source's lead count is
+  // parameter-driven; a user part saved again may move its pins) — re-measure the handles so wires
+  // follow the terminals. Keyed on the LAYOUT, not the count: a pin that moves while the count stays the
+  // same would otherwise leave React Flow's old handle position in place, and the wire meant for one pin
+  // would visibly land on another.
+  const terminalLayout = terminals
+    .map((t) => `${t.id}@${t.position}:${t.offset ?? ''}:${t.at ? `${t.at.x},${t.at.y}` : ''}`)
+    .join('|')
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rotation + the terminal layout are intentional re-run triggers — the effect must re-measure when they change, though it doesn't read them
   useEffect(() => {
     updateNodeInternals(id)
-  }, [id, rotation, terminals.length, updateNodeInternals])
+  }, [id, rotation, terminalLayout, updateNodeInternals])
   // The node box IS the glyph (W×H); handles sit on the glyph's lead line
   // (left/right ends at the vertical midline), so a wire connects at the symbol's
   // own drawn terminal — not at an offset box edge. The glyph + handles rotate
@@ -2834,6 +2762,7 @@ export function DeviceNode({ id, data }: NodeProps) {
             definition={definition}
             rotation={rotation}
             {...(parameters ? { parameters } : {})}
+            {...(footprintId ? { footprintId } : {})}
           />
         )}
         {/* Tap stubs (S19-v3-74): each tap lead pops radially out of the
@@ -2884,6 +2813,19 @@ export function DeviceNode({ id, data }: NodeProps) {
           </div>
         ) : null}
       </div>
+      {/* A drawn symbol places its own reference / value / footprint / datasheet text. */}
+      {drawnSymbol && userPartDef ? (
+        <DrawnSymbolFields
+          drawn={drawnSymbol}
+          rotation={rotation}
+          texts={{
+            reference: label,
+            value: value ?? userPartDef.name,
+            footprint: footprintForPart(definition, footprintId)?.id,
+            datasheet: userPartDef.datasheet,
+          }}
+        />
+      ) : null}
       {/* An annotation is its own drawing — no id caption underneath (it would read as part of it). */}
       {ANNOTATION_DEFINITIONS.has(definition) ? null : (
         <div
@@ -2898,8 +2840,14 @@ export function DeviceNode({ id, data }: NodeProps) {
             pointerEvents: 'none',
           }}
         >
-          {label}
-          {value ? <span style={{ color: THEME.accentBlue, marginLeft: 5 }}>{value}</span> : null}
+          {drawnSymbol ? null : (
+            <>
+              {label}
+              {value ? (
+                <span style={{ color: THEME.accentBlue, marginLeft: 5 }}>{value}</span>
+              ) : null}
+            </>
+          )}
           {lensState.lens === 'power' && watts !== undefined && watts > 0 ? (
             <span style={{ color: THEME.lensTemp, marginLeft: 5 }}>{formatEng(watts, 'W')}</span>
           ) : null}

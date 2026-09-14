@@ -77,7 +77,7 @@ import { propagationDelayS } from './transmission-line-model.ts'
  *   relay contact_resistance                         DC ✓   transient ✓   AC ✗  ← NOT AC
  *   scr gate_cathode_resistance                      DC ✓   transient ✓   AC ✗  ← NOT AC
  *   switch contact_resistance_closed                 DC ✗   transient ✗   AC ✗  ← NO ENGINE
- *   MOSFET gate_capacitance                          DC ✗   transient ✗   AC ✗  ← NO ENGINE
+ *   MOSFET gate_capacitance                          DC ✗   transient ✗   AC ✓  ← AC ONLY
  * So a capacitor declaring an ESR is lossy on the Bode / reflection / S-parameter plots and still LOSSLESS in
  * the time domain: its transient ripple and its scope trace show no ESR bump. That is a real gap, not a
  * rounding difference, and it is why the shipped electrolytic's cited tan δ moves the AC curves alone. The
@@ -136,8 +136,7 @@ type AcWinding = { plusIdx: number; minusIdx: number; resistance: number }
 type CoupledAcModel = {
   windings: AcWinding[]
   inductance: number[][]
-  /** Core loss as the classic resistance ACROSS the full primary (0 = not declared) — the same node pair the
-   *  transient engine puts it across, so it stamps as a plain conductance, not into a branch equation. */
+  /** Core loss as the classic linear small-signal AC shunt; transient uses the changing-flux branch. */
   coreResistance: number
   corePlusIdx: number
   coreMinusIdx: number
@@ -638,18 +637,6 @@ const AC_IGNORED_VALUES: Record<string, { parameter: string; reason: string }[]>
         'only the anode-cathode junction is linearised here, the DC and transient engines read it',
     },
   ],
-  transistor_mosfet_nmos: [
-    {
-      parameter: 'gate_capacitance',
-      reason: 'the small-signal MOSFET has an ideal insulated gate, and no engine reads this value',
-    },
-  ],
-  transistor_mosfet_pmos: [
-    {
-      parameter: 'gate_capacitance',
-      reason: 'the small-signal MOSFET has an ideal insulated gate, and no engine reads this value',
-    },
-  ],
 }
 
 export type IgnoredAcValuePart = {
@@ -720,8 +707,8 @@ const AC_SOLVED_PARAMETERS: Record<string, string[]> = {
   transformer: ['primary_inductance', 'secondary_inductance', 'coupling_coefficient'],
   transformer_center_tapped: ['primary_inductance', 'secondary_inductance', 'coupling_coefficient'],
   diode_varactor: ['junction_capacitance_zero_bias'],
-  transistor_mosfet_nmos: ['transconductance_parameter'],
-  transistor_mosfet_pmos: ['transconductance_parameter'],
+  transistor_mosfet_nmos: ['transconductance_parameter', 'gate_capacitance'],
+  transistor_mosfet_pmos: ['transconductance_parameter', 'gate_capacitance'],
   transistor_jfet_n_channel: ['transconductance'],
   transistor_jfet_p_channel: ['transconductance'],
 }
@@ -1055,8 +1042,9 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
   //   V_w = R_w·I_w + jω·Σ_j L[w][j]·I_j
   // — the winding copper resistances the DC and transient engines read, in the same place. A 2-winding
   // transformer is the familiar pair (V1 = (R1+jωL1)I1 + jωM·I2, V2 = jωM·I1 + (R2+jωL2)I2); a center-tapped
-  // one is the same relation over three windings. Core loss is the classic resistance ACROSS the full primary
-  // (the node pair the transient engine puts it across), so it stamps as a plain conductance, not a branch row.
+  // one is the same relation over three windings. Core loss is the classic linear small-signal AC shunt,
+  // so it stamps as a plain conductance here; the transient engine places its conductance across the
+  // changing-flux companion branch so steady DC does not dissipate in it.
   for (const part of topo.coupled) {
     part.windings.forEach((winding, w) => {
       const branch = part.branchBase + w
@@ -1133,16 +1121,18 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
     stampY(b, c, 0, omega * cMu)
   }
 
-  // MOSFETs / JFETs / CRDs: a voltage-controlled current source at the operating point.
-  // i_D into the drain = g_m·(v_G − v_S) + g_ds·(v_D − v_S); i_S = −i_D; the gate draws no current.
+  // MOSFETs / JFETs / CRDs: a voltage-controlled current source at the operating point plus the
+  // declared lumped gate-input capacitance for MOSFETs. The gate draws no DC current, but it does draw
+  // displacement current in AC: i_G = jω·C_gate·(v_G − v_S).
   for (const m of topo.mosfets) {
-    const { gIdx: g, dIdx: d, sIdx: s, gm, gds } = m
+    const { gIdx: g, dIdx: d, sIdx: s, gm, gds, gateCapacitance } = m
     accumulateGrounded(d, g, gm, 0)
     accumulateGrounded(d, d, gds, 0)
     accumulateGrounded(d, s, -(gm + gds), 0)
     accumulateGrounded(s, g, -gm, 0)
     accumulateGrounded(s, d, -gds, 0)
     accumulateGrounded(s, s, gm + gds, 0)
+    stampY(g, s, 0, omega * gateCapacitance)
   }
 
   // Diodes: a small-signal conductance + junction capacitance in parallel (g + jωC) at the op point.

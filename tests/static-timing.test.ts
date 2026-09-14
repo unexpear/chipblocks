@@ -79,11 +79,32 @@ describe('criticalPath + analyzeTiming — the slowest path sets the clock', () 
     expect(report.minPeriod).toBeCloseTo(7.5e-9, 18) // 1 + 6 + 0.5
     expect(1 / report.maxFrequency).toBeCloseTo(7.5e-9, 18)
     expect(report.setupViolated).toBe(false)
+    expect(report.state).toBe('complete')
+    expect(report.diagnostics).toEqual([])
+    expect(report.why.state).toBe('complete')
   })
   test('empty design → no critical path, unbounded frequency', () => {
     const report = analyzeTiming([], reg, 10e-9)
     expect(report.critical).toBeUndefined()
     expect(report.maxFrequency).toBe(Number.POSITIVE_INFINITY)
+    expect(report.state).toBe('waiting')
+    expect(report.why.state).toBe('waiting')
+  })
+  test('timing violations expose a target and repair action through the shared diagnostic contract', () => {
+    const report = analyzeTiming([path('A', 'B', 6e-9, 1e-9, ['g1'])], reg, 1e-9)
+    expect(report.state).toBe('failed')
+    expect(report.diagnostics[0]).toMatchObject({
+      code: 'setup-violation',
+      severity: 'error',
+      target: { blockId: 'B', subgraphId: 'timing' },
+      repair: { action: 'select' },
+    })
+    expect(report.why.explanations[0]?.path.map((step) => step.kind)).toEqual([
+      'source',
+      'terminal',
+      'device-state',
+      'diagnostic',
+    ])
   })
 })
 

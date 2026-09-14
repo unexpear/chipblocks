@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { footprintsForPinCount } from './footprint-assignment.ts'
-import { UserPartGlyph } from './symbols.tsx'
+import { attachDrawnSymbol } from './symbol-draft.ts'
+import { SymbolEditor } from './symbol-editor.tsx'
+import type { DrawnSymbol } from './symbol-geometry.ts'
 import { THEME } from './theme.ts'
 import { BEHAVIOUR_DEVICES, buildUserPartDraft } from './user-part-draft.ts'
+import { UserPartGlyph } from './user-part-glyphs.tsx'
 import {
   PIN_ELECTRICAL_TYPES,
   type PinElectrical,
@@ -17,8 +20,8 @@ import {
  * default values. A live preview draws the exact symbol the canvas will place, and Save registers it
  * so it appears in the palette, drops, and wires like any built-in. Modelled on the PartPicker modal.
  *
- * It only assembles + registers a part — the solver still treats a custom part as a black box (it reads
- * a placed part's id + values + connections, never this definition), so nothing here can fake physics.
+ * It assembles + registers a part. A custom part remains a black box unless a validated behaviour
+ * definition is explicitly selected, so drawing a symbol cannot change its simulated physics.
  */
 
 const SIDES: PinSide[] = ['left', 'right', 'top', 'bottom']
@@ -55,6 +58,9 @@ export function UserPartEditor({
   // maps to. Picking a device auto-maps its terminals to the pins in declaration order.
   const [behaviourDef, setBehaviourDef] = useState('')
   const [behaviourMap, setBehaviourMap] = useState<Record<string, number>>({})
+  const [drawnSymbol, setDrawnSymbol] = useState<DrawnSymbol | null>(null)
+  const [symbolDatasheet, setSymbolDatasheet] = useState('')
+  const [symbolEditorOpen, setSymbolEditorOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => nameRef.current?.focus(), [])
@@ -137,11 +143,21 @@ export function UserPartEditor({
       setError(result.error)
       return
     }
-    if (!registerUserPart(result.part)) {
+    const withSymbol = attachDrawnSymbol(
+      result.part,
+      pins.map((pin) => pin.key),
+      drawnSymbol,
+      symbolDatasheet,
+    )
+    if (!withSymbol.ok) {
+      setError(withSymbol.error)
+      return
+    }
+    if (!registerUserPart(withSymbol.part)) {
       setError('That name is a built-in part’s id — pick another.')
       return
     }
-    onCreated?.(result.part)
+    onCreated?.(withSymbol.part)
     onClose()
   }
 
@@ -149,7 +165,9 @@ export function UserPartEditor({
     // biome-ignore lint/a11y/noStaticElementInteractions: a modal backdrop click-to-close, standard
     // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click-to-close; Escape handled by the dialog keydown
     <div
-      onClick={onClose}
+      onClick={() => {
+        if (!symbolEditorOpen) onClose()
+      }}
       style={{
         position: 'fixed',
         inset: 0,
@@ -488,9 +506,24 @@ export function UserPartEditor({
           )}
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => setSymbolEditorOpen(true)}
             style={{
               marginLeft: 'auto',
+              padding: '7px 12px',
+              borderRadius: 7,
+              border: `1px solid ${THEME.borderStrong}`,
+              background: THEME.surfaceRaised,
+              color: THEME.textPrimary,
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            {drawnSymbol === null ? 'Draw symbol…' : 'Edit symbol…'}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
               padding: '7px 16px',
               borderRadius: 7,
               border: `1px solid ${THEME.borderStrong}`,
@@ -520,6 +553,41 @@ export function UserPartEditor({
           </button>
         </div>
       </div>
+      {symbolEditorOpen ? (
+        <SymbolEditor
+          partName={name.trim() || 'New Part'}
+          designatorPrefix={designator.trim() || 'U'}
+          pins={pins.map((pin) => ({
+            key: pin.key,
+            name: pin.name,
+            side: pin.side,
+            electrical: pin.electrical,
+            pad: pin.pad,
+          }))}
+          {...(drawnSymbol ? { symbol: drawnSymbol } : {})}
+          datasheet={symbolDatasheet}
+          pinsFromCircuit={false}
+          confirmBeforeSaving={false}
+          saveLabel="Apply symbol"
+          onClose={() => setSymbolEditorOpen(false)}
+          onSave={(edit) => {
+            setPins(
+              edit.pins.map((pin) => ({
+                key: pin.key,
+                name: pin.name,
+                side: pin.side,
+                electrical: pin.electrical,
+                pad: pin.pad,
+              })),
+            )
+            setDrawnSymbol(edit.symbol)
+            setSymbolDatasheet(edit.datasheet)
+            setSymbolEditorOpen(false)
+            setError(null)
+            return null
+          }}
+        />
+      ) : null}
     </div>
   )
 }

@@ -397,6 +397,7 @@ describe('capacitanceTest (⊣⊢ mode)', () => {
   test('a lone 100 µF capacitor measures from real integrated charge — C = Q/V', () => {
     const result = capacitanceTest(capWorld([capPart('c1', 100e-6, 'a', 'b')]), 'a', 'b')
     expect(result.status).toBe('measured')
+    expect(result.why?.state).toBe('complete')
     if (result.status !== 'measured') return
     expect(relativeError(result.farads, 100e-6)).toBeLessThan(0.005)
   })
@@ -430,7 +431,9 @@ describe('capacitanceTest (⊣⊢ mode)', () => {
         ],
       },
     ])
-    expect(capacitanceTest(w, 'a', 'b').status).toBe('parallel-leak')
+    const result = capacitanceTest(w, 'a', 'b')
+    expect(result.status).toBe('parallel-leak')
+    expect(result.why?.state).toBe('blocked')
   })
 
   test('a pure resistor between the probes is also a leak — no capacitance to read', () => {

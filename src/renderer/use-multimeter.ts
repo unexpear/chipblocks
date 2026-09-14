@@ -8,6 +8,8 @@ import {
   useState,
 } from 'react'
 import type { World } from '../cross-fk-validator.ts'
+import type { RuntimeWhySystem } from '../runtime-contracts.ts'
+import { measurementWhy } from '../runtime-why.ts'
 import {
   AMMETER_JACKS,
   type AmmeterJack,
@@ -26,6 +28,13 @@ import {
 import { THEME } from './theme.ts'
 import type { Tool } from './toolbar.tsx'
 import { formatEng } from './units.ts'
+
+type MeterReadout = {
+  icon: string
+  iconColor: string
+  text: string
+  why?: RuntimeWhySystem
+}
 
 /**
  * The multimeter's state machine + measurements, lifted out of the Canvas component (S19-v3-53/54,
@@ -77,11 +86,7 @@ export function useMultimeter(deps: {
   }, [meterMode])
   // HOLD: freeze the current reading on the display (probe elsewhere, compare),
   // exactly the bench move. Measurement continues underneath, like a real meter.
-  const [heldReadout, setHeldReadout] = useState<{
-    icon: string
-    iconColor: string
-    text: string
-  } | null>(null)
+  const [heldReadout, setHeldReadout] = useState<MeterReadout | null>(null)
   const [clampWire, setClampWire] = useState<string | undefined>(undefined)
   useEffect(() => {
     if (tool !== 'meter') {
@@ -180,7 +185,7 @@ export function useMultimeter(deps: {
 
   // The meter's display — live solved values; unwired points say so. The clamp
   // (when set) wins regardless of the dial: it reads amps, not the dial quantity.
-  const meterReadout = useMemo(() => {
+  const meterReadout = useMemo<MeterReadout | null>(() => {
     if (tool !== 'meter') return null
     if (clampWire !== undefined) {
       const amps = edges.find((e) => e.id === clampWire)?.data?.amps
@@ -255,47 +260,72 @@ export function useMultimeter(deps: {
       )
     }
     if (meterMode === 'cap') {
-      const capChip = (text: string) => ({ icon: '⊣⊢', iconColor: THEME.accentPurple, text })
+      const capChip = (text: string, why?: RuntimeWhySystem): MeterReadout => ({
+        icon: '⊣⊢',
+        iconColor: THEME.accentPurple,
+        text,
+        ...(why === undefined ? {} : { why }),
+      })
       const nets = bothProbeNets()
       if (typeof nets === 'string') return capChip(nets)
       const result = capacitanceTest(solvedWorld, nets.netRed, nets.netBlack)
       if (result.status === 'measured') {
-        return capChip(`Capacitance: ${formatEng(result.farads, 'F')}`)
+        return capChip(`Capacitance: ${formatEng(result.farads, 'F')}`, result.why)
       }
       if (result.status === 'parallel-leak') {
         return capChip(
           "Capacitance: can't measure — a resistive path is in parallel (free one leg of the cap, like a real meter)",
+          result.why,
         )
       }
       if (result.status === 'over-range') {
-        return capChip('Capacitance: over range — still charging past the 100 s test window')
+        return capChip(
+          'Capacitance: over range — still charging past the 100 s test window',
+          result.why,
+        )
       }
       if (result.status === 'open') {
-        return capChip('Capacitance: under 1 pF — nothing measurable between the probes')
+        return capChip(
+          'Capacitance: under 1 pF — nothing measurable between the probes',
+          result.why,
+        )
       }
-      return capChip("Capacitance test can't run on this circuit")
+      return capChip("Capacitance test can't run on this circuit", result.why)
     }
     if (meterMode === 'amps') {
       const spec = AMMETER_JACKS[meterJack]
-      const ampChip = (text: string) => ({ icon: 'A⎓', iconColor: THEME.accentBlue, text })
+      const ampChip = (text: string, why?: RuntimeWhySystem): MeterReadout => ({
+        icon: 'A⎓',
+        iconColor: THEME.accentBlue,
+        text,
+        ...(why === undefined ? {} : { why }),
+      })
       const blownAt = blownFuses[meterJack]
       if (blownAt !== null) {
         return ampChip(
           `${spec.label} jack FUSE BLOWN — ${formatEng(blownAt, 'A')} through the ${formatEng(spec.fuseAmps, 'A')} fuse. The meter reads nothing until you replace it.`,
+          measurementWhy(
+            'meter',
+            'ammeter',
+            'blew',
+            `${spec.label} jack fuse is open after ${formatEng(blownAt, 'A')} exceeded its rating.`,
+          ),
         )
       }
       const nets = bothProbeNets()
       if (typeof nets === 'string') return ampChip(nets)
       if (ammeterReading === null || ammeterReading.status === 'failed') {
-        return ampChip("A⎓ can't solve this circuit — no reading")
+        return ampChip("A⎓ can't solve this circuit — no reading", ammeterReading?.why)
       }
       if (ammeterReading.status === 'blew') {
         return ampChip(
           `POP — ${formatEng(Math.abs(ammeterReading.amps), 'A')} through the ${formatEng(spec.fuseAmps, 'A')} fuse`,
+          ammeterReading.why,
         )
       }
       return ampChip(
         `A⎓ (red → black): ${displayCounts(ammeterReading.amps, 'A')} · burden ${displayCounts(Math.abs(ammeterReading.burdenVolts), 'V')}`,
+        ammeterReading.why,
       )
     }
     if (meterMode === 'tempc') {
