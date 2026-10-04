@@ -174,17 +174,20 @@ that can be *authored* OR *derived*, always present, always matching.
    edit/reload flows and terminal→pad assignment equally complete for every user-part path.
 2. **"A footprint always exists" isn't guaranteed.** Device kinds not in `PART_FOOTPRINTS` (op-amp,
    switch, transformer, circuit blocks, ill-fitting user parts) resolve to `undefined`, and `deriveBoard`
-   **silently skips** them (`pcb-board.ts:224` `if (fp === undefined) continue`) — surfaced as "N wired
-   pins not on the board yet" and an **export-blocking** fab failure (`pcb-fab.ts:286`). Closing this =
-   an auto-derived fallback footprint (an N-pad land pattern from the part's pin count/spacing) so a part
-   is never packageless.
-3. **No keep-matching mechanism.** Footprints are immutable, so nothing re-derives a footprint from a
-   placement or flows an edited footprint back to instances. *Cheap plumbing already there:* all
-   instances share one footprint object by reference, and the forward re-derive is already automatic — add
-   an editable footprint store to `deriveBoard`'s useMemo deps and an edited footprint reflows every
-   placement with no other change. An authored footprint also needs a terminal→pad map (today
-   `TERMINAL_PADS` is hand-authored per device kind).
+   **silently skips** them (`pcb-board.ts:223` `if (fp === undefined) continue`) — surfaced as "N wired
+   pins not on the board yet" and an **export-blocking** fab failure (`pcb-fab.ts:286`). Symmetric two-terminal kinds already get a labeled `provisional_<N>pad` land instead of being skipped. Role-sensitive kinds (transformer, SPDT, op-amp, relay, circuit-block ports) stay unassigned — this does not invent a manufacturer package for them. A part is still packageless when its pin order is not an honest total order.
+3. **Keep-matching is the part ↔ board loop, not both levels.** Changing a part's footprint
+   assignment re-derives its placement (`deriveBoard` reads `footprintForPart` on every call, and a
+   hand spot stays put). The board view subscribes to the authored-footprint store, so a same-id
+   edit reflows pad geometry without a schematic edit. A board-side edit of a *user-owned*
+   footprint writes that id back onto the part (`applyUserOwnedFootprintEdit`) when the package
+   honestly fits. Built-ins cannot be shadowed. Role-sensitive kinds are not given a guessed
+   package. Provisional lands stay `provisional_<N>pad` and labeled provisional — that id cannot
+   be registered over. Still open: chip-level author-or-derive, a terminal→pad map for every
+   user-part path beyond declaration / `pin.pad` / name match (`TERMINAL_PADS` is still
+   hand-authored per device kind), and fabrication parity (the editor draws the body outline;
+   the board view and Gerber export still ship silkscreen, not those fabrication lines, and
+   there is no paste/mask layer). Nothing re-derives a footprint *from* a placement.
 
 Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
-the "edit on the canvas, not in side dialogs" preference. The next increment is richer two-way syncing,
-not the initial editor surface.
+the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop above is the current slice. Richer fabrication parity and the chip side are still open.

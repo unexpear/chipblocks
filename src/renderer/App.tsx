@@ -42,6 +42,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import type { Instance } from '../cross-fk-validator.ts'
 import { solveTransientThermal } from '../electro-thermal.ts'
@@ -119,7 +120,12 @@ import { DistortionPanel } from './distortion-panel.tsx'
 import { DockablePanel } from './dockable-panel.tsx'
 import { DrawProgressCard } from './draw-progress.tsx'
 import type { Footprint } from './footprint.ts'
-import { BOM_VALUE_PARAMS, terminalForPad } from './footprint-assignment.ts'
+import {
+  applyUserOwnedFootprintEdit,
+  BOM_VALUE_PARAMS,
+  footprintForPart,
+  terminalForPad,
+} from './footprint-assignment.ts'
 import { FootprintEditor } from './footprint-editor.tsx'
 import { chipdbTextOf, compileToIce40, ICE40_ONE_TILE_POOL } from './fpga-compile.ts'
 import { type ChipDescriptionFile, identifyBitstream, openFpgaDesign } from './fpga-open.ts'
@@ -303,7 +309,13 @@ import { useShortcuts } from './use-shortcuts.tsx'
 import { useSParam } from './use-sparam.ts'
 import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
-import { allUserFootprints, mergeUserFootprints } from './user-footprints.ts'
+import {
+  allUserFootprints,
+  getUserFootprintsSnapshot,
+  isUserFootprint,
+  mergeUserFootprints,
+  subscribeUserFootprints,
+} from './user-footprints.ts'
 import {
   deserializeUserLibrary,
   serializeUserLibrary,
@@ -2801,6 +2813,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pickerOpen, setPickerOpen] = useState(false)
   const [newPartOpen, setNewPartOpen] = useState(false)
   const [newFootprintOpen, setNewFootprintOpen] = useState(false)
+  // A board-side edit of the footprint a selected part is already placing. Only user-owned
+  // footprints open this; saving writes the id back onto that part (applyUserOwnedFootprintEdit).
+  const [ownedFootprintEdit, setOwnedFootprintEdit] = useState<{
+    partId: string
+    initial: Footprint
+  } | null>(null)
   const [sheetSettings, setSheetSettings] = useState<SheetSettings>(() => initial.boardFab.sheet)
   const [showSheet, setShowSheet] = useState(true)
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
@@ -4063,7 +4081,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     ring: readonly BoardPoint[]
     checkpointed: boolean
   } | null>(null)
+  // The authored-footprint store. A same-id edit publishes a new snapshot; deriveBoard
+  // re-resolves every placement from that store, so the board follows the library.
+  const authoredFootprints = useSyncExternalStore(
+    subscribeUserFootprints,
+    getUserFootprintsSnapshot,
+    getUserFootprintsSnapshot,
+  )
   const pcbBoard = useMemo(() => {
+    // deriveBoard resolves ids from the footprint registry; it does not take this array.
+    // Reading it here is what makes a user-footprint edit recompute the board.
+    void authoredFootprints
     const board = deriveBoard(
       nodes.map((n) => {
         const data = n.data as DeviceNodeData
@@ -4082,7 +4110,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     return pcbProfile !== null
       ? { ...withScore, profile: pcbProfile, outline: profileBBox(pcbProfile) }
       : withScore
-  }, [nodes, pcbPlacements, pcbVScoredSides, pcbProfile])
+  }, [nodes, pcbPlacements, pcbVScoredSides, pcbProfile, authoredFootprints])
   const pcbBoardRef = useRef(pcbBoard)
   pcbBoardRef.current = pcbBoard
   // Hand-placed spots for parts that leave the schematic are dropped. (File Open/Import clear the
@@ -10375,6 +10403,29 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             onSaved={(footprint) => void persistAuthoredFootprint(footprint)}
           />
         ) : null}
+        {ownedFootprintEdit !== null ? (
+          <FootprintEditor
+            initial={ownedFootprintEdit.initial}
+            onClose={() => setOwnedFootprintEdit(null)}
+            onSaved={(footprint) => {
+              const partId = ownedFootprintEdit.partId
+              void persistAuthoredFootprint(footprint)
+              const node = nodesRef.current.find((n) => n.id === partId)
+              if (node === undefined) return
+              const data = node.data as DeviceNodeData
+              const next = applyUserOwnedFootprintEdit(
+                {
+                  definition: data.definition,
+                  ...(data.footprintId ? { footprintId: data.footprintId } : {}),
+                },
+                footprint,
+              )
+              if (next.footprintId !== undefined && next.footprintId !== data.footprintId) {
+                onEditFootprint(partId, next.footprintId)
+              }
+            }}
+          />
+        ) : null}
         {pageSettingsOpen ? (
           <PageSettings
             settings={sheetSettings}
@@ -10927,7 +10978,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   solveBlocked={drawProgress !== null}
                   onAddPart={() => setPickerOpen(true)}
                   onNewPart={() => setNewPartOpen(true)}
-                  onNewFootprint={() => setNewFootprintOpen(true)}
+                  onNewFootprint={() => {
+                    setOwnedFootprintEdit(null)
+                    setNewFootprintOpen(true)
+                  }}
                   onScope={runScope}
                   onTimeline={() => setTimelineOpen((open) => !open)}
                   onMath={() => setShowMath((open) => !open)}
@@ -11104,6 +11158,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                     }}
                     onFootprint={(footprintId) => {
                       if (selectedPart) onEditFootprint(selectedPart.id, footprintId)
+                    }}
+                    onEditOwnedFootprint={() => {
+                      if (!selectedPart) return
+                      const fp = footprintForPart(selectedPart.definition, selectedPart.footprintId)
+                      if (fp === undefined || !isUserFootprint(fp.id)) return
+                      setNewFootprintOpen(false)
+                      setOwnedFootprintEdit({ partId: selectedPart.id, initial: fp })
                     }}
                     onMaterial={(key, value) => {
                       if (selectedPart) onEditEnum(selectedPart.id, key, value)

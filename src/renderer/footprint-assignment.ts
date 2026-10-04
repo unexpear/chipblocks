@@ -1,5 +1,10 @@
-import { type Footprint, provisionalLand } from './footprint.ts'
-import { allAvailableFootprints, allUserFootprints, resolveFootprint } from './user-footprints.ts'
+import { type Footprint, parseProvisionalFootprintId, provisionalLand } from './footprint.ts'
+import {
+  allAvailableFootprints,
+  allUserFootprints,
+  isUserFootprint,
+  resolveFootprint,
+} from './user-footprints.ts'
 import { resolveUserPart, type UserPart } from './user-parts.ts'
 
 /**
@@ -131,8 +136,32 @@ function authoredOptionsFor(defaultFootprintId: string): Footprint[] {
 }
 
 /**
- * The footprint a part lands on: the chosen one if it's a valid option for this part, else the part's
- * default. A symmetric two-terminal part or a user part with no real package gets a provisional land. Role-sensitive kinds stay undefined.
+ * The reverse half of the part ↔ placement join. A board-side edit of a USER-OWNED footprint
+ * writes that footprint's id onto the part, and the next `deriveBoard` places it. User-owned
+ * means: in the authored library, not a shipped package, and not a provisional land (those keep
+ * `provisional_<N>pad` and the honesty flag). `footprintForPart` is the same gate the board
+ * uses, so a role-sensitive part, a package that does not fit, or a provisional land is left
+ * exactly as it was — the assignment and the placement cannot disagree. A same-id edit returns
+ * the part unchanged; pad geometry still updates because `deriveBoard` resolves the id from
+ * the library. Register the edit before calling this.
+ */
+export function applyUserOwnedFootprintEdit<T extends { definition: string; footprintId?: string }>(
+  part: T,
+  edited: Footprint,
+): T & { footprintId?: string } {
+  if (edited.provisional === true) return part
+  if (parseProvisionalFootprintId(edited.id) !== undefined) return part
+  if (!isUserFootprint(edited.id)) return part
+  const placed = footprintForPart(part.definition, edited.id)
+  if (placed === undefined || placed.id !== edited.id || placed.provisional === true) return part
+  if (part.footprintId === edited.id) return part
+  return { ...part, footprintId: edited.id }
+}
+
+/**
+ * The footprint a part lands on: the chosen one if it is a valid option for this part, else the part default.
+ * A symmetric two-terminal part or a user part with no real package gets a provisional land.
+ * Role-sensitive kinds stay undefined.
  */
 export function footprintForPart(definition: string, chosenId?: string): Footprint | undefined {
   // Object.hasOwn, not `PART_FOOTPRINTS[definition]`: an untrusted definition ('constructor' etc.) from a

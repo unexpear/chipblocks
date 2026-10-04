@@ -46,12 +46,24 @@ export function isBuiltinFootprintId(id: string): boolean {
   return Object.hasOwn(BUILTIN_FOOTPRINTS, id)
 }
 
-/** Register an authored footprint. Refuses (and warns) an id that belongs to a built-in — returns success. */
+/**
+ * Built-in ids and `provisional_<N>pad` are reserved. A user footprint must not take either:
+ * shadowing a built-in would re-shape a cited package, and shadowing a provisional id would
+ * drop the honesty flag the BOM and the validation report print.
+ */
+function reservedFootprintReason(id: string): string | undefined {
+  if (isBuiltinFootprintId(id)) return 'that id belongs to a built-in footprint'
+  if (parseProvisionalFootprintId(id) !== undefined) {
+    return 'provisional lands stay generated and labeled provisional'
+  }
+  return undefined
+}
+
+/** Register an authored footprint. Refuses (and warns) a reserved id — returns success. */
 export function registerUserFootprint(footprint: Footprint): boolean {
-  if (isBuiltinFootprintId(footprint.id)) {
-    console.warn(
-      `[user-footprints] refusing "${footprint.id}": that id belongs to a built-in footprint`,
-    )
+  const reserved = reservedFootprintReason(footprint.id)
+  if (reserved !== undefined) {
+    console.warn(`[user-footprints] refusing "${footprint.id}": ${reserved}`)
     return false
   }
   registry.set(footprint.id, footprint)
@@ -75,8 +87,9 @@ export function allUserFootprints(): Footprint[] {
 export function setUserFootprints(footprints: readonly Footprint[]): void {
   registry.clear()
   for (const fp of footprints) {
-    if (isBuiltinFootprintId(fp.id)) {
-      console.warn(`[user-footprints] skipping "${fp.id}": that id belongs to a built-in footprint`)
+    const reserved = reservedFootprintReason(fp.id)
+    if (reserved !== undefined) {
+      console.warn(`[user-footprints] skipping "${fp.id}": ${reserved}`)
       continue
     }
     registry.set(fp.id, fp)
@@ -87,12 +100,13 @@ export function setUserFootprints(footprints: readonly Footprint[]): void {
 /**
  * Add footprints WITHOUT clobbering (a project loading its footprints into a session that may already hold
  * another tab's): an id already registered is KEPT, so a loaded project can never silently re-shape a
- * package another open board is placing. Built-in ids are skipped. Returns how many were newly added.
+ * package another open board is placing. Built-in and provisional ids are skipped. Returns how many
+ * were newly added.
  */
 export function mergeUserFootprints(footprints: readonly Footprint[]): number {
   let added = 0
   for (const fp of footprints) {
-    if (registry.has(fp.id) || isBuiltinFootprintId(fp.id)) continue
+    if (registry.has(fp.id) || reservedFootprintReason(fp.id) !== undefined) continue
     registry.set(fp.id, fp)
     added++
   }

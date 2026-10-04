@@ -13,6 +13,7 @@ import {
 import type { PartReading } from './part-readings.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
+import { isUserFootprint } from './user-footprints.ts'
 
 /**
  * Properties inspector (Sprint 19). For the selected part it shows:
@@ -355,6 +356,11 @@ export type PartInspectorProps = {
   /** Choose this part's board PACKAGE (footprint id) from its options — the footprint picker. */
   onFootprint: (footprintId: string) => void
   /**
+   * Edit the footprint this part is already placing, when that footprint is user-owned.
+   * Absent, or a built-in / provisional land, ⇒ no edit button (those are not rewritten from here).
+   */
+  onEditOwnedFootprint?: () => void
+  /**
    * Change a material ref. Distinct from onEnum so the App can react physically —
    * e.g. an LED's n_side re-derives its color + forward voltage from the chosen
    * semiconductor's bandgap. The curated color picker stays on onEnum.
@@ -469,6 +475,7 @@ export function PartInspector({
   onParam,
   onEnum,
   onFootprint,
+  onEditOwnedFootprint,
   onMaterial,
   onDeriveResistance,
   projectAmbientC,
@@ -602,6 +609,17 @@ export function PartInspector({
             ) : (
               <div style={{ fontSize: 11, color: THEME.textSoft, marginBottom: 4 }}>{fp.name}</div>
             )}
+            {onEditOwnedFootprint !== undefined && isUserFootprint(fp.id) ? (
+              <button
+                type="button"
+                className="nodrag"
+                style={{ ...deriveButton, marginTop: 0, marginBottom: 4 }}
+                title="Edit this package. Saving a user-owned footprint writes its id back onto this part, and the board re-places from that assignment."
+                onClick={onEditOwnedFootprint}
+              >
+                Edit footprint
+              </button>
+            ) : null}
             <FootprintView footprint={fp} pxPerMm={26} />
           </>
         )

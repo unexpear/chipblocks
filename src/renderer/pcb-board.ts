@@ -14,7 +14,10 @@ import { resolveFootprint } from './user-footprints.ts'
  * real auto-placer optimises for net length; this just gives every part a real spot to start from) and
  * fits the board outline around them. Parts with no footprint are honestly skipped — they aren't on the
  * board until their package exists, unless footprintForPart gives them a provisional land because
- * their pin order is already known.
+ * their pin order is already known. A user-owned footprint edit is not stored on the placement:
+ * re-call deriveBoard after the library changes (the board view subscribes to that store) and the
+ * pads follow. The part's footprintId is the assignment; applyUserOwnedFootprintEdit is what writes
+ * a user-owned edit back onto it.
  */
 
 export type Rotation = 0 | 90 | 180 | 270

@@ -11,7 +11,13 @@
  * the same rule to drift apart.
  */
 
-import type { Courtyard, Footprint, Pad, SilkLine } from './footprint.ts'
+import {
+  type Courtyard,
+  type Footprint,
+  type Pad,
+  parseProvisionalFootprintId,
+  type SilkLine,
+} from './footprint.ts'
 import { isBuiltinFootprintId } from './user-footprints.ts'
 
 const SHAPES = new Set(['rect', 'roundrect', 'circle', 'oval'])
@@ -116,6 +122,10 @@ export function footprintProblems(raw: unknown): string[] {
   else if (isBuiltinFootprintId(raw.id)) {
     out.push(
       `"${raw.id}" is a built-in footprint — choose a different id so the shipped one keeps working`,
+    )
+  } else if (parseProvisionalFootprintId(raw.id) !== undefined) {
+    out.push(
+      `"${raw.id}" is a provisional land — those stay generated and labeled provisional, not a package you name`,
     )
   }
   if (!nonEmpty(raw.name)) out.push('needs a name (what the picker shows)')
