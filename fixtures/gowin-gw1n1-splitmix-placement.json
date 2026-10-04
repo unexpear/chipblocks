@@ -1,27 +1,18 @@
 {
- "note": "nextpnr-himbaechel placement of gowin-gw1n1-splitmix.fs - eight registered cells, two of which have BOTH their plain and their stored result read by other logic on the chip.",
- "lutBels": [
-  "1,2,0",
-  "1,2,1",
-  "1,2,2",
-  "1,3,0",
-  "1,3,1",
-  "1,3,6",
-  "1,4,0",
-  "1,4,1",
-  "1,4,2",
-  "1,4,3",
-  "1,4,4",
-  "1,4,5"
- ],
- "dffBels": [
-  "1,2,0",
-  "1,2,1",
-  "1,2,2",
-  "1,3,0",
-  "1,4,0",
-  "1,4,1",
-  "1,4,2",
-  "1,4,3"
- ]
+  "note": "nextpnr-himbaechel placement of gowin-gw1n1-splitmix.fs - eight registered cells, two of which have BOTH their plain and their stored result read by other logic on the chip.",
+  "lutBels": [
+    "1,2,0",
+    "1,2,1",
+    "1,2,2",
+    "1,3,0",
+    "1,3,1",
+    "1,3,6",
+    "1,4,0",
+    "1,4,1",
+    "1,4,2",
+    "1,4,3",
+    "1,4,4",
+    "1,4,5"
+  ],
+  "dffBels": ["1,2,0", "1,2,1", "1,2,2", "1,3,0", "1,4,0", "1,4,1", "1,4,2", "1,4,3"]
 }

@@ -6,6 +6,7 @@ import {
   placePoint,
   type Ratsnest,
   silkReferenceAnchor,
+  unresolvedFootprintProblem,
 } from './pcb-board.ts'
 import type { BoardRouting, CopperLayer } from './pcb-route.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
@@ -24,10 +25,12 @@ import { SILK_TEXT, strokeText } from './stroke-font.ts'
  * points UP. Every emitted Y is therefore negated — exactly what KiCad does when plotting (its
  * internal frame is y-down too; the demo files show every board Y appearing negated).
  *
- * The board is a TWO-copper-layer board (the standard minimum fab order), both layers routed:
- * connections take the top layer first and drop to the bottom through plated vias when the top is
- * blocked, so the bottom copper carries the through-hole pads' annular rings, the bottom-layer
- * traces, and the via barrels. Vias are tented (mask-covered) — no mask openings for them.
+ * Copper follows the stack-up: a 2-layer board is top + bottom; a 4- or 6-layer board also
+ * writes an inner-copper Gerber per inner layer (callers pass the layer count — this module does
+ * not pretend every board is two layers). Connections take the top layer first and drop through
+ * plated vias when the top is blocked. The bottom (and each inner layer) carries the through-hole
+ * pads' annular rings, that layer's traces, and the via barrels. Vias are tented (mask-covered) —
+ * no mask openings for them.
  */
 
 /** Values a fab manufactures directly, cited (the anti-placeholder rule applies to file formats). */
@@ -224,12 +227,18 @@ function planFlashes(
   apertures: Apertures,
   filter: PadFilter,
   aperFunction: string | null,
+  problems?: string[],
 ): { partId: string; padId: string; at: { x: number; y: number }; code: number }[] {
   const flashes: { partId: string; padId: string; at: { x: number; y: number }; code: number }[] =
     []
   for (const placement of board.placements) {
     const fp = footprintByPlacement(placement)
-    if (fp === undefined) continue
+    if (fp === undefined) {
+      // A placed part with no geometry still occupies the board model. Skipping its pads here
+      // would omit copper (and, for a through-hole pad, the hole the drill file also drops).
+      problems?.push(unresolvedFootprintProblem(placement))
+      continue
+    }
     for (const pad of fp.pads) {
       if (!filter(pad)) continue
       flashes.push({
@@ -327,9 +336,10 @@ export function gerberTopCopper(
   ratsnest: Ratsnest,
   routing: BoardRouting,
   when: Date,
+  problems?: string[],
 ): string {
   const apertures = new Apertures()
-  const flashes = planFlashes(board, apertures, ALL_PADS, 'ComponentPad')
+  const flashes = planFlashes(board, apertures, ALL_PADS, 'ComponentPad', problems)
   const body = flashBody(flashes, padNets(ratsnest))
   traceBody(routing.traces, 'top', apertures, body)
   viaBody(routing, apertures, body)
@@ -351,9 +361,10 @@ export function gerberBottomCopper(
   routing: BoardRouting,
   when: Date,
   layerNumber = 2,
+  problems?: string[],
 ): string {
   const apertures = new Apertures()
-  const flashes = planFlashes(board, apertures, THROUGH_HOLE_ONLY, 'ComponentPad')
+  const flashes = planFlashes(board, apertures, THROUGH_HOLE_ONLY, 'ComponentPad', problems)
   const body = flashBody(flashes, padNets(ratsnest))
   traceBody(routing.traces, 'bottom', apertures, body)
   viaBody(routing, apertures, body)
@@ -377,9 +388,10 @@ export function gerberInnerCopper(
   layer: CopperLayer,
   layerNumber: number,
   when: Date,
+  problems?: string[],
 ): string {
   const apertures = new Apertures()
-  const flashes = planFlashes(board, apertures, THROUGH_HOLE_ONLY, 'ComponentPad')
+  const flashes = planFlashes(board, apertures, THROUGH_HOLE_ONLY, 'ComponentPad', problems)
   const body = flashBody(flashes, padNets(ratsnest))
   traceBody(routing.traces, layer, apertures, body)
   viaBody(routing, apertures, body)
@@ -396,10 +408,15 @@ export function gerberInnerCopper(
  *  with the pads' own apertures (mask clearance 0, cited above; the fab applies its expansion).
  *  Vias get NO mask opening: they are TENTED — covered by mask — KiCad's default via treatment,
  *  which protects the barrel from solder bridging. */
-export function gerberMask(board: Board, side: 'Top' | 'Bot', when: Date): string {
+export function gerberMask(
+  board: Board,
+  side: 'Top' | 'Bot',
+  when: Date,
+  problems?: string[],
+): string {
   const apertures = new Apertures()
   const filter = side === 'Top' ? ALL_PADS : THROUGH_HOLE_ONLY
-  const flashes = planFlashes(board, apertures, filter, null)
+  const flashes = planFlashes(board, apertures, filter, null, problems)
   return [
     ...gerberHeader(`Soldermask,${side}`, 'Negative', when),
     ...apertures.block(),
@@ -415,11 +432,16 @@ export function gerberMask(board: Board, side: 'Top' | 'Bot', when: Date): strin
  *  zero paste clearance, ground-truthed against kicad-cli 10.0.4 output (the demo boards' paste
  *  apertures are byte-identical to their copper pad apertures); the stencil house applies its own
  *  reduction. Positive polarity: the image IS the paste. */
-export function gerberPaste(board: Board, side: 'Top' | 'Bot', when: Date): string {
+export function gerberPaste(
+  board: Board,
+  side: 'Top' | 'Bot',
+  when: Date,
+  problems?: string[],
+): string {
   const apertures = new Apertures()
   // No footprint mounts parts on the bottom yet, so the bottom stencil is honestly empty.
   const filter: PadFilter = side === 'Top' ? (pad) => pad.type === 'smd' : () => false
-  const flashes = planFlashes(board, apertures, filter, null)
+  const flashes = planFlashes(board, apertures, filter, null, problems)
   return [
     ...gerberHeader(`Paste,${side}`, 'Positive', when),
     ...apertures.block(),
@@ -437,7 +459,12 @@ export function gerberPaste(board: Board, side: 'Top' | 'Bot', when: Date): stri
  *  comment — never dropped in silence. No footprint mounts a part on the bottom yet, so the 'Bot'
  *  silk is honestly EMPTY — but its file still ships, so the layer set is the complete standard
  *  F.SilkS + B.SilkS pair (the empty B.Paste already ships the same way). */
-export function gerberSilkscreen(board: Board, side: 'Top' | 'Bot', when: Date): string {
+export function gerberSilkscreen(
+  board: Board,
+  side: 'Top' | 'Bot',
+  when: Date,
+  problems?: string[],
+): string {
   const apertures = new Apertures()
   const body: string[] = []
   let currentCode = -1
@@ -452,7 +479,10 @@ export function gerberSilkscreen(board: Board, side: 'Top' | 'Bot', when: Date):
   const placements = side === 'Top' ? board.placements : []
   for (const placement of placements) {
     const fp = footprintByPlacement(placement)
-    if (fp === undefined) continue
+    if (fp === undefined) {
+      problems?.push(unresolvedFootprintProblem(placement))
+      continue
+    }
     body.push(`%TO.C,${safeField(placement.partId)}*%`)
     for (const s of fp.silkscreen) {
       draw(
@@ -527,10 +557,13 @@ const drillNum = (mm: number): string => {
  */
 /** Whether the board has any NON-plated (NPTH) component holes — a mounting/tooling hole (pad.plated ===
  *  false). When true, the fab needs a SEPARATE non-plated drill file alongside the plated one. */
-export function boardHasNonPlatedHoles(board: Board): boolean {
+export function boardHasNonPlatedHoles(board: Board, problems?: string[]): boolean {
   for (const placement of board.placements) {
     const fp = footprintByPlacement(placement)
-    if (fp === undefined) continue
+    if (fp === undefined) {
+      problems?.push(unresolvedFootprintProblem(placement))
+      continue
+    }
     for (const pad of fp.pads) {
       if (pad.type === 'through_hole' && pad.holeDiameter !== undefined && pad.plated === false) {
         return true
@@ -554,6 +587,7 @@ export function excellonDrill(
   when: Date,
   copperLayers = 2,
   nonPlated = false,
+  problems?: string[],
 ): string {
   const holes = new Map<string, { drill: number; kind: string; at: { x: number; y: number }[] }>()
   const add = (
@@ -568,7 +602,12 @@ export function excellonDrill(
   }
   for (const placement of board.placements) {
     const fp = footprintByPlacement(placement)
-    if (fp === undefined) continue
+    if (fp === undefined) {
+      // The placement is on the board. Omitting its holes here would ship a drill file the
+      // copper model disagrees with — record the skip; validation refuses the ZIP.
+      problems?.push(unresolvedFootprintProblem(placement))
+      continue
+    }
     for (const pad of fp.pads) {
       if (pad.type !== 'through_hole' || pad.holeDiameter === undefined) continue
       // Plated file: every plated hole (plated !== false). Non-plated file: only the NPTH holes.

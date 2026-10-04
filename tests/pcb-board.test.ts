@@ -16,6 +16,7 @@ import {
   offBoardPins,
   placementBounds,
   placePoint,
+  unplacedParts,
 } from '../src/renderer/pcb-board.ts'
 
 const parts = (defs: [string, string][]): BoardPart[] =>
@@ -349,6 +350,58 @@ describe('offBoardPins (the header count)', () => {
       board,
     )
     expect(n).toBe(2) // exactly the motor's two drawn pins the board can't place
+  })
+
+  test('a wired switch or transformer with no footprint is NAMED, not just counted', () => {
+    const defs: [string, string][] = [
+      ['R1', 'resistor'],
+      ['SW1', 'switch_spst_toggle'],
+      ['T1', 'transformer'],
+    ]
+    const board = deriveBoard(parts(defs))
+    expect(board.placements.map((p) => p.partId)).toEqual(['R1'])
+    const skipped = unplacedParts(
+      parts(defs),
+      wires([
+        ['R1', 'terminal_b', 'SW1', 'a'],
+        ['SW1', 'b', 'T1', 'primary_positive'],
+        ['T1', 'primary_negative', 'R1', 'terminal_a'],
+      ]),
+      board,
+    )
+    expect(skipped).toEqual([
+      { partId: 'SW1', definition: 'switch_spst_toggle', reason: 'no-footprint' },
+      { partId: 'T1', definition: 'transformer', reason: 'no-footprint' },
+    ])
+    // The pin count still counts pins, not parts: SW1's two pins + T1's two pins.
+    expect(
+      offBoardPins(
+        parts(defs),
+        wires([
+          ['R1', 'terminal_b', 'SW1', 'a'],
+          ['SW1', 'b', 'T1', 'primary_positive'],
+          ['T1', 'primary_negative', 'R1', 'terminal_a'],
+        ]),
+        board,
+      ),
+    ).toBe(4)
+  })
+
+  test('a placed part whose terminal has no pad is terminal-unmapped, not hidden', () => {
+    const defs: [string, string][] = [
+      ['R1', 'resistor'],
+      ['R2', 'resistor'],
+    ]
+    const board = deriveBoard(parts(defs))
+    const skipped = unplacedParts(
+      parts(defs),
+      wires([['R1', 'not_a_terminal', 'R2', 'terminal_a']]),
+      board,
+    )
+    expect(skipped).toEqual([{ partId: 'R1', definition: 'resistor', reason: 'terminal-unmapped' }])
+    expect(
+      offBoardPins(parts(defs), wires([['R1', 'not_a_terminal', 'R2', 'terminal_a']]), board),
+    ).toBe(1)
   })
 })
 

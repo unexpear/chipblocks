@@ -53,7 +53,11 @@ import { refusalHeadline } from '../solver-budget.ts'
 import { analyzeTiming } from '../static-timing.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
 import { binaryToBcd8 } from './bin2bcd.ts'
+import { blockAnalysisInputKey } from './block-analysis.ts'
+import { BlockAnalysis } from './block-analysis.tsx'
+import { patchBlockPort, removeBlockPort } from './block-contracts.ts'
 import { type AddableTerminal, BlockInspector, type BlockPortPatch } from './block-inspector.tsx'
+import { BlockParameters } from './block-parameters.tsx'
 import { BlockViewer } from './block-viewer.tsx'
 import {
   type BlockData,
@@ -117,6 +121,7 @@ import { DrawProgressCard } from './draw-progress.tsx'
 import type { Footprint } from './footprint.ts'
 import { BOM_VALUE_PARAMS, terminalForPad } from './footprint-assignment.ts'
 import { FootprintEditor } from './footprint-editor.tsx'
+import { chipdbTextOf, compileToIce40, ICE40_ONE_TILE_POOL } from './fpga-compile.ts'
 import { type ChipDescriptionFile, identifyBitstream, openFpgaDesign } from './fpga-open.ts'
 import {
   CrtScreenContext,
@@ -129,6 +134,7 @@ import {
   designFitPadding,
   type FpgaPanel,
   FpgaReportCard,
+  type Ice40CompileReport,
   type NetlistReport,
   NetlistReportCard,
   REPORT_MARGIN,
@@ -147,7 +153,6 @@ import {
   blockIsLogicCompatible,
   type CompiledLogic,
   compileLogic,
-  isLogicGate,
   type LogicResult,
   type simulateLogic,
   stepLogic,
@@ -171,6 +176,8 @@ import {
 } from './net-edge.tsx'
 import { inspectNet, type NetInspectorNode } from './net-inspector.ts'
 import { NetInspector } from './net-inspector.tsx'
+import { networkName } from './network-names.ts'
+import { NetworkOverview } from './network-overview.tsx'
 import { nodesNeedingRemeasure, useCoalescedUpdateNodeInternals } from './node-internals.ts'
 import { routeAllWires, type WireReq } from './orthogonal-route.ts'
 import { detectOutputContention } from './output-contention.ts'
@@ -205,9 +212,18 @@ import {
   profileBBox,
   type Recess,
   type Rotation,
+  unplacedParts,
 } from './pcb-board.ts'
 import { runDrc } from './pcb-drc.ts'
-import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
+import {
+  type BomRow,
+  buildManufacturingZip,
+  type FabInputs,
+  formatUnplacedPart,
+  type ManufacturingFile,
+  manufacturingFileTexts,
+} from './pcb-fab.ts'
+import { GerberCheck } from './pcb-gerber-view.tsx'
 import { type BoardLayerId, boardLayers, copperLayerOf } from './pcb-layers.ts'
 import { MEASURE_UNITS, type Measurement, type MeasureUnit } from './pcb-measure.ts'
 import {
@@ -232,7 +248,7 @@ import {
   widthForImpedance,
 } from './pcb-stackup.ts'
 import { BoardView, PcbViewControls } from './pcb-workspace.tsx'
-import { canvasWorld, userPartAliases } from './pipeline/canvas-world.ts'
+import { attachInternalCircuits, canvasWorld, userPartAliases } from './pipeline/canvas-world.ts'
 import { isLogicFidelity } from './pipeline/partition.ts'
 import {
   lightCastInputs,
@@ -250,6 +266,8 @@ import { SchematicHierarchy } from './schematic-hierarchy.tsx'
 import { fastestSourceHz, ScopePlot, scopeProbeKey, scopeWindow, TRACE_COLORS } from './scope.tsx'
 import { H_DIVISIONS, scopeRecordSteps } from './scope-scales.ts'
 import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
+import { SimulationTestBench } from './simulation-test-bench.tsx'
+import type { SavedSimulationTest } from './simulation-test-suite.ts'
 import { SParamPanel } from './sparam-panel.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { StagedDrawSession } from './staged-draw-session.ts'
@@ -262,6 +280,7 @@ import { frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
 import {
   flipFlopTiming,
+  isChipTimingLeaf,
   isClockedBlock,
   isSequentialBlock,
   traceTimingPaths,
@@ -369,6 +388,7 @@ declare global {
       saveVerilogData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       saveFabZip?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       onExportGdsRequest?: (callback: () => void) => void
+      onCompileIce40Request?: (callback: () => void) => () => void
       saveGdsData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       onExportLefRequest?: (callback: () => void) => void
       saveLefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
@@ -615,7 +635,7 @@ type PreDrawCanvas = {
   onStop: (() => void) | undefined
 }
 
-function circuitFileToFlow(file: CircuitFile): CanvasFromFile {
+export function circuitFileToFlow(file: CircuitFile): CanvasFromFile {
   const tooBig = tooBigFileToDrawReason(file)
   if (tooBig !== undefined) return { ok: false, reason: tooBig }
   const nodes = file.nodes.map((n) => ({
@@ -628,6 +648,7 @@ function circuitFileToFlow(file: CircuitFile): CanvasFromFile {
     position: { x: n.x, y: n.y },
     data: {
       definition: n.definition,
+      ...(networkName(n.networkGroup) ? { networkGroup: networkName(n.networkGroup) } : {}),
       label: n.block?.name ?? n.id,
       ...(n.rotation ? { rotation: n.rotation } : {}),
       ...(n.parameters ? { parameters: n.parameters } : {}),
@@ -652,10 +673,15 @@ function circuitFileToFlow(file: CircuitFile): CanvasFromFile {
     type: 'net',
     deletable: true,
     style: { stroke: DRAWN },
-    ...(w.waypoints || w.curved || typeof w.gaugeAwg === 'number' || typeof w.material === 'string'
+    ...(w.netName ||
+    w.waypoints ||
+    w.curved ||
+    typeof w.gaugeAwg === 'number' ||
+    typeof w.material === 'string'
       ? {
           data: {
             ...(w.waypoints ? { waypoints: w.waypoints } : {}),
+            ...(networkName(w.netName) ? { netName: networkName(w.netName) } : {}),
             ...(w.curved ? { curved: true } : {}),
             ...(typeof w.curveRadius === 'number' ? { curveRadius: w.curveRadius } : {}),
             ...(typeof w.gaugeAwg === 'number' ? { gaugeAwg: w.gaugeAwg } : {}),
@@ -2633,6 +2659,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // browser-opened project restores all of it instead of dropping to defaults. A refused project
       // seeds nothing: a board laid out for a circuit that is not here would be a board of ghosts.
       boardFab: boardFabStateFromFile(openable),
+      simulationTests: structuredClone(openable?.simulationTests ?? []),
       refusedReason,
       stagedFlow: stageOnMount ? wholeFlow : undefined,
     }
@@ -2677,7 +2704,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // Output / driver-contention runs off the live nodes+edges (so it updates the instant you wire or
   // retype a pin); the tri-state rule also reads each enable's level from the latest solve (`live`).
   const contentionFindings = useMemo(
-    () => detectOutputContention(nodes, edges, live),
+    () => detectOutputContention(attachInternalCircuits(nodes), edges, live),
     [nodes, edges, live],
   )
   const shownHealth = useMemo(
@@ -2700,7 +2727,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     }
     const timingOpts = { wireCapacitance: 5e-12, defaultInputCapacitance: 120e-12 }
     const registerTiming = flipFlopTiming(supplyVoltage, timingOpts)
-    const paths = traceTimingPaths(nodes, edges, { supplyVoltage, ...timingOpts })
+    const paths = traceTimingPaths(attachInternalCircuits(nodes), edges, {
+      supplyVoltage,
+      ...timingOpts,
+    })
     const report = analyzeTiming(paths, registerTiming, clockPeriod, 0)
     const hasRegisters = nodes.some((n) => {
       const data = n.data as { definition?: string; block?: BlockData }
@@ -2709,7 +2739,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         (data?.block ? isClockedBlock(data.block) : false)
       )
     })
-    return { report, hasRegisters, clockDetected: Number.isFinite(clockPeriod) }
+    return { report, paths, hasRegisters, clockDetected: Number.isFinite(clockPeriod) }
   }, [nodes, edges, live])
   const [readings, setReadings] = useState(initial.readings)
   const [terminalVolts, setTerminalVolts] = useState(initial.terminalVolts)
@@ -2717,6 +2747,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [solvedWorld, setSolvedWorld] = useState(initial.world)
   // The latest Solution — the Math panel derives its equations from it.
   const [solution, setSolution] = useState(initial.solution)
+  const [blockAnalysisKey, setBlockAnalysisKey] = useState<string | null>(null)
   // The settled electro-thermal temperatures behind that solution.
   const [solvedTemperatures, setSolvedTemperatures] = useState(initial.temperaturesC)
   // Did the thermal loop settle? False = runaway — the Math panel flags it.
@@ -2809,6 +2840,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       placements: SavedPlacement[]
       chipLayout: ChipLayout
       boardProfile: BoardProfile | null
+      simulationTests: SavedSimulationTest[]
     }>(),
   )
   const snapshotCanvas = useCallback((): {
@@ -2817,6 +2849,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     placements: SavedPlacement[]
     chipLayout: ChipLayout
     boardProfile: BoardProfile | null
+    simulationTests: SavedSimulationTest[]
   } => {
     const canvas = JSON.parse(
       JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current }),
@@ -2827,6 +2860,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     // (fresh arrays / points) so a later edit can't reach back and mutate a stored snapshot.
     return {
       ...canvas,
+      simulationTests: structuredClone(simulationTestsRef.current),
       placements: placementsToSaved(pcbPlacementsRef.current),
       chipLayout: {
         ...chipLayoutRef.current,
@@ -2844,6 +2878,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     },
     [snapshotCanvas],
   )
+  const [simulationTests, setSimulationTests] = useState<SavedSimulationTest[]>(
+    () => initial.simulationTests,
+  )
+  const simulationTestsRef = useRef(simulationTests)
+  simulationTestsRef.current = simulationTests
 
   // What the canvas is drawing right now, or null when it is not drawing. Real counts, straight from the
   // stager — the card renders this and nothing else, so there is no second, prettier version of the truth.
@@ -3001,6 +3040,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // The card the user last dismissed, kept so it can be opened again. A report that can only ever be read once
   // is a report the user loses the moment they click the ×, and the parts it is about stay on the canvas.
   const [fpgaPanelDismissed, setFpgaPanelDismissed] = useState<FpgaPanel | null>(null)
+  const [ice40Compile, setIce40Compile] = useState<Ice40CompileReport | null>(null)
   const pendingBitstream = useRef<{ name: string; bytes: Uint8Array } | null>(null)
   // A brief confirmation after "Save as Template" lands the current canvas in My Templates.
   const [templateSaved, setTemplateSaved] = useState<string | null>(null)
@@ -3041,6 +3081,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         pcbVScoredSidesRef.current,
         pcbProfileRef.current ?? undefined,
         allUserFootprints(),
+        simulationTestsRef.current,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -3096,6 +3137,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         pcbVScoredSidesRef.current,
         pcbProfileRef.current ?? undefined,
         allUserFootprints(),
+        simulationTestsRef.current,
       )
       const name = project.name || 'My Template'
       const template: UserTemplate = {
@@ -3218,6 +3260,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setEdges(flow.edges)
       setPcbPlacements(new Map()) // imported netlists start from their own auto board
       setChipLayout(EMPTY_CHIP_LAYOUT) // …and a fresh chip floorplan
+      setSimulationTests([])
       setUserTraces([]) // …and no hand-laid copper (only what the auto-router lays)
       setUserVias([])
       setPcbStackupOptions(DEFAULT_STACKUP_OPTIONS) // …on the default 2-layer stack-up
@@ -3326,6 +3369,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setEdges(flow.edges)
       setPcbPlacements(new Map())
       setChipLayout(EMPTY_CHIP_LAYOUT)
+      setSimulationTests([])
       setUserTraces([])
       setUserVias([])
       setPcbStackupOptions(DEFAULT_STACKUP_OPTIONS)
@@ -3492,6 +3536,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // When auto-routing is on, hand the solve each wire's actual routed path so its resistance is
       // the routed length, not the straight-line distance (closes the draw-but-don't-measure gap).
       const routed = autoRouteWiresRef.current ? wireGeomsRef.current : undefined
+      const analysisKey = blockAnalysisInputKey(
+        nodeList,
+        edgeList,
+        projectAmbientRef.current,
+        routed,
+      )
       const solveStart = performance.now()
       const solved = solveCanvasDispatch(
         nodeList,
@@ -3510,6 +3560,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setTerminalVolts(solved.terminalVolts)
       setSolvedWorld(solved.world)
       setSolution(solved.solution)
+      setBlockAnalysisKey(analysisKey)
       setSolvedTemperatures(solved.temperaturesC)
       setThermalConverged(solved.thermalConverged)
       setRelayStates(solved.relayStates)
@@ -3548,6 +3599,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     setEdges(result.restored.edges)
     setPcbPlacements(placementsFromSaved(result.restored.placements))
     setChipLayout(result.restored.chipLayout ?? EMPTY_CHIP_LAYOUT)
+    setSimulationTests(structuredClone(result.restored.simulationTests ?? []))
     setPcbProfile(result.restored.boardProfile ?? null)
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
@@ -3559,6 +3611,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     setEdges(result.restored.edges)
     setPcbPlacements(placementsFromSaved(result.restored.placements))
     setChipLayout(result.restored.chipLayout ?? EMPTY_CHIP_LAYOUT)
+    setSimulationTests(structuredClone(result.restored.simulationTests ?? []))
     setPcbProfile(result.restored.boardProfile ?? null)
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
@@ -3616,6 +3669,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [verilogText, setVerilogText] = useState(STARTER_VERILOG)
   // Run-trace inspector: clock a digital design N cycles and flag per-cycle anomalies.
   const [traceOpen, setTraceOpen] = useState(false)
+  const [testBenchOpen, setTestBenchOpen] = useState(false)
   // Stress bench: ramp ambient / supply / a component's value and map each part's safe operating window.
   const [stressOpen, setStressOpen] = useState(false)
   // The digital blocks on the canvas the trace inspector can clock (gates-all-the-way-down, with I/O).
@@ -3623,9 +3677,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const traceBlocks = useMemo<TraceBlock[]>(() => {
     if (!traceOpen) return []
     const out: TraceBlock[] = []
-    for (const n of nodes) {
+    for (const n of attachInternalCircuits(nodes)) {
       const data = n.data as { block?: BlockData; label?: string }
-      if (n.type === 'block' && data.block && blockIsLogicCompatible(data.block)) {
+      if (data.block && blockIsLogicCompatible(data.block)) {
         out.push({ id: n.id, label: data.label ?? data.block.name, block: data.block })
       }
     }
@@ -3637,7 +3691,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setNodes((current) =>
         current.map((node) => {
           if (node.id !== blockId) return node
-          const block = (node.data as { block?: BlockData }).block
+          const block = (
+            attachInternalCircuits([node])[0]?.data as { block?: BlockData } | undefined
+          )?.block
           if (!block) return node
           return { ...node, data: { ...node.data, block: { ...block, tests } } }
         }),
@@ -3674,13 +3730,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       )
       if (f !== undefined && f > 0) clockPeriod = Math.min(clockPeriod, 1 / f)
     }
-    // Descend through composite blocks + multi-bit registers, stopping at logic gates and the atomic D
-    // flip-flop (the register the synthesizer and register blocks are built from) so the flops read as
-    // registers and the gates between them as combinational paths.
+    // Descend through composite blocks + multi-bit registers, stopping at MOSFET-level gates and the
+    // atomic D flip-flop so flops read as registers and AND/OR/… expand to characterizable transistors.
     const flat = flattenBlocks(
       nodes as unknown as BlockNodeLike[],
       edges as unknown as BlockEdgeLike[],
-      (b) => isLogicGate(b) || b.name === 'D Flip-Flop',
+      isChipTimingLeaf,
     )
     const timingOpts = { wireCapacitance: 5e-12, defaultInputCapacitance: 120e-12 }
     const paths = traceTimingPaths(flat.nodes, flat.edges, {
@@ -3730,6 +3785,72 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     regenerateChipFloorplan()
     setChipLayout((current) => ({ ...current, overrides: [], sourceSignature: chipLiveSignature }))
   }, [regenerateChipFloorplan, chipLiveSignature])
+
+  // Compile to iCE40 — report only. The File menu and the Chip-level button share this. The chipdb comes
+  // back through the existing fpga:chip-description IPC (family ice40, device 384). No .bin is written.
+  const runIce40Compile = useCallback(() => {
+    const ask = window.chipblocks?.requestChipDescription
+    const fail = (reason: string) => {
+      setFpgaPanel({
+        kind: 'refused',
+        fileName: 'iCE40',
+        title: 'Could not compile to iCE40',
+        reason,
+        canChooseDescription: false,
+      })
+      setFpgaPanelDismissed(null)
+    }
+    if (ask === undefined) {
+      fail(
+        'This window cannot ask for the iCE40 chip description. Nothing was compiled, and no bitstream file was written.',
+      )
+      return
+    }
+    void ask('ice40', '384', false).then(async (silent) => {
+      const remembered = silent.ok && (silent.files?.length ?? 0) > 0
+      const got = remembered ? silent : await ask('ice40', '384', true)
+      if (!got.ok || (got.files?.length ?? 0) === 0) {
+        fail(
+          'No iCE40 chip description was chosen (the Project IceStorm chipdb). Nothing was compiled, and no bitstream file was written.',
+        )
+        return
+      }
+      const text = chipdbTextOf(got.files ?? [])
+      if (text === null) {
+        fail(
+          'The chosen file is not an icebox chipdb (it needs a .device line). Nothing was compiled, and no bitstream file was written.',
+        )
+        return
+      }
+      const result = compileToIce40(
+        nodes as unknown as BlockNodeLike[],
+        edges as unknown as BlockEdgeLike[],
+        text,
+        ICE40_ONE_TILE_POOL,
+      )
+      const report: Ice40CompileReport = {
+        lutCount: result.luts.length,
+        placed: result.autoPlace.placed,
+        exhaustive: result.autoPlace.exhaustive,
+        attempts: result.autoPlace.attempts,
+        unbound: [...result.autoPlace.result.unbound],
+        reason: result.autoPlace.reason,
+        honesty: result.honesty,
+      }
+      setIce40Compile(report)
+      setFpgaPanel({ kind: 'compile', report })
+      setFpgaPanelDismissed(null)
+    })
+  }, [nodes, edges])
+
+  useEffect(() => {
+    if (!active) return
+    const bridge = window.chipblocks
+    if (bridge?.onCompileIce40Request === undefined) return
+    return bridge.onCompileIce40Request(() => {
+      runIce40Compile()
+    })
+  }, [active, runIce40Compile])
 
   // Export GDS: turn the placed chip floorplan into a real GDSII byte stream (gds.ts) and hand the bytes
   // to main to write — the chip-side twin of the manufacturing-ZIP export, and the "exportable" payoff of
@@ -4187,14 +4308,40 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         : 0,
     [pcbActive, nodes, edges, pcbBoard],
   )
+  // The parts behind that count — named, with why each one failed the pad-mapping test.
+  const pcbUnplaced = useMemo(
+    () =>
+      pcbActive
+        ? unplacedParts(
+            nodes.map((n) => ({ id: n.id, definition: (n.data as DeviceNodeData).definition })),
+            edges,
+            pcbBoard,
+          )
+        : [],
+    [pcbActive, nodes, edges, pcbBoard],
+  )
+  // Controlled-depth recesses (cavity / stepped boards) — rectangular pockets milled into the board.
+  // Design + 3-D visualisation for now; export is gated until the depth-mill output exists.
+  const [boardRecesses, setBoardRecesses] = useState<Recess[]>([])
   // Why the manufacturing ZIP can't be exported yet — empty exactly when the board is complete
-  // (parts placed, everything routed, DRC clean, no wired pin missing its footprint). The export
-  // button reads this: the ZIP is never offered for a board a fab would manufacture into garbage.
+  // (parts placed, everything routed, DRC clean, no wired pin missing its footprint, no recess
+  // the ZIP cannot mill). The export button reads this: the ZIP is never offered for a board a
+  // fab would manufacture into garbage. Recesses are included so the button matches the report.
   const pcbFabProblems = useMemo(() => {
     const problems: string[] = []
     if (pcbBoard.placements.length === 0) problems.push('no parts on the board')
     if (pcbOffBoard > 0) {
-      problems.push(`${pcbOffBoard} wired pin${pcbOffBoard === 1 ? '' : 's'} not on the board`)
+      const names = pcbUnplaced.map(formatUnplacedPart).join(', ')
+      problems.push(
+        names.length > 0
+          ? `${pcbOffBoard} wired pin${pcbOffBoard === 1 ? '' : 's'} not on the board: ${names}`
+          : `${pcbOffBoard} wired pin${pcbOffBoard === 1 ? '' : 's'} not on the board`,
+      )
+    }
+    if (boardRecesses.length > 0) {
+      problems.push(
+        `${boardRecesses.length} controlled-depth recess${boardRecesses.length === 1 ? '' : 'es'}`,
+      )
     }
     if (pcbMergedRouting.unrouted.length > 0) {
       problems.push(
@@ -4205,10 +4352,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       problems.push(`${pcbDrc.length} DRC violation${pcbDrc.length === 1 ? '' : 's'}`)
     }
     return problems
-  }, [pcbBoard, pcbOffBoard, pcbMergedRouting, pcbDrc])
-  // Controlled-depth recesses (cavity / stepped boards) — rectangular pockets milled into the board.
-  // Design + 3-D visualisation for now; export is gated until the depth-mill output exists.
-  const [boardRecesses, setBoardRecesses] = useState<Recess[]>([])
+  }, [pcbBoard, pcbOffBoard, pcbUnplaced, boardRecesses, pcbMergedRouting, pcbDrc])
   // The PCB view mode: the full flat layout; the LAMINATION as a stack of paper (one sheet at a
   // time, paged up/down); or the 3-D exploded view (the sheets pulled apart in space, vias bridging
   // the copper planes). The drawable layers come from the stack-up.
@@ -4370,14 +4514,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     }
   }, [workspaceMode, boardTool])
   const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
+  const [gerberCheck, setGerberCheck] = useState<ManufacturingFile[] | null>(null)
   // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
   // to the parts, wires or placements (or loading another file, which replaces all three) makes
   // it stale, and a stale success note is exactly the trust failure the export gating prevents.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the deps ARE the trigger — any board-defining change invalidates the note
   useEffect(() => {
     setPcbExportNote(null)
-  }, [nodes, edges, pcbPlacements, userTraces, userVias])
-  const onExportFabZip = useCallback(() => {
+    setGerberCheck(null)
+  }, [nodes, edges, pcbPlacements, userTraces, userVias, pcbStackup])
+  const assembleFabInputs = useCallback((): FabInputs => {
     // The archive is assembled by the deterministic engine (Gerbers, drill, BOM, placement,
     // validation report) from the same derived board state the panel shows.
     const file = serializeCircuit(
@@ -4409,12 +4555,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         },
       ]
     })
-    const fab = buildManufacturingZip({
+    return {
       board: pcbBoard,
       ratsnest: pcbRatsnest,
       routing: pcbMergedRouting,
       drc: pcbDrc,
       offBoardPins: pcbOffBoard,
+      unplacedParts: pcbUnplaced,
       bomRows,
       netlistText: netlist,
       netlistUnsupported: unsupported,
@@ -4422,14 +4569,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       recesses: boardRecesses,
       overCurrentEvaluated: !pcbOverCurrentUnevaluated,
       when: new Date(),
-    })
-    if (fab.validation.status !== 'pass') {
-      setPcbExportNote(`not exported — ${fab.validation.problems.join(' ')}`)
-      return
     }
-    void window.chipblocks?.saveFabZip?.(fab.bytes).then((r) => {
-      setPcbExportNote(r.ok && r.path !== undefined ? `manufacturing ZIP saved — ${r.path}` : null)
-    })
   }, [
     nodes,
     edges,
@@ -4438,10 +4578,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     pcbMergedRouting,
     pcbDrc,
     pcbOffBoard,
+    pcbUnplaced,
     pcbStackup,
     boardRecesses,
     pcbOverCurrentUnevaluated,
   ])
+  const onExportFabZip = useCallback(() => {
+    const fab = buildManufacturingZip(assembleFabInputs())
+    if (fab.validation.status !== 'pass') {
+      setPcbExportNote(`not exported — ${fab.validation.problems.join(' ')}`)
+      return
+    }
+    void window.chipblocks?.saveFabZip?.(fab.bytes).then((r) => {
+      setPcbExportNote(r.ok && r.path !== undefined ? `manufacturing ZIP saved — ${r.path}` : null)
+    })
+  }, [assembleFabInputs])
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
   // the active tool) are injected. Destructured to the same names the toolbar, panel and canvas
@@ -5420,6 +5571,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         sheet: sheetSettingsRef.current,
         placements: pcbPlacementsRef.current,
         chipLayout: chipLayoutRef.current,
+        simulationTests: structuredClone(simulationTestsRef.current),
         stackup: pcbStackupOptionsRef.current,
         vScoredSides: pcbVScoredSidesRef.current,
         boardProfile: pcbProfileRef.current,
@@ -5449,6 +5601,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           // may be inherited on a collision. Older files with none load on the defaults.
           setPcbPlacements(placementsFromSaved(result.file.placements))
           setChipLayout(result.file.chipLayout ?? EMPTY_CHIP_LAYOUT)
+          setSimulationTests(structuredClone(result.file.simulationTests ?? []))
           setPcbStackupOptions(result.file.stackup ?? DEFAULT_STACKUP_OPTIONS)
           setPcbVScoredSides(result.file.vScoredSides ?? [])
           setPcbProfile(result.file.boardProfile ?? null)
@@ -5463,6 +5616,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           setSheetSettings(previous.sheet)
           setPcbPlacements(previous.placements)
           setChipLayout(previous.chipLayout)
+          setSimulationTests(previous.simulationTests)
           setPcbStackupOptions(previous.stackup)
           setPcbVScoredSides(previous.vScoredSides)
           setPcbProfile(previous.boardProfile)
@@ -6373,13 +6527,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           if (!block) return n
           const edited = block.ports.map((p) => {
             if (p.id !== portId) return p
-            const next = { ...p, ...patch }
-            // An enable with an empty pin id is the "(no enable)" choice — drop the field entirely.
-            if (next.enable?.pin === '') {
-              const { enable: _enable, ...rest } = next
-              return rest
-            }
-            return next
+            return patchBlockPort(p, patch)
           })
           // Changing a side needs the auto-distribute layout, so drop the legacy offsets; name/kind
           // keep them (a built-in block's hand-laid look survives a rename).
@@ -6464,7 +6612,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           if (n.id !== blockId) return n
           const block = (n.data as { block?: BlockData }).block
           if (!block) return n
-          const ports = block.ports.filter((p) => p.id !== portId)
+          const ports = removeBlockPort(block.ports, portId)
           return { ...n, data: { ...n.data, block: { ...block, ports } } }
         }),
       )
@@ -9292,6 +9440,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // A selected circuit BLOCK → the pinout editor (instead of the part properties).
   const selectedBlock =
     selectedNode?.type === 'block' ? (selectedNode.data as { block?: BlockData }).block : undefined
+  const selectedInternal = selectedNode
+    ? (attachInternalCircuits([selectedNode])[0]?.data as { block?: BlockData } | undefined)?.block
+    : undefined
   // The block's internal terminals NOT yet exposed as pins — offered in the "add pin" picker so a
   // pinout can be pre-defined before anything is wired out.
   const availableTerminals: AddableTerminal[] = !selectedBlock
@@ -9333,7 +9484,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const selectedNet =
     selectedEdge && !selectedPart && selectedEdge.sourceHandle && selectedEdge.targetHandle
       ? inspectNet(
-          nodes.map(
+          attachInternalCircuits(nodes).map(
             (node): NetInspectorNode => ({
               id: node.id,
               ...(node.data === undefined
@@ -9457,6 +9608,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             onReplace={onChipReplace}
             onMoveCell={onChipCellMove}
             light={light}
+            namedCellDrc={namedCellDrc}
+            namedCellLvs={namedCellLvs}
+            ice40Report={ice40Compile}
+            onCompileIce40={runIce40Compile}
           />
         )}
         {/* The BOARD WORKSPACE — the physical board as a full-size editing surface filling the main
@@ -10116,7 +10271,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
               setFpgaPanel(fpgaPanelDismissed)
               if (fpgaPanelDismissed.kind === 'read') fitDesign(true)
             }}
-            title="Show again what was read out of the chip file, and what could not be"
+            title={
+              fpgaPanelDismissed.kind === 'compile'
+                ? 'Show the iCE40 compile report again'
+                : 'Show again what was read out of the chip file, and what could not be'
+            }
             style={{
               position: 'absolute',
               top: REPORT_MARGIN,
@@ -10131,7 +10290,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
               fontSize: 11,
             }}
           >
-            Chip-file report
+            {fpgaPanelDismissed.kind === 'compile' ? 'iCE40 compile report' : 'Chip-file report'}
           </button>
         ) : null}
         {templateSaved !== null ? (
@@ -10168,6 +10327,25 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             onTextChange={setVerilogText}
             onSynthesize={synthesizeVerilogToCanvas}
             onClose={() => setVerilogOpen(false)}
+          />
+        ) : null}
+        {testBenchOpen ? (
+          <SimulationTestBench
+            nodes={nodes}
+            edges={edges}
+            tests={simulationTests}
+            ambientC={projectAmbientC}
+            routedGeoms={autoRouteWires ? wireGeoms : undefined}
+            onClose={() => setTestBenchOpen(false)}
+            onChange={(next) => {
+              checkpointAction('simulation-tests')
+              setSimulationTests(next)
+            }}
+            onSelect={(ids) => {
+              setNodes((current) =>
+                current.map((node) => ({ ...node, selected: ids.includes(node.id) })),
+              )
+            }}
           />
         ) : null}
         {traceOpen ? (
@@ -10724,145 +10902,238 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             title: 'Tools',
             visible: true,
             content: (
-              <ToolbarItems
-                tool={tool}
-                onTool={setTool}
-                wireStyle={wire.wireStyle}
-                onWireStyle={wire.setWireStyle}
-                curveRadius={wire.wireCurveRadius}
-                onCurveRadius={wire.setWireCurveRadius}
-                wireGauge={wireGauge}
-                onWireGauge={setWireGauge}
-                alwaysOn={alwaysOn}
-                onAlwaysOn={setAlwaysOn}
-                projectAmbientC={projectAmbientC}
-                onProjectAmbient={onProjectAmbient}
-                onSolve={handleSolve}
-                solveBlocked={drawProgress !== null}
-                onAddPart={() => setPickerOpen(true)}
-                onNewPart={() => setNewPartOpen(true)}
-                onNewFootprint={() => setNewFootprintOpen(true)}
-                onScope={runScope}
-                onTimeline={() => setTimelineOpen((open) => !open)}
-                onMath={() => setShowMath((open) => !open)}
-                onBode={() => setBodeOpen((open) => !open)}
-                onReflection={() => setReflectionOpen((open) => !open)}
-                onDistortion={() => setDistortionOpen((open) => !open)}
-                onSParam={() => setSparamOpen((open) => !open)}
-                onPcb={() => setPcbOpen((open) => !open)}
-                onPlan={() => setPlanOpen((open) => !open)}
-                onVerilog={() => setVerilogOpen((open) => !open)}
-                onTrace={() => setTraceOpen((open) => !open)}
-                onStress={() => setStressOpen((open) => !open)}
-                workspace={workspaceMode}
-                onWorkspace={onWorkspace}
-                onWorstCase={runWorstCase}
-                onGroup={() => setGroupPrompt({ name: '', error: null })}
-                canGroup={selectedCount >= 2}
-                onClipboard={() => setShowClipboard((open) => !open)}
-                clipboardCount={clipboard.copies.length + (clipboard.cut !== null ? 1 : 0)}
-                lens={lens}
-                onLens={selectLens}
-                flow={flow}
-                onFlow={selectFlow}
-                connectMode={connect.connectMode}
-                onConnectMode={connect.setConnectMode}
-                connectQueueCount={connect.connectQueue.length}
-                onRouteConnectQueue={connect.routeConnectQueue}
-                onClearConnectQueue={connect.clearConnectQueue}
-              />
+              <>
+                <button
+                  type="button"
+                  disabled={drawProgress !== null}
+                  onClick={() => setTestBenchOpen((open) => !open)}
+                >
+                  Tests and preflight
+                </button>
+                <ToolbarItems
+                  tool={tool}
+                  onTool={setTool}
+                  wireStyle={wire.wireStyle}
+                  onWireStyle={wire.setWireStyle}
+                  curveRadius={wire.wireCurveRadius}
+                  onCurveRadius={wire.setWireCurveRadius}
+                  wireGauge={wireGauge}
+                  onWireGauge={setWireGauge}
+                  alwaysOn={alwaysOn}
+                  onAlwaysOn={setAlwaysOn}
+                  projectAmbientC={projectAmbientC}
+                  onProjectAmbient={onProjectAmbient}
+                  onSolve={handleSolve}
+                  solveBlocked={drawProgress !== null}
+                  onAddPart={() => setPickerOpen(true)}
+                  onNewPart={() => setNewPartOpen(true)}
+                  onNewFootprint={() => setNewFootprintOpen(true)}
+                  onScope={runScope}
+                  onTimeline={() => setTimelineOpen((open) => !open)}
+                  onMath={() => setShowMath((open) => !open)}
+                  onBode={() => setBodeOpen((open) => !open)}
+                  onReflection={() => setReflectionOpen((open) => !open)}
+                  onDistortion={() => setDistortionOpen((open) => !open)}
+                  onSParam={() => setSparamOpen((open) => !open)}
+                  onPcb={() => setPcbOpen((open) => !open)}
+                  onPlan={() => setPlanOpen((open) => !open)}
+                  onVerilog={() => setVerilogOpen((open) => !open)}
+                  onTrace={() => setTraceOpen((open) => !open)}
+                  onStress={() => setStressOpen((open) => !open)}
+                  workspace={workspaceMode}
+                  onWorkspace={onWorkspace}
+                  onWorstCase={runWorstCase}
+                  onGroup={() => setGroupPrompt({ name: '', error: null })}
+                  canGroup={selectedCount >= 2}
+                  onClipboard={() => setShowClipboard((open) => !open)}
+                  clipboardCount={clipboard.copies.length + (clipboard.cut !== null ? 1 : 0)}
+                  lens={lens}
+                  onLens={selectLens}
+                  flow={flow}
+                  onFlow={selectFlow}
+                  connectMode={connect.connectMode}
+                  onConnectMode={connect.setConnectMode}
+                  connectQueueCount={connect.connectQueue.length}
+                  onRouteConnectQueue={connect.routeConnectQueue}
+                  onClearConnectQueue={connect.clearConnectQueue}
+                />
+              </>
             ),
           },
           properties: {
             title: 'Properties',
             visible: true,
-            content: selectedWire ? (
-              <div style={{ display: 'grid', gap: 12 }}>
-                {selectedNet ? <NetInspector inspection={selectedNet} /> : null}
-                <WireInspector
-                  wire={selectedWire}
-                  onGauge={(gaugeAwg) => onEditWireGauge(selectedWire.id, gaugeAwg)}
-                  onMaterial={(material) => onEditWireMaterial(selectedWire.id, material)}
-                />
-              </div>
-            ) : selectedBlock && selectedNode ? (
-              <BlockInspector
-                ports={selectedBlock.ports}
-                block={selectedBlock}
-                available={availableTerminals}
-                fidelity={(selectedNode.data as DeviceNodeData).fidelity ?? 'transistor'}
-                onFidelity={(f) => onSetFidelity(selectedNode.id, f)}
-                onEditPort={(portId, patch) => onEditBlockPort(selectedNode.id, portId, patch)}
-                onAddPort={(nodeId, handleId) => onAddBlockPort(selectedNode.id, nodeId, handleId)}
-                onReorderPort={(portId, dir) => onReorderBlockPort(selectedNode.id, portId, dir)}
-                onRemovePort={(portId) => onRemoveBlockPort(selectedNode.id, portId)}
-                onSaveAsPart={(partName) => {
-                  // Turn this block's REAL circuit into a reusable custom part (pins = the block's
-                  // pins; simulates as the circuit inside), register it, and persist it to the
-                  // personal library so it follows the user across projects.
-                  const result = userPartFromBlock(partName, 'U', selectedBlock)
-                  if (!result.ok) return result.error
-                  // Refuse at SAVE time anything the load-time validator would drop (e.g. a block that
-                  // arrived malformed from a hand-edited file) — otherwise the part works all session,
-                  // persists, then silently vanishes on the next launch.
-                  if (validateUserPart(result.part) === null) {
-                    return 'This block can’t be saved as a part — its internal circuit didn’t pass validation.'
-                  }
-                  if (!registerUserPart(result.part)) {
-                    return 'That name is a built-in part’s id — pick another.'
-                  }
-                  void persistAuthoredPart(result.part)
-                  return null
-                }}
-              />
-            ) : (
-              <PartInspector
-                selected={selectedPart}
-                reading={selectedPart ? readings.get(selectedPart.id) : undefined}
-                spotTrace={selectedPart ? crtTraces.get(selectedPart.id) : undefined}
-                materials={initial.materials}
-                projectAmbientC={projectAmbientC}
-                validMaterials={
-                  selectedPart
-                    ? (initial.validMaterialsByDef.get(selectedPart.definition) ?? {})
-                    : {}
-                }
-                onParam={(key, amount, unit) => {
-                  if (selectedPart) onEditParam(selectedPart.id, key, amount, unit)
-                }}
-                onEnum={(key, value) => {
-                  if (selectedPart) onEditEnum(selectedPart.id, key, value)
-                }}
-                onFootprint={(footprintId) => {
-                  if (selectedPart) onEditFootprint(selectedPart.id, footprintId)
-                }}
-                onMaterial={(key, value) => {
-                  if (selectedPart) onEditEnum(selectedPart.id, key, value)
-                }}
-                onDeriveResistance={() => {
-                  if (!selectedPart) return
-                  if (selectedPart.definition !== 'resistor') return
-                  const ohms = deriveResistorOhms(
-                    selectedPart.parameters,
-                    initial.materialResistivity,
-                  )
-                  if (ohms !== null) onEditParam(selectedPart.id, 'resistance', ohms)
-                }}
-                // An internal-circuit custom part gets the block's Simulate-as choice: show the
-                // module's EFFECTIVE engine (its tag, else the gates-only default) + let the user
-                // switch — the same data.fidelity seam blocks use.
-                {...(selectedPart &&
-                selectedNode &&
-                resolveUserPart(selectedPart.definition)?.internal !== undefined
-                  ? {
-                      moduleFidelity: (isLogicFidelity(selectedNode) ? 'logic' : 'transistor') as
-                        | 'logic'
-                        | 'transistor',
-                      onModuleFidelity: (f: 'transistor' | 'logic') =>
-                        onSetFidelity(selectedPart.id, f),
+            content: (
+              <>
+                {selectedInternal && selectedNode ? (
+                  <BlockAnalysis
+                    nodes={nodes}
+                    edges={edges}
+                    instanceId={selectedNode.id}
+                    ambientC={projectAmbientC}
+                    routes={autoRouteWires ? wireGeoms : undefined}
+                    solvedInputKey={blockAnalysisKey}
+                    context={{
+                      status: solution.status,
+                      converged: solution.converged,
+                      thermalConverged,
+                      relaysSettled,
+                      readings,
+                      paths: timing.paths,
+                    }}
+                  />
+                ) : null}
+                {selectedInternal && selectedNode ? (
+                  <BlockParameters
+                    key={selectedNode.id}
+                    instanceId={selectedNode.id}
+                    block={selectedInternal}
+                    onChange={(block) => {
+                      checkpointAction(`block-parameter:${selectedNode.id}`)
+                      setNodes((current) =>
+                        current.map((node) =>
+                          node.id === selectedNode.id
+                            ? { ...node, data: { ...node.data, block, fidelity: 'transistor' } }
+                            : node,
+                        ),
+                      )
+                    }}
+                  />
+                ) : null}
+                {selectedWire ? (
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    {selectedNet ? <NetInspector inspection={selectedNet} /> : null}
+                    <WireInspector
+                      wire={selectedWire}
+                      onGauge={(gaugeAwg) => onEditWireGauge(selectedWire.id, gaugeAwg)}
+                      onMaterial={(material) => onEditWireMaterial(selectedWire.id, material)}
+                    />
+                  </div>
+                ) : selectedBlock && selectedNode ? (
+                  <BlockInspector
+                    ports={selectedBlock.ports}
+                    block={selectedBlock}
+                    available={availableTerminals}
+                    fidelity={(selectedNode.data as DeviceNodeData).fidelity ?? 'transistor'}
+                    onFidelity={(f) => onSetFidelity(selectedNode.id, f)}
+                    onEditPort={(portId, patch) => onEditBlockPort(selectedNode.id, portId, patch)}
+                    onAddPort={(nodeId, handleId) =>
+                      onAddBlockPort(selectedNode.id, nodeId, handleId)
                     }
-                  : {})}
-              />
+                    onReorderPort={(portId, dir) =>
+                      onReorderBlockPort(selectedNode.id, portId, dir)
+                    }
+                    onRemovePort={(portId) => onRemoveBlockPort(selectedNode.id, portId)}
+                    onSaveAsPart={(partName) => {
+                      // Turn this block's REAL circuit into a reusable custom part (pins = the block's
+                      // pins; simulates as the circuit inside), register it, and persist it to the
+                      // personal library so it follows the user across projects.
+                      const result = userPartFromBlock(partName, 'U', selectedBlock)
+                      if (!result.ok) return result.error
+                      // Refuse at SAVE time anything the load-time validator would drop (e.g. a block that
+                      // arrived malformed from a hand-edited file) — otherwise the part works all session,
+                      // persists, then silently vanishes on the next launch.
+                      if (validateUserPart(result.part) === null) {
+                        return 'This block can’t be saved as a part — its internal circuit didn’t pass validation.'
+                      }
+                      if (!registerUserPart(result.part)) {
+                        return 'That name is a built-in part’s id — pick another.'
+                      }
+                      void persistAuthoredPart(result.part)
+                      return null
+                    }}
+                  />
+                ) : !selectedPart ? (
+                  <NetworkOverview
+                    nodes={nodes as NetInspectorNode[]}
+                    edges={edges}
+                    voltages={terminalVolts}
+                    readings={readings}
+                    timing={timing.report}
+                    timingPaths={timing.paths}
+                    onRename={(kind, ids, value) => {
+                      const name = networkName(value)
+                      const targets = new Set(ids)
+                      checkpointAction(`network-name:${kind}:${ids[0]}`)
+                      if (kind === 'net') {
+                        setEdges((current) =>
+                          current.map((edge) =>
+                            targets.has(edge.id)
+                              ? { ...edge, data: { ...edge.data, netName: name } }
+                              : edge,
+                          ),
+                        )
+                      } else {
+                        setNodes((current) =>
+                          current.map((node) =>
+                            targets.has(node.id)
+                              ? { ...node, data: { ...node.data, networkGroup: name } }
+                              : node,
+                          ),
+                        )
+                      }
+                    }}
+                    onSelect={(nodeIds, wireIds) => {
+                      const selectedNodes = new Set(nodeIds)
+                      const selectedWires = new Set(wireIds)
+                      setNodes((current) =>
+                        current.map((node) => ({ ...node, selected: selectedNodes.has(node.id) })),
+                      )
+                      setEdges((current) =>
+                        current.map((edge) => ({ ...edge, selected: selectedWires.has(edge.id) })),
+                      )
+                    }}
+                  />
+                ) : (
+                  <PartInspector
+                    selected={selectedPart}
+                    reading={selectedPart ? readings.get(selectedPart.id) : undefined}
+                    spotTrace={selectedPart ? crtTraces.get(selectedPart.id) : undefined}
+                    materials={initial.materials}
+                    projectAmbientC={projectAmbientC}
+                    validMaterials={
+                      selectedPart
+                        ? (initial.validMaterialsByDef.get(selectedPart.definition) ?? {})
+                        : {}
+                    }
+                    onParam={(key, amount, unit) => {
+                      if (selectedPart) onEditParam(selectedPart.id, key, amount, unit)
+                    }}
+                    onEnum={(key, value) => {
+                      if (selectedPart) onEditEnum(selectedPart.id, key, value)
+                    }}
+                    onFootprint={(footprintId) => {
+                      if (selectedPart) onEditFootprint(selectedPart.id, footprintId)
+                    }}
+                    onMaterial={(key, value) => {
+                      if (selectedPart) onEditEnum(selectedPart.id, key, value)
+                    }}
+                    onDeriveResistance={() => {
+                      if (!selectedPart) return
+                      if (selectedPart.definition !== 'resistor') return
+                      const ohms = deriveResistorOhms(
+                        selectedPart.parameters,
+                        initial.materialResistivity,
+                      )
+                      if (ohms !== null) onEditParam(selectedPart.id, 'resistance', ohms)
+                    }}
+                    // An internal-circuit custom part gets the block's Simulate-as choice: show the
+                    // module's EFFECTIVE engine (its tag, else the gates-only default) + let the user
+                    // switch — the same data.fidelity seam blocks use.
+                    {...(selectedPart &&
+                    selectedNode &&
+                    resolveUserPart(selectedPart.definition)?.internal !== undefined
+                      ? {
+                          moduleFidelity: (isLogicFidelity(selectedNode)
+                            ? 'logic'
+                            : 'transistor') as 'logic' | 'transistor',
+                          onModuleFidelity: (f: 'transistor' | 'logic') =>
+                            onSetFidelity(selectedPart.id, f),
+                        }
+                      : {})}
+                  />
+                )}
+              </>
             ),
           },
           scope: {
@@ -11114,7 +11385,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                       <span style={{ color: THEME.textFaint }}>
                         {' '}
                         · {pcbOffBoard} wired pin{pcbOffBoard === 1 ? '' : 's'} not on the board yet
-                        (no footprint)
+                        {pcbUnplaced.length > 0
+                          ? `: ${pcbUnplaced.map(formatUnplacedPart).join(', ')}`
+                          : ' (no footprint)'}
                       </span>
                     )}
                     {pcbBoard.placements.length > 0 &&
@@ -11160,6 +11433,29 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                     </button>
                     <button
                       type="button"
+                      aria-pressed={gerberCheck !== null}
+                      onClick={() => {
+                        if (gerberCheck !== null) {
+                          setGerberCheck(null)
+                          return
+                        }
+                        setGerberCheck(manufacturingFileTexts(assembleFabInputs()).files)
+                      }}
+                      title="Plot the Gerber and drill files this Export ZIP would write. plots ChipBlocks output only."
+                      style={{
+                        border: `1px solid ${THEME.borderStrong}`,
+                        background: gerberCheck !== null ? THEME.surfaceActive : THEME.surfaceInput,
+                        color: THEME.textSoft,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        padding: '2px 8px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Check Gerbers
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setPcbOpen(false)}
                       style={{
                         border: `1px solid ${THEME.borderStrong}`,
@@ -11178,6 +11474,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 {pcbExportNote !== null && (
                   <span style={{ fontSize: 11, color: THEME.textFaint }}>{pcbExportNote}</span>
                 )}
+                {gerberCheck !== null && <GerberCheck files={gerberCheck} />}
                 {pcbBoard.placements.length > 0 ? (
                   <>
                     <PcbViewControls

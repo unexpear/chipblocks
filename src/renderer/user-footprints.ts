@@ -13,7 +13,12 @@
  * one would silently re-shape a part that other projects rely on.
  */
 
-import { BUILTIN_FOOTPRINTS, type Footprint } from './footprint.ts'
+import {
+  BUILTIN_FOOTPRINTS,
+  type Footprint,
+  parseProvisionalFootprintId,
+  provisionalLand,
+} from './footprint.ts'
 
 const registry = new Map<string, Footprint>()
 
@@ -105,7 +110,10 @@ export function resolveFootprint(id: string): Footprint | undefined {
   if (authored !== undefined) return authored
   // Object.hasOwn: BUILTIN_FOOTPRINTS['constructor'] / ['__proto__'] would otherwise hand back an
   // inherited member instead of undefined.
-  return Object.hasOwn(BUILTIN_FOOTPRINTS, id) ? BUILTIN_FOOTPRINTS[id] : undefined
+  if (Object.hasOwn(BUILTIN_FOOTPRINTS, id)) return BUILTIN_FOOTPRINTS[id]
+  // Generated on demand — not a built-in package, so it never appears in the picker library.
+  const pinCount = parseProvisionalFootprintId(id)
+  return pinCount === undefined ? undefined : provisionalLand(pinCount)
 }
 
 /** Every footprint that can be placed right now — the shipped library plus whatever has been authored. */

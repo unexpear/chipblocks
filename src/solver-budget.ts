@@ -82,6 +82,8 @@ export function tooLargeMessage(unknowns: number, limit = MAX_MNA_UNKNOWNS): str
  * literals and neither may import the other (dc-solver and transient-solver would form a cycle).
  */
 export function refusalHeadline(status: string): string | undefined {
+  if (status === 'invalid-circuit')
+    return 'Not simulated — correct the invalid circuit contracts or connections.'
   if (status === 'too-large') return 'Not simulated — this circuit is too big to solve.'
   if (status === 'over-budget') return 'Simulation stopped early — it ran out of time.'
   return undefined

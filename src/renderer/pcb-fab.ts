@@ -1,4 +1,5 @@
 import { buildZip, type ZipEntry } from '../zip-store.ts'
+import { PROVISIONAL_LAND_NOTE, parseProvisionalFootprintId } from './footprint.ts'
 import {
   type Board,
   footprintByPlacement,
@@ -6,6 +7,8 @@ import {
   placePoint,
   type Ratsnest,
   type Recess,
+  type UnplacedPart,
+  unresolvedFootprintProblem,
 } from './pcb-board.ts'
 import type { DrcViolation } from './pcb-drc.ts'
 import {
@@ -78,9 +81,10 @@ import { SILK_TEXT } from './stroke-font.ts'
  * every wired pin on the board); the validation report inside restates exactly what was checked,
  * against which cited limits, so "why should I trust these files" always has an answer.
  *
- * Contents (flat, the shape fab upload forms expect): the eight Gerber layers (two copper, two
- * mask, two paste, silkscreen, edge cuts) + the drill file (KiCad-style names, Protel
- * extensions), bom.csv + placement.csv (the assembly pair, JLCPCB column conventions),
+ * Contents (flat, the shape fab upload forms expect): Gerbers for every copper layer the
+ * stack-up declares (top, each inner layer when copperLayers is 4 or 6, bottom) plus mask,
+ * paste, silkscreen and edge cuts + the drill file (KiCad-style names, Protel extensions),
+ * bom.csv + placement.csv (the assembly pair, JLCPCB column conventions),
  * board-stackup.txt (the fab-ORDER spec — material / thickness / copper weight / finish, cited),
  * the SPICE netlist, the validation report, and a README naming every file.
  */
@@ -100,6 +104,13 @@ const csvField = (s: string): string => (/[",\n]/.test(s) ? `"${s.replace(/"/g, 
 // value or footprint id, so grouped keys cannot collide. Built with fromCharCode, not a
 // backslash-u escape: a raw control byte in source turns the file binary to content search.
 const GROUP_SEPARATOR = String.fromCharCode(0)
+
+/** A provisional land keeps its id and says, in the same cell, that it is not a manufacturer package. */
+function bomFootprintField(footprintId: string): string {
+  return parseProvisionalFootprintId(footprintId) === undefined
+    ? footprintId
+    : `${footprintId} — ${PROVISIONAL_LAND_NOTE}`
+}
 
 /** BOM rows grouped the way an assembler reads them: one line per (part, value, footprint) group.
  *  The Part column carries the definition — a 10 kΩ NTC thermistor and a 10 kΩ resistor share a
@@ -125,7 +136,7 @@ export function buildBomCsv(rows: readonly BomRow[]): string {
   const lines = ['Comment,Designator,Footprint,Quantity,Part']
   for (const g of groups.values()) {
     lines.push(
-      `${csvField(g.value)},${csvField(g.refs.join(','))},${csvField(g.footprintId)},${g.refs.length},${csvField(g.definition)}`,
+      `${csvField(g.value)},${csvField(g.refs.join(','))},${csvField(bomFootprintField(g.footprintId))},${g.refs.length},${csvField(g.definition)}`,
     )
   }
   return `${lines.join('\n')}\n`
@@ -140,11 +151,16 @@ const num = (mm: number): string => String(Math.round(mm * 1000) / 1000)
  * footprint's fabrication outline — the actual part body — not the footprint origin, which for
  * through-hole parts is pin 1.
  */
-export function buildPlacementCsv(board: Board): string {
+export function buildPlacementCsv(board: Board, problems?: string[]): string {
   const lines = ['Designator,Mid X,Mid Y,Layer,Rotation']
   for (const placement of board.placements) {
     const fp = footprintByPlacement(placement)
-    if (fp === undefined) continue
+    if (fp === undefined) {
+      // No body centre without geometry. Naming the skip is what stops a pick-and-place file
+      // from quietly forgetting a part the board still places.
+      problems?.push(unresolvedFootprintProblem(placement))
+      continue
+    }
     let minX = Number.POSITIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
@@ -184,6 +200,8 @@ export type FabInputs = {
   drc: readonly DrcViolation[]
   /** Wired pins with no footprint on the board — a nonzero count means the board is incomplete. */
   offBoardPins: number
+  /** The parts behind that count, named. Absent on older callers — the count still fails the board. */
+  unplacedParts?: readonly UnplacedPart[]
   bomRows: readonly BomRow[]
   /** The circuit as a SPICE netlist (the engine's own serializer, with its own SPICE element
    *  numbering) — an electrical reference alongside the fab files. */
@@ -256,6 +274,32 @@ export function buildStackupSpec(stackup: Stackup): string {
   ].join('\n')
 }
 
+/** How one skipped part reads in the report and the panel: id, definition, and why. */
+export function formatUnplacedPart(p: UnplacedPart): string {
+  const why = p.reason === 'no-footprint' ? 'no footprint' : 'terminal unmapped'
+  return `${p.partId} (${p.definition}, ${why})`
+}
+
+function wiredPinsProblem(count: number, named: readonly UnplacedPart[] | undefined): string {
+  const noun = `${count} wired pin${count === 1 ? ' has' : 's have'} no footprint`
+  const ids = (named ?? []).map(formatUnplacedPart)
+  const who = ids.length > 0 ? `: ${ids.join(', ')}` : ''
+  return `${noun}${who} — the board would be missing real connections.`
+}
+
+/** Placements that landed on a generated land, named so a fab never mistakes one for a package. */
+function provisionalPackageLines(board: Board): string[] {
+  const rows: string[] = []
+  for (const placement of board.placements) {
+    const fp = footprintByPlacement(placement)
+    if (fp?.provisional !== true) continue
+    const name = placement.designator ?? placement.partId
+    rows.push(`  · ${name} (${placement.partId}, ${fp.id}) — ${PROVISIONAL_LAND_NOTE}`)
+  }
+  if (rows.length === 0) return []
+  return ['PROVISIONAL PACKAGES', ...rows, '']
+}
+
 export type FabValidation = {
   status: 'pass' | 'fail'
   /** Why the board is not manufacturable — empty exactly when status is 'pass'. */
@@ -284,10 +328,17 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
       `The board has ${recessCount} controlled-depth recess${recessCount === 1 ? '' : 'es'} (cavity / stepped board), but ChipBlocks does not yet generate the depth-routing (mechanical) program a fab needs to mill them (±0.2 mm Z-axis) — so the archive would describe a flat board. Remove the recess${recessCount === 1 ? '' : 'es'} to export. (Cavity / stepped boards are for design and the 3-D view for now.)`,
     )
   }
-  if (offBoardPins > 0) {
-    problems.push(
-      `${offBoardPins} wired pin${offBoardPins === 1 ? ' has' : 's have'} no footprint — the board would be missing real connections.`,
-    )
+  const namedSkips = inputs.unplacedParts ?? []
+  if (offBoardPins > 0 || namedSkips.length > 0) {
+    const count = offBoardPins > 0 ? offBoardPins : namedSkips.length
+    problems.push(wiredPinsProblem(count, namedSkips))
+  }
+  // A placement whose footprint id did not resolve is still on the board. The writers omit its
+  // pads and holes rather than invent them — that omission is a failure, not a quiet continue.
+  for (const placement of board.placements) {
+    if (footprintByPlacement(placement) === undefined) {
+      problems.push(unresolvedFootprintProblem(placement))
+    }
   }
   if (routing.unrouted.length > 0) {
     problems.push(
@@ -335,6 +386,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     // routed CONNECTIONS, not trace count — one via'd connection is three copper traces
     `  connections: ${ratsnest.airwires.length} owed, ${ratsnest.airwires.length - routing.unrouted.length} routed, ${routing.unrouted.length} unrouted${routing.vias.length > 0 ? ` (${routing.vias.length} via${routing.vias.length === 1 ? '' : 's'})` : ''}`,
     '',
+    ...provisionalPackageLines(board),
     'RULES CHECKED (each limit cited — ask the file where a number came from and it answers)',
     `  trace width ${num(DEFAULT_ROUTE_CLASS.traceWidthMm)} mm / clearance ${num(DEFAULT_ROUTE_CLASS.clearanceMm)} mm — ${DEFAULT_ROUTE_CLASS.provenance.title}`,
     `  copper-to-edge ≥ ${num(DRC_RULES['edge-clearance'].limitMm)} mm routed / ≥ ${num(V_CUT_EDGE_CLEARANCE_MM)} mm on a V-scored edge — ${DRC_RULES['edge-clearance'].provenance.title}; ${V_CUT_PROVENANCE.title}`,
@@ -369,9 +421,14 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
       : drc.map((v) => `  ✗ ${v.code}: ${v.message} at (${num(v.at.x)}, ${num(v.at.y)}) mm`)),
     '',
     'HONEST SCOPE',
-    '  · Two copper layers, both routed: connections take the top layer first and drop to the',
-    `    bottom through plated ${num(DEFAULT_ROUTE_CLASS.viaDiameterMm)} / ${num(DEFAULT_ROUTE_CLASS.viaDrillMm)} mm vias when the top is blocked. Vias are`,
+    `  · ${stackup.copperLayers} copper layer${stackup.copperLayers === 1 ? '' : 's'}, all exported. Connections take the top layer first and drop`,
+    `    through plated ${num(DEFAULT_ROUTE_CLASS.viaDiameterMm)} / ${num(DEFAULT_ROUTE_CLASS.viaDrillMm)} mm vias when the top is blocked. Vias are`,
     '    tented (mask-covered), the KiCad default.',
+    ...(stackup.copperLayers > 2
+      ? [
+          `  · Inner copper is in this archive (In1–In${stackup.copperLayers - 2} Gerbers), not omitted from a two-layer set.`,
+        ]
+      : ['  · No inner-copper files: this stack-up is two layers (top and bottom only).']),
     `  · Solder-mask openings equal the pad copper (clearance ${num(GERBER_CONVENTIONS.mask_clearance.valueMm)} mm — ${GERBER_CONVENTIONS.mask_clearance.provenance.title}).`,
     '  · Paste apertures equal the SMD pads (KiCad’s zero paste clearance; the stencil house',
     '    applies its own reduction). Through-hole pads get no paste.',
@@ -423,7 +480,8 @@ export function innerCopperFileName(innerIndex: number): string {
 }
 
 function buildReadme(inputs: FabInputs): string {
-  const innerCount = Math.max(0, (inputs.stackup?.copperLayers ?? 2) - 2)
+  const layers = inputs.stackup?.copperLayers ?? 2
+  const innerCount = Math.max(0, layers - 2)
   const innerCopperLines = Array.from(
     { length: innerCount },
     (_, i) =>
@@ -432,6 +490,10 @@ function buildReadme(inputs: FabInputs): string {
   return [
     'ChipBlocks manufacturing files',
     `Generated ${isoWithOffset(inputs.when)} by the ChipBlocks deterministic engine.`,
+    `Stack-up: ${layers} copper layer${layers === 1 ? '' : 's'}.`,
+    innerCount > 0
+      ? `Inner copper files are in this archive (In1–In${innerCount}).`
+      : 'No inner copper files — top and bottom copper only.',
     '',
     'Fabrication (Gerber X2, units mm; drill in Excellon decimal mm — file shapes ground-truthed',
     'against KiCad 10.0.4 output):',
@@ -469,36 +531,37 @@ export type FabZip = {
   validation: FabValidation
 }
 
-/** Assemble the full manufacturing ZIP. Callers gate on validation.status — the app never offers
- *  a failing board's ZIP — but the builder always builds, so tests can inspect failing reports. */
-export function buildManufacturingZip(inputs: FabInputs): FabZip {
+export type ManufacturingFile = { name: string; text: string }
+
+/** Every text file the manufacturing ZIP stores, in archive order. The ZIP builder and the
+ *  Gerber check both call this, so Check Gerbers plots the same Gerber and drill strings the
+ *  archive would contain — not a second export that can drift. */
+export function manufacturingFileTexts(inputs: FabInputs): {
+  files: ManufacturingFile[]
+  validation: FabValidation
+} {
   const { board, ratsnest, routing, when } = inputs
   const stackup = inputs.stackup ?? defaultStackup()
   const validation = buildValidationReport(inputs)
-  const encoder = new TextEncoder()
-  const text = (name: string, content: string): ZipEntry => ({
-    name,
-    data: encoder.encode(content),
-  })
-  // One Gerber per copper layer, in stack order: top (L1), then each inner layer (In1 = L2…), then the
-  // bottom (L_last). A 2-layer board is exactly top + bottom as before; a 4-/6-layer board adds its
-  // inner copper so a fab has real artwork for every layer the stack-up declares.
   const copper = routableCopperLayers(stackup.copperLayers)
-  const copperEntries: ZipEntry[] = copper.map((cl, idx) => {
+  const copperFiles: ManufacturingFile[] = copper.map((cl, idx) => {
     const layerNumber = idx + 1
     if (cl === 'top') {
-      return text(FAB_FILE_NAMES.topCopper, gerberTopCopper(board, ratsnest, routing, when))
+      return {
+        name: FAB_FILE_NAMES.topCopper,
+        text: gerberTopCopper(board, ratsnest, routing, when),
+      }
     }
     if (cl === 'bottom') {
-      return text(
-        FAB_FILE_NAMES.bottomCopper,
-        gerberBottomCopper(board, ratsnest, routing, when, layerNumber),
-      )
+      return {
+        name: FAB_FILE_NAMES.bottomCopper,
+        text: gerberBottomCopper(board, ratsnest, routing, when, layerNumber),
+      }
     }
-    return text(
-      innerCopperFileName(idx),
-      gerberInnerCopper(board, ratsnest, routing, cl, layerNumber, when),
-    )
+    return {
+      name: innerCopperFileName(idx),
+      text: gerberInnerCopper(board, ratsnest, routing, cl, layerNumber, when),
+    }
   })
   // The Gerber Job File's FilesAttributes — the exact Gerber set below, each with the SAME canonical
   // FileFunction its own Gerber embeds in %TF.FileFunction (Soldermask / Paste / Profile,NP), so a CAM
@@ -538,33 +601,48 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     when,
     files: jobFiles,
   })
-  const entries: ZipEntry[] = [
-    ...copperEntries,
-    text(FAB_FILE_NAMES.topMask, gerberMask(board, 'Top', when)),
-    text(FAB_FILE_NAMES.bottomMask, gerberMask(board, 'Bot', when)),
-    text(FAB_FILE_NAMES.topPaste, gerberPaste(board, 'Top', when)),
-    text(FAB_FILE_NAMES.bottomPaste, gerberPaste(board, 'Bot', when)),
-    text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, 'Top', when)),
-    text(FAB_FILE_NAMES.bottomSilk, gerberSilkscreen(board, 'Bot', when)),
-    text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(outlineRing(board), when)),
-    text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when, stackup.copperLayers)),
-    // The non-plated drill file — only when the board has NPTH (mounting/tooling) holes. Plating a
-    // mounting hole is wrong fab data, so its hole goes here (FileFunction NonPlated,…,NPTH), not above.
+  const files: ManufacturingFile[] = [
+    ...copperFiles,
+    { name: FAB_FILE_NAMES.topMask, text: gerberMask(board, 'Top', when) },
+    { name: FAB_FILE_NAMES.bottomMask, text: gerberMask(board, 'Bot', when) },
+    { name: FAB_FILE_NAMES.topPaste, text: gerberPaste(board, 'Top', when) },
+    { name: FAB_FILE_NAMES.bottomPaste, text: gerberPaste(board, 'Bot', when) },
+    { name: FAB_FILE_NAMES.topSilk, text: gerberSilkscreen(board, 'Top', when) },
+    { name: FAB_FILE_NAMES.bottomSilk, text: gerberSilkscreen(board, 'Bot', when) },
+    { name: FAB_FILE_NAMES.edgeCuts, text: gerberEdgeCuts(outlineRing(board), when) },
+    { name: FAB_FILE_NAMES.drill, text: excellonDrill(board, routing, when, stackup.copperLayers) },
+    // The non-plated drill file — only when the board has NPTH (mounting/tooling) holes.
     ...(boardHasNonPlatedHoles(board)
       ? [
-          text(
-            FAB_FILE_NAMES.drillNpth,
-            excellonDrill(board, routing, when, stackup.copperLayers, true),
-          ),
+          {
+            name: FAB_FILE_NAMES.drillNpth,
+            text: excellonDrill(board, routing, when, stackup.copperLayers, true),
+          },
         ]
       : []),
-    text(FAB_FILE_NAMES.gbrjob, gbrjobText),
-    text(FAB_FILE_NAMES.bom, buildBomCsv(inputs.bomRows)),
-    text(FAB_FILE_NAMES.placement, buildPlacementCsv(board)),
-    text(FAB_FILE_NAMES.stackup, buildStackupSpec(inputs.stackup ?? defaultStackup())),
-    text(FAB_FILE_NAMES.netlist, inputs.netlistText),
-    text(FAB_FILE_NAMES.report, validation.reportText),
-    text(FAB_FILE_NAMES.readme, buildReadme(inputs)),
+    { name: FAB_FILE_NAMES.gbrjob, text: gbrjobText },
+    { name: FAB_FILE_NAMES.bom, text: buildBomCsv(inputs.bomRows) },
+    { name: FAB_FILE_NAMES.placement, text: buildPlacementCsv(board) },
+    { name: FAB_FILE_NAMES.stackup, text: buildStackupSpec(inputs.stackup ?? defaultStackup()) },
+    { name: FAB_FILE_NAMES.netlist, text: inputs.netlistText },
+    { name: FAB_FILE_NAMES.report, text: validation.reportText },
+    { name: FAB_FILE_NAMES.readme, text: buildReadme(inputs) },
   ]
-  return { bytes: buildZip(entries, when), entries: entries.map((e) => e.name), validation }
+  return { files, validation }
+}
+
+/** Assemble the full manufacturing ZIP. Callers gate on validation.status — the app never offers
+ *  a failing board's ZIP — but the builder always builds, so tests can inspect failing reports. */
+export function buildManufacturingZip(inputs: FabInputs): FabZip {
+  const { files, validation } = manufacturingFileTexts(inputs)
+  const encoder = new TextEncoder()
+  const entries: ZipEntry[] = files.map((file) => ({
+    name: file.name,
+    data: encoder.encode(file.text),
+  }))
+  return {
+    bytes: buildZip(entries, inputs.when),
+    entries: entries.map((e) => e.name),
+    validation,
+  }
 }

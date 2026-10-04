@@ -1,19 +1,5 @@
 {
- "note": "nextpnr-himbaechel placement of gowin-gw1n1-splitpad.fs - six cells, each of them registered AND read straight through, with both wires leaving through package pins.",
- "lutBels": [
-  "2,6,0",
-  "2,7,0",
-  "2,7,1",
-  "2,9,0",
-  "2,9,1",
-  "2,9,2"
- ],
- "dffBels": [
-  "2,6,0",
-  "2,7,0",
-  "2,7,1",
-  "2,9,0",
-  "2,9,1",
-  "2,9,2"
- ]
+  "note": "nextpnr-himbaechel placement of gowin-gw1n1-splitpad.fs - six cells, each of them registered AND read straight through, with both wires leaving through package pins.",
+  "lutBels": ["2,6,0", "2,7,0", "2,7,1", "2,9,0", "2,9,1", "2,9,2"],
+  "dffBels": ["2,6,0", "2,7,0", "2,7,1", "2,9,0", "2,9,1", "2,9,2"]
 }

@@ -220,10 +220,31 @@ export function NetlistReportCard({
   )
 }
 
-/** What the FPGA card is showing: a design that was read, or the reason there isn't one. */
+/**
+ * What a near-term iCE40 compile reports. Fields come from autoPlace (placed, exhaustive, the
+ * synthesizer's unbound list) plus the fixed lines the engines already document. There is no .bin.
+ */
+export type Ice40CompileReport = {
+  lutCount: number
+  placed: boolean
+  exhaustive: boolean
+  attempts: number
+  unbound: string[]
+  reason: string | null
+  honesty: readonly string[]
+}
+
+/** What the FPGA card is showing: a chip file, a refusal, or an iCE40 compile report. */
 export type FpgaPanel =
   | { kind: 'read'; fileName: string; report: FpgaOpenReport }
-  | { kind: 'refused'; fileName: string; reason: string; canChooseDescription: boolean }
+  | {
+      kind: 'refused'
+      fileName: string
+      reason: string
+      canChooseDescription: boolean
+      title?: string
+    }
+  | { kind: 'compile'; report: Ice40CompileReport }
 
 /**
  * What came back from reading a programmed FPGA chip — and, far more importantly, what did NOT.
@@ -233,6 +254,64 @@ export type FpgaPanel =
  * the three lists below are not an appendix — they are the point of the card, and each one names the individual
  * part and says in ordinary words what is wrong with it.
  */
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ marginTop: 6, color: THEME.textSoft, lineHeight: 1.5 }}>
+      <span style={{ color: THEME.textPrimary, fontWeight: 600 }}>{label}: </span>
+      {value}
+    </div>
+  )
+}
+
+/** Placed / exhaustive / unbound, then the fixed not-modeled lines. Shared by the card and the Chip level. */
+export function Ice40CompileDetails({ report }: { report: Ice40CompileReport }) {
+  const lut = report.lutCount === 1 ? '1 LUT' : `${report.lutCount} LUTs`
+  const tried = report.attempts === 1 ? '1 candidate tried' : `${report.attempts} candidates tried`
+  return (
+    <div>
+      <Field
+        label="Placed"
+        value={report.placed ? `yes — ${lut}, ${tried}` : `no — ${lut}, ${tried}`}
+      />
+      <Field
+        label="Exhaustive"
+        value={
+          report.exhaustive
+            ? 'yes — the search covered the assignment space it was given'
+            : 'no — the search stopped early. That is not proof the design is unroutable'
+        }
+      />
+      {report.reason === null ? null : <Field label="Why" value={report.reason} />}
+      {report.unbound.length === 0 ? (
+        <Field label="Unbound" value="none" />
+      ) : (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ color: THEME.statusDanger, fontWeight: 600 }}>
+            Unbound ({report.unbound.length})
+          </div>
+          <ul
+            style={{ margin: '4px 0 0', paddingLeft: 16, color: THEME.textSoft, lineHeight: 1.5 }}
+          >
+            {report.unbound.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ color: THEME.statusWarn, fontWeight: 600, marginBottom: 3 }}>
+          Not modeled ({report.honesty.length})
+        </div>
+        <ul style={{ margin: 0, paddingLeft: 16, color: THEME.textSoft, lineHeight: 1.5 }}>
+          {report.honesty.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 export function FpgaReportCard({
   panel,
   onDismiss,
@@ -242,9 +321,27 @@ export function FpgaReportCard({
   onDismiss: () => void
   onChooseDescription: () => void
 }) {
+  if (panel.kind === 'compile') {
+    const { report } = panel
+    return (
+      <ReportShell
+        title={report.placed ? 'iCE40 compile — placed' : 'iCE40 compile — not placed'}
+        onDismiss={onDismiss}
+      >
+        <div style={{ marginTop: 8, color: THEME.textMuted, lineHeight: 1.5 }}>
+          Report only. No bitstream file was written.
+        </div>
+        <Ice40CompileDetails report={report} />
+      </ReportShell>
+    )
+  }
+
   if (panel.kind === 'refused')
     return (
-      <ReportShell title={`Could not read “${panel.fileName}”`} onDismiss={onDismiss}>
+      <ReportShell
+        title={panel.title ?? `Could not read “${panel.fileName}”`}
+        onDismiss={onDismiss}
+      >
         <div style={{ marginTop: 8, color: THEME.textSoft, lineHeight: 1.55 }}>{panel.reason}</div>
         {panel.canChooseDescription ? (
           <button

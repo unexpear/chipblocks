@@ -375,6 +375,23 @@ describe('the drill file — Excellon, decimal mm, ascending tools', () => {
     expect(smd).not.toMatch(/\nX-?[\d.]+Y/)
   })
 
+  test('an unresolved footprint is a drill failure, not a silently omitted hole', () => {
+    const board: Board = {
+      ...TH_BOARD,
+      placements: [
+        ...TH_BOARD.placements,
+        { partId: 'MH1', footprintId: 'NO-SUCH-FOOTPRINT', x: 2, y: 2, rotation: 0 },
+      ],
+    }
+    const problems: string[] = []
+    const drill = excellonDrill(board, NO_ROUTING, WHEN, 2, false, problems)
+    expect(drill).toContain('X5.0Y-5.0')
+    expect(problems.some((p) => p.includes('MH1') && p.includes('NO-SUCH-FOOTPRINT'))).toBe(true)
+    const copperProblems: string[] = []
+    gerberTopCopper(board, EMPTY_RATSNEST, NO_ROUTING, WHEN, copperProblems)
+    expect(copperProblems.some((p) => p.includes('MH1'))).toBe(true)
+  })
+
   test('via holes get their own tool with the ViaDrill attribute, beside the component drills', () => {
     const withVia = excellonDrill(
       TH_BOARD,

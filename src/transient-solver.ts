@@ -359,6 +359,7 @@ export type TransientPoint = {
 
 export type TransientStatus =
   | 'solved'
+  | 'invalid-circuit'
   | 'no-ground'
   | 'singular-matrix'
   | 'bad-options'

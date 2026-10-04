@@ -276,7 +276,8 @@ export type RuntimeCausalEvent = {
 
 export function analysisStateForStatus(status: string): AnalysisState {
   if (status === 'solved' || status === 'unsupported-element') return 'complete'
-  if (status === 'too-large' || status === 'over-budget') return 'blocked'
+  if (status === 'too-large' || status === 'over-budget' || status === 'invalid-circuit')
+    return 'blocked'
   if (
     status === 'bad-options' ||
     status === 'did-not-converge' ||

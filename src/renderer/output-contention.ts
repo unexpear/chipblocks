@@ -61,14 +61,21 @@ export function buildNets(edges: EdgeLike[]): {
   groups: string[][]
 } {
   const parent = new Map<string, string>()
-  const find = (x: string): string => {
-    const p = parent.get(x)
-    if (p === undefined || p === x) {
-      parent.set(x, x)
-      return x
+  const find = (endpoint: string): string => {
+    let root = endpoint
+    let next = parent.get(root)
+    while (next !== undefined && next !== root) {
+      root = next
+      next = parent.get(root)
     }
-    const root = find(p)
-    parent.set(x, root)
+    parent.set(root, root)
+    let cursor = endpoint
+    while (cursor !== root) {
+      const previous = parent.get(cursor)
+      parent.set(cursor, root)
+      if (previous === undefined) break
+      cursor = previous
+    }
     return root
   }
   const union = (a: string, b: string) => {

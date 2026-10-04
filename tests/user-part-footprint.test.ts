@@ -56,7 +56,8 @@ describe('footprintForPart for a custom part', () => {
     // ['constructor'] is the Object ctor (NOT undefined), so a naive `fp !== undefined && fp.pads.length`
     // would throw. Object.hasOwn rejects it → undefined (the part is honestly unfootprinted).
     registerUserPart({ ...twoPin, id: 'my_bad', footprintId: 'constructor' })
-    expect(footprintForPart('my_bad')).toBeUndefined()
+    expect(footprintForPart('my_bad')?.id).toBe('provisional_2pad')
+    expect(footprintForPart('my_bad')?.provisional).toBe(true)
     // …and a prototype-member per-instance OVERRIDE falls back to the declared footprint, not a crash.
     registerUserPart(twoPin)
     expect(footprintForPart('my_sensor', '__proto__')?.id).toBe('R_0603_1608Metric')
@@ -71,14 +72,16 @@ describe('footprintForPart for a custom part', () => {
 
   test('a footprint with too few pads does NOT fit (honest — never a wrong package)', () => {
     registerUserPart({ ...eightPin, footprintId: 'R_0603_1608Metric' }) // 8 pins, 2-pad package
-    expect(footprintForPart('my_ic')).toBeUndefined()
+    expect(footprintForPart('my_ic')?.id).toBe('provisional_8pad')
+    expect(footprintForPart('my_ic')?.id).not.toBe('R_0603_1608Metric')
   })
 
-  test('a custom part with no footprint stays off the board', () => {
+  test('a custom part with no footprint gets a provisional land, not a guessed package', () => {
     const { footprintId, ...noFp } = twoPin
     void footprintId
     registerUserPart(noFp)
-    expect(footprintForPart('my_sensor')).toBeUndefined()
+    expect(footprintForPart('my_sensor')?.id).toBe('provisional_2pad')
+    expect(footprintForPart('my_sensor')?.provisional).toBe(true)
   })
 
   test('an unregistered / built-in id is unaffected by the custom path', () => {
@@ -126,9 +129,10 @@ describe('footprint options are constrained by pin count', () => {
 
   test('footprintOptions(customId) matches footprintsForPinCount for the part', () => {
     registerUserPart(twoPin)
-    expect(footprintOptions('my_sensor').map((f) => f.id)).toEqual(
-      footprintsForPinCount(2).map((f) => f.id),
-    )
+    expect(footprintOptions('my_sensor').map((f) => f.id)).toEqual([
+      'provisional_2pad',
+      ...footprintsForPinCount(2).map((f) => f.id),
+    ])
   })
 })
 
@@ -150,10 +154,12 @@ describe('a registered custom part flows through the board pipeline (deriveBoard
     expect(placement.designator).toBe('U1')
   })
 
-  test('a custom part whose footprint does NOT fit is left off the board (honest)', () => {
+  test('a custom part whose footprint does NOT fit gets a provisional land, not the too-small package', () => {
     registerUserPart({ ...eightPin, footprintId: 'R_0603_1608Metric' }) // 8 pins on a 2-pad package
     const board = deriveBoard([{ id: 'my_ic_1', definition: 'my_ic' }], new Map())
-    expect(board.placements.find((p) => p.partId === 'my_ic_1')).toBeUndefined()
+    expect(board.placements.find((p) => p.partId === 'my_ic_1')?.footprintId).toBe(
+      'provisional_8pad',
+    )
   })
 })
 

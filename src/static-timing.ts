@@ -136,9 +136,11 @@ export function setupCheck(
   const slack = clockPeriod - minPeriod
   return {
     minPeriod,
-    maxFrequency: minPeriod > 0 ? 1 / minPeriod : Number.POSITIVE_INFINITY,
+    // 1/Infinity === 0 in IEEE/JS — never report that as a measured 0 Hz ceiling.
+    maxFrequency:
+      Number.isFinite(minPeriod) && minPeriod > 0 ? 1 / minPeriod : Number.POSITIVE_INFINITY,
     slack,
-    violated: slack < 0,
+    violated: Number.isFinite(slack) ? slack < 0 : false,
   }
 }
 
@@ -188,9 +190,51 @@ export function analyzeTiming(
   skew = 0,
 ): TimingReport {
   const critical = criticalPath(paths)
-  const setup = critical ? setupCheck(critical, reg, clockPeriod, skew) : undefined
-  const holdViolations = paths.filter((p) => holdCheck(p, reg, skew).violated)
+  const registerUncharacterized =
+    !Number.isFinite(reg.clockToQ) ||
+    reg.clockToQ < 0 ||
+    !Number.isFinite(reg.setup) ||
+    reg.setup < 0 ||
+    !Number.isFinite(reg.hold) ||
+    reg.hold < 0
+  const pathUncharacterized =
+    critical !== undefined &&
+    (!Number.isFinite(critical.logicDelayMax) || critical.logicDelayMax < 0)
+  const uncharacterized = registerUncharacterized || pathUncharacterized
+  const setup =
+    critical && !uncharacterized ? setupCheck(critical, reg, clockPeriod, skew) : undefined
+  const holdViolations = paths.filter(
+    (p) =>
+      Number.isFinite(p.logicDelayMin) && p.logicDelayMin >= 0 && holdCheck(p, reg, skew).violated,
+  )
   const diagnostics: RuntimeDiagnostic[] = []
+  if (uncharacterized) {
+    const target = {
+      blockId: asBlockId(critical?.to ?? 'register'),
+      subgraphId: critical?.subgraphId ?? asSubgraphId('timing'),
+    }
+    diagnostics.push({
+      id: asDiagnosticId(
+        critical
+          ? `timing-uncharacterized-${critical.from}-${critical.to}`
+          : 'timing-uncharacterized-register',
+      ),
+      code: 'uncharacterized-delay',
+      severity: 'error',
+      state: 'blocked',
+      message: registerUncharacterized
+        ? 'flip-flop clock-to-Q/setup/hold is uncharacterized; no max frequency is claimed'
+        : `critical path ${critical?.from ?? '?'} → ${critical?.to ?? '?'} has an uncharacterized logic delay; no max frequency is claimed`,
+      target,
+      repair: {
+        action: 'select',
+        message: registerUncharacterized
+          ? 'Characterize the flip-flop timing from real gate delays before claiming a max clock.'
+          : 'Expand composite gates to characterized transistors or supply missing device parameters.',
+        target,
+      },
+    })
+  }
   if (setup?.violated && critical !== undefined) {
     const target = {
       blockId: asBlockId(critical.to),
@@ -229,8 +273,13 @@ export function analyzeTiming(
       },
     })
   }
-  const state: AnalysisState =
-    diagnostics.length > 0 ? 'failed' : paths.length === 0 ? 'waiting' : 'complete'
+  const state: AnalysisState = uncharacterized
+    ? 'blocked'
+    : diagnostics.length > 0
+      ? 'failed'
+      : paths.length === 0
+        ? 'waiting'
+        : 'complete'
   const why =
     diagnostics.length > 0
       ? whySystemFor(
@@ -268,8 +317,11 @@ export function analyzeTiming(
         })
   return {
     critical,
-    minPeriod: setup?.minPeriod ?? 0,
-    maxFrequency: setup?.maxFrequency ?? Number.POSITIVE_INFINITY,
+    minPeriod: setup?.minPeriod ?? (uncharacterized ? Number.POSITIVE_INFINITY : 0),
+    // Uncharacterized critical delay must not look like a measured 0 Hz ceiling (1/Infinity).
+    maxFrequency: uncharacterized
+      ? Number.POSITIVE_INFINITY
+      : (setup?.maxFrequency ?? Number.POSITIVE_INFINITY),
     setupSlack: setup?.slack ?? Number.POSITIVE_INFINITY,
     setupViolated: setup?.violated ?? false,
     holdViolations,

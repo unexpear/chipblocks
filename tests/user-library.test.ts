@@ -5,6 +5,8 @@
  * individual part is dropped while the rest load, and withPart adds/updates by id (authoring only).
  */
 import { describe, expect, test } from 'vitest'
+import type { BlockData } from '../src/renderer/blocks.ts'
+import { NAND2_BLOCK } from '../src/renderer/builtin-blocks.ts'
 import type { Footprint } from '../src/renderer/footprint.ts'
 import {
   deserializeUserLibrary,
@@ -14,6 +16,7 @@ import {
   withFootprint,
   withPart,
 } from '../src/renderer/user-library.ts'
+import { userPartFromBlock } from '../src/renderer/user-part-draft.ts'
 import type { UserPart } from '../src/renderer/user-parts.ts'
 import { opampPart } from './drawn-symbol-fixture.ts'
 
@@ -189,12 +192,12 @@ describe('a drawn symbol follows its part through the personal library (v3)', ()
     if (r.ok) expect(r.parts).toEqual([sensor, drawn])
   })
 
-  test('the library is written as v3 — a v2 build refuses it rather than erasing its drawings', () => {
+  test('the library is written as v4 — older builds refuse it rather than erasing metadata', () => {
     // A v2 build would drop the unknown `symbol` field on read, and a library save rewrites the whole
     // file from that read. Refusing the whole file (and so never overwriting it) is what keeps the
     // drawings: persistAuthoredPart never writes over a library it could not read.
-    expect(USER_LIBRARY_VERSION).toBe(3)
-    expect(JSON.parse(serializeUserLibrary([opampPart()])).version).toBe(3)
+    expect(USER_LIBRARY_VERSION).toBe(4)
+    expect(JSON.parse(serializeUserLibrary([opampPart()])).version).toBe(4)
   })
 
   test('a v2 library (parts + footprints, no drawings) still loads', () => {
@@ -202,5 +205,56 @@ describe('a drawn symbol follows its part through the personal library (v3)', ()
     const r = deserializeUserLibrary(v2)
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.parts).toEqual([sensor])
+  })
+})
+
+describe('versioned reusable circuits in the personal library', () => {
+  test.each([1, 2, 3])('migrates library version %i without losing existing parts', (version) => {
+    const loaded = deserializeUserLibrary(
+      JSON.stringify({ format: USER_LIBRARY_FORMAT, version, userParts: [sensor] }),
+    )
+    if (!loaded.ok) throw new Error(loaded.reason)
+    expect(loaded.parts).toEqual([sensor])
+    expect(JSON.parse(serializeUserLibrary(loaded.parts)).version).toBe(4)
+  })
+
+  test('preserves typed contracts and runnable tests through a library rewrite', () => {
+    const savedTest = {
+      id: 'both-high',
+      name: 'Both high',
+      cycles: 2,
+      inputs: { a: 1, b: 1 },
+      expected: { out: [0, 0] },
+    }
+    const block: BlockData = {
+      ...NAND2_BLOCK,
+      ports: NAND2_BLOCK.ports.map((port) =>
+        port.id === 'a'
+          ? { ...port, domain: 'electrical', direction: 'input', unit: 'volt' }
+          : port,
+      ),
+      tests: [savedTest],
+    }
+    const drafted = userPartFromBlock('Portable NAND', 'U', block)
+    if (!drafted.ok) throw new Error(drafted.error)
+    const before = structuredClone(drafted.part)
+    const loaded = deserializeUserLibrary(serializeUserLibrary([drafted.part]))
+    if (!loaded.ok) throw new Error(loaded.reason)
+    const rewritten = deserializeUserLibrary(serializeUserLibrary(withPart(loaded.parts, sensor)))
+    if (!rewritten.ok) throw new Error(rewritten.reason)
+    const internal = rewritten.parts.find((part) => part.id === drafted.part.id)?.internal
+    expect(internal?.version).toBe(1)
+    expect(internal?.tests).toEqual([savedTest])
+    expect(internal?.ports.find((port) => port.id === 'a')).toMatchObject({
+      domain: 'electrical',
+      direction: 'input',
+      unit: 'volt',
+    })
+    expect(drafted.part).toEqual(before)
+    expect(() =>
+      serializeUserLibrary([
+        { ...drafted.part, internal: { ...block, version: 2 } as unknown as BlockData },
+      ]),
+    ).toThrow('Unsupported block format')
   })
 })

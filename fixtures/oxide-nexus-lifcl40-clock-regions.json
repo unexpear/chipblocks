@@ -60,17 +60,11 @@
   "hrows": [
     {
       "hrowCol": 31,
-      "spineCols": [
-        13,
-        37
-      ]
+      "spineCols": [13, 37]
     },
     {
       "hrowCol": 61,
-      "spineCols": [
-        61,
-        73
-      ]
+      "spineCols": [61, 73]
     }
   ]
 }

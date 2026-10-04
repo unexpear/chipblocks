@@ -1,80 +1,80 @@
 [
- {
-  "x": 2,
-  "y": 6,
-  "cell": 0,
-  "init": 7918,
-  "hasFlipFlop": true,
-  "combinationalInside": false,
-  "registeredInside": false,
-  "readBy": {
-   "F": [],
-   "Q": []
+  {
+    "x": 2,
+    "y": 6,
+    "cell": 0,
+    "init": 7918,
+    "hasFlipFlop": true,
+    "combinationalInside": false,
+    "registeredInside": false,
+    "readBy": {
+      "F": [],
+      "Q": []
+    }
+  },
+  {
+    "x": 2,
+    "y": 7,
+    "cell": 0,
+    "init": 28679,
+    "hasFlipFlop": true,
+    "combinationalInside": false,
+    "registeredInside": false,
+    "readBy": {
+      "F": [],
+      "Q": []
+    }
+  },
+  {
+    "x": 2,
+    "y": 7,
+    "cell": 1,
+    "init": 26208,
+    "hasFlipFlop": true,
+    "combinationalInside": false,
+    "registeredInside": false,
+    "readBy": {
+      "F": [],
+      "Q": []
+    }
+  },
+  {
+    "x": 2,
+    "y": 9,
+    "cell": 0,
+    "init": 24428,
+    "hasFlipFlop": true,
+    "combinationalInside": false,
+    "registeredInside": false,
+    "readBy": {
+      "F": [],
+      "Q": []
+    }
+  },
+  {
+    "x": 2,
+    "y": 9,
+    "cell": 1,
+    "init": 56922,
+    "hasFlipFlop": true,
+    "combinationalInside": false,
+    "registeredInside": false,
+    "readBy": {
+      "F": [],
+      "Q": []
+    }
+  },
+  {
+    "x": 2,
+    "y": 9,
+    "cell": 2,
+    "init": 43267,
+    "hasFlipFlop": true,
+    "combinationalInside": false,
+    "registeredInside": false,
+    "readBy": {
+      "F": [],
+      "Q": []
+    }
   }
- },
- {
-  "x": 2,
-  "y": 7,
-  "cell": 0,
-  "init": 28679,
-  "hasFlipFlop": true,
-  "combinationalInside": false,
-  "registeredInside": false,
-  "readBy": {
-   "F": [],
-   "Q": []
-  }
- },
- {
-  "x": 2,
-  "y": 7,
-  "cell": 1,
-  "init": 26208,
-  "hasFlipFlop": true,
-  "combinationalInside": false,
-  "registeredInside": false,
-  "readBy": {
-   "F": [],
-   "Q": []
-  }
- },
- {
-  "x": 2,
-  "y": 9,
-  "cell": 0,
-  "init": 24428,
-  "hasFlipFlop": true,
-  "combinationalInside": false,
-  "registeredInside": false,
-  "readBy": {
-   "F": [],
-   "Q": []
-  }
- },
- {
-  "x": 2,
-  "y": 9,
-  "cell": 1,
-  "init": 56922,
-  "hasFlipFlop": true,
-  "combinationalInside": false,
-  "registeredInside": false,
-  "readBy": {
-   "F": [],
-   "Q": []
-  }
- },
- {
-  "x": 2,
-  "y": 9,
-  "cell": 2,
-  "init": 43267,
-  "hasFlipFlop": true,
-  "combinationalInside": false,
-  "registeredInside": false,
-  "readBy": {
-   "F": [],
-   "Q": []
-  }
- }
 ]

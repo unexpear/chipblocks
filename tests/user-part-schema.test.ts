@@ -64,6 +64,108 @@ const validInternal = () => ({
   ],
 })
 
+describe('reusable internal port contracts', () => {
+  test('versioned test definitions agree between schema and runtime', () => {
+    const part = {
+      ...valid(),
+      internal: {
+        ...validInternal(),
+        version: 1,
+        tests: [
+          {
+            id: 'example',
+            name: 'Example',
+            cycles: 2,
+            inputs: { in: 0 },
+            expected: { out: [1, 1] },
+          },
+        ],
+      },
+    }
+    expect(validateSchema(part)).toBe(true)
+    expect(validateUserPart(part)?.internal).toEqual(part.internal)
+    const future = { ...part, internal: { ...part.internal, version: 2 } }
+    expect(validateSchema(future)).toBe(false)
+    expect(validateUserPart(future)).toBeNull()
+    const fractional = {
+      ...part,
+      internal: { ...part.internal, tests: [{ ...part.internal.tests[0], cycles: 1.5 }] },
+    }
+    expect(validateSchema(fractional)).toBe(false)
+    expect(validateUserPart(fractional)).toBeNull()
+  })
+
+  test('preserves internal material names alongside scalar values', () => {
+    const internal = validInternal()
+    const part = {
+      ...valid(),
+      internal: {
+        ...internal,
+        nodes: internal.nodes.map((node) => ({
+          ...node,
+          parameters: {
+            ...node.parameters,
+            body_region: { value: 'silicon_p_type' },
+          },
+        })),
+      },
+    }
+    expect(validateSchema(part)).toBe(true)
+    expect(validateUserPart(part)?.internal?.nodes[0]?.parameters).toEqual(
+      part.internal.nodes[0]?.parameters,
+    )
+  })
+
+  const withContract = (contract: Record<string, unknown>) => {
+    const internal = validInternal()
+    return {
+      ...valid(),
+      internal: {
+        ...internal,
+        ports: internal.ports.map((port) => (port.id === 'out' ? { ...port, ...contract } : port)),
+      },
+    }
+  }
+
+  test('schema and runtime retain the complete contract', () => {
+    const contract = {
+      kind: 'signal',
+      drive: 'tristate',
+      domain: 'digital',
+      direction: 'output',
+      role: 'source',
+      unit: 'boolean',
+      enable: { pin: 'in', activeHigh: false },
+    }
+    const part = withContract(contract)
+    expect(validateSchema(part)).toBe(true)
+    const loaded = validateUserPart(JSON.parse(JSON.stringify(part)))
+    expect(loaded?.internal?.ports[1]).toMatchObject(contract)
+    contract.enable.activeHigh = true
+    expect(loaded?.internal?.ports[1]?.enable?.activeHigh).toBe(false)
+  })
+
+  test.each([
+    { domain: 'invented' },
+    { direction: 'sideways' },
+    { unit: 'banana' },
+    { role: [] },
+    { drive: ['input'] },
+    { kind: null },
+    { enable: { pin: 'in', activeHigh: 'false' } },
+  ])('rejects malformed declared contracts: %j', (contract) => {
+    const part = withContract(contract)
+    expect(validateSchema(part)).toBe(false)
+    expect(validateUserPart(part)).toBeNull()
+  })
+
+  test('rejects dangling enable references rather than erasing them', () => {
+    expect(
+      validateUserPart(withContract({ enable: { pin: 'missing', activeHigh: true } })),
+    ).toBeNull()
+  })
+})
+
 // Cases where the strict schema and the runtime validator MUST agree (no extra-key leniency involved).
 const agreementCases: { label: string; part: unknown; ok: boolean }[] = [
   { label: 'a minimal valid part', part: valid(), ok: true },

@@ -1,11 +1,15 @@
+import { versionedBlockData } from './block-persistence.ts'
+import { blockStructureError } from './block-validation.ts'
 import type { BlockData } from './blocks.ts'
 import { type ChipLayout, isEmptyChipLayout, sanitizeChipLayout } from './chip-layout.ts'
 import type { Footprint } from './footprint.ts'
+import { networkName } from './network-names.ts'
 import type { Parameters } from './part-defaults.ts'
 import type { BoardProfile, BoardSide } from './pcb-board.ts'
 import { type CopperTrace, sanitizeCopper, type Via } from './pcb-route.ts'
 import { isDefaultStackupOptions, type StackupOptions, sanitizeStackup } from './pcb-stackup.ts'
 import type { SheetSettings } from './sheet-frame.tsx'
+import { type SavedSimulationTest, validateSimulationTests } from './simulation-test-suite.ts'
 import { validateUserFootprint } from './user-footprint-validate.ts'
 import { validateUserPart } from './user-part-validate.ts'
 import type { UserPart } from './user-parts.ts'
@@ -29,6 +33,7 @@ export const CIRCUIT_FILE_FORMAT = 'chipblocks-circuit'
 export const CIRCUIT_FILE_VERSION = 1
 
 export type SavedNode = {
+  networkGroup?: string
   id: string
   definition: string
   x: number
@@ -55,6 +60,7 @@ export type SavedNode = {
 }
 
 export type SavedWire = {
+  netName?: string
   id: string
   source: string
   sourceHandle: string | null
@@ -81,6 +87,7 @@ export type SavedPlacement = {
 }
 
 export type CircuitFile = {
+  simulationTests?: SavedSimulationTest[]
   format: typeof CIRCUIT_FILE_FORMAT
   version: typeof CIRCUIT_FILE_VERSION
   /** The board-wide ambient (°C) parts inherit; absent ⇒ the 25 °C default (older files). */
@@ -126,6 +133,7 @@ type CanvasNodeLike = {
   position: { x: number; y: number }
   data: {
     definition: string
+    networkGroup?: string
     rotation?: number
     parameters?: Parameters
     footprintId?: string
@@ -142,6 +150,7 @@ type CanvasEdgeLike = {
   targetHandle?: string | null
   data?: {
     waypoints?: unknown
+    netName?: unknown
     curved?: unknown
     curveRadius?: unknown
     gaugeAwg?: unknown
@@ -226,7 +235,10 @@ export function serializeCircuit(
   vScoredSides?: readonly BoardSide[],
   boardProfile?: BoardProfile,
   userFootprints?: readonly Footprint[],
+  simulationTests?: readonly SavedSimulationTest[],
 ): CircuitFile {
+  const savedTests = validateSimulationTests(simulationTests)
+  if (!savedTests.ok) throw new Error(savedTests.reason)
   // Save only the user parts THIS circuit references (not the whole session registry, which is shared
   // across open tabs) — so the file is self-contained + portable without leaking unrelated parts.
   // Closed over internals: a used module's own custom sub-parts count as used too.
@@ -234,7 +246,13 @@ export function serializeCircuit(
     userParts && userParts.length > 0
       ? closeOverInternals(collectDefinitionIds(nodes), userParts)
       : undefined
-  const referencedUserParts = usedIds ? (userParts ?? []).filter((p) => usedIds.has(p.id)) : []
+  const referencedUserParts = usedIds
+    ? (userParts ?? [])
+        .filter((part) => usedIds.has(part.id))
+        .map((part) =>
+          part.internal ? { ...part, internal: versionedBlockData(part.internal) } : part,
+        )
+    : []
   // Same rule for AUTHORED footprints: save the packages this board actually places — a per-instance
   // choice on a node, or a referenced custom part's package — not the whole authored library.
   const usedFootprintIds = new Set<string>()
@@ -244,6 +262,7 @@ export function serializeCircuit(
   return {
     format: CIRCUIT_FILE_FORMAT,
     version: CIRCUIT_FILE_VERSION,
+    ...(savedTests.tests.length > 0 ? { simulationTests: savedTests.tests } : {}),
     ...(typeof projectAmbientC === 'number' ? { projectAmbientC } : {}),
     ...(sheet ? { sheet } : {}),
     ...(placements && placements.length > 0 ? { placements: [...placements] } : {}),
@@ -262,13 +281,16 @@ export function serializeCircuit(
       return {
         id: n.id,
         definition: n.data.definition,
+        ...(networkName(n.data.networkGroup)
+          ? { networkGroup: networkName(n.data.networkGroup) }
+          : {}),
         x: n.position.x,
         y: n.position.y,
         ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
         ...(parameters ? { parameters } : {}),
         ...(n.data.footprintId ? { footprintId: n.data.footprintId } : {}),
         ...(n.data.fidelity ? { fidelity: n.data.fidelity } : {}),
-        ...(n.data.block ? { block: n.data.block } : {}),
+        ...(n.data.block ? { block: versionedBlockData(n.data.block) } : {}),
         ...(n.data.caveat ? { caveat: n.data.caveat } : {}),
       }
     }),
@@ -278,6 +300,7 @@ export function serializeCircuit(
         : undefined
       return {
         id: e.id,
+        ...(networkName(e.data?.netName) ? { netName: networkName(e.data?.netName) } : {}),
         source: e.source,
         sourceHandle: e.sourceHandle ?? null,
         target: e.target,
@@ -310,6 +333,10 @@ export function deserializeCircuit(text: string): DeserializeResult {
     return { ok: false, reason: 'Not a circuit file (expected a JSON object).' }
   }
   const file = raw as Record<string, unknown>
+  const savedTests = validateSimulationTests(file.simulationTests)
+  if (!savedTests.ok) return savedTests
+  if (savedTests.tests.length > 0) file.simulationTests = savedTests.tests
+  else delete file.simulationTests
   if (file.format !== CIRCUIT_FILE_FORMAT) {
     return { ok: false, reason: 'Not a ChipBlocks circuit file (wrong or missing format field).' }
   }
@@ -324,6 +351,11 @@ export function deserializeCircuit(text: string): DeserializeResult {
   }
   for (const n of file.nodes) {
     const node = n as Record<string, unknown>
+    if (node && Object.hasOwn(node, 'networkGroup')) {
+      const name = networkName(node.networkGroup)
+      if (name) node.networkGroup = name
+      else delete node.networkGroup
+    }
     if (
       typeof node?.id !== 'string' ||
       typeof node?.definition !== 'string' ||
@@ -332,9 +364,18 @@ export function deserializeCircuit(text: string): DeserializeResult {
     ) {
       return { ok: false, reason: 'A part in the file is missing its id, type, or position.' }
     }
+    if (node.block !== undefined) {
+      const reason = blockStructureError(node.block, node.id)
+      if (reason) return { ok: false, reason }
+    }
   }
   for (const w of file.wires) {
     const wire = w as Record<string, unknown>
+    if (wire && Object.hasOwn(wire, 'netName')) {
+      const name = networkName(wire.netName)
+      if (name) wire.netName = name
+      else delete wire.netName
+    }
     if (
       typeof wire?.id !== 'string' ||
       typeof wire?.source !== 'string' ||

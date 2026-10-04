@@ -1,20 +1,18 @@
 {
- "note": "nextpnr-himbaechel placement of gowin-gw1n1-muxreg.fs. Keys are x,y,position. `muxBels` are the WIDE MULTIPLEXERS: bel X<x>Y<y>/MUX<k> drives the tile wire OF<k>. `init` is the yosys INIT parameter exactly as written, most-significant bit first, one bit per truth-table entry of a LUT of that width.",
- "tool": "nextpnr-himbaechel 0.10-108-g68c1acd8",
- "lutBels": {
-  "8,7,1": {
-   "kind": "LUT4",
-   "init": "1000000100011000"
+  "note": "nextpnr-himbaechel placement of gowin-gw1n1-muxreg.fs. Keys are x,y,position. `muxBels` are the WIDE MULTIPLEXERS: bel X<x>Y<y>/MUX<k> drives the tile wire OF<k>. `init` is the yosys INIT parameter exactly as written, most-significant bit first, one bit per truth-table entry of a LUT of that width.",
+  "tool": "nextpnr-himbaechel 0.10-108-g68c1acd8",
+  "lutBels": {
+    "8,7,1": {
+      "kind": "LUT4",
+      "init": "1000000100011000"
+    },
+    "8,7,0": {
+      "kind": "LUT4",
+      "init": "0110100110010110"
+    }
   },
-  "8,7,0": {
-   "kind": "LUT4",
-   "init": "0110100110010110"
-  }
- },
- "muxBels": {
-  "8,7,0": "MUX2_LUT5"
- },
- "dffBels": [
-  "8,7,0"
- ]
+  "muxBels": {
+    "8,7,0": "MUX2_LUT5"
+  },
+  "dffBels": ["8,7,0"]
 }

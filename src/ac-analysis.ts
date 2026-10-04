@@ -19,6 +19,7 @@ import {
   type MosfetSmallSignal,
   mosfetSmallSignalModel,
 } from './small-signal.ts'
+import { MAX_MNA_UNKNOWNS, pastDeadline, solveDeadline, tooLargeMessage } from './solver-budget.ts'
 import { propagationDelayS } from './transmission-line-model.ts'
 
 /**
@@ -145,6 +146,7 @@ type CoupledAcModel = {
 }
 
 type Topology = {
+  omitted: DroppedAcPart[]
   ground: string
   nodeIndex: Map<string, number>
   vsources: Instance[]
@@ -226,6 +228,32 @@ type CoupledSpec = {
 }
 /** Definitions this engine solves as magnetically coupled windings. */
 const COUPLED_DEFINITIONS = new Set(['transformer', 'transformer_center_tapped'])
+
+const AC_MODELED_DEFINITIONS = new Set([
+  ...BJT_DEFINITIONS,
+  ...FET_DEFINITIONS,
+  ...DIODE_AC_DEFINITIONS,
+  ...COUPLED_DEFINITIONS,
+  'ground',
+  'power_source',
+  'wire',
+  'fuse',
+  'switch_spst_toggle',
+  'switch_spst_momentary',
+  'switch_spdt',
+  'relay',
+  'cccs',
+  'vccs',
+  'resistor',
+  'incandescent_bulb',
+  'thermistor',
+  'photoresistor',
+  'potentiometer',
+  'capacitor',
+  'inductor',
+  'electromagnet',
+  'transmission_line',
+])
 
 /**
  * Turn a transformer / center-tapped transformer instance into its coupled-winding description, or say why it
@@ -388,6 +416,14 @@ export function partsDroppedFromAcSolve(world: World): DroppedAcPart[] {
       dropped.push({ id: inst.id, definition: inst.definition, reason: unsolved })
       continue
     }
+    if (inst.kind_ref === 'primitive_device' && !AC_MODELED_DEFINITIONS.has(inst.definition)) {
+      dropped.push({
+        id: inst.id,
+        definition: inst.definition,
+        reason: 'this device has no AC stamp in the current engine',
+      })
+      continue
+    }
     const built = coupledSpec(inst)
     if (built !== null && 'dropped' in built) {
       dropped.push({ id: inst.id, definition: inst.definition, reason: built.dropped })
@@ -400,6 +436,7 @@ function buildTopology(
   world: World,
   temperaturesC?: Map<string, number>,
   portSourceId?: string,
+  deadline?: number,
 ): Topology | null {
   let ground: string | undefined
   for (const net of world.nets.values()) if (net.type === 'ground') ground = net.id
@@ -459,6 +496,7 @@ function buildTopology(
   // Transistors (BJT + MOSFET/JFET/CRD) are linearized at the DC operating point: solve it once
   // (only when the circuit has any), then build each small-signal model around it.
   const bjts: BjtAcModel[] = []
+  const omitted = partsDroppedFromAcSolve(world)
   const mosfets: MosfetAcModel[] = []
   const diodes: DiodeAcModel[] = []
   const bjtInsts = [...world.instances.values()].filter((i) => BJT_DEFINITIONS.has(i.definition))
@@ -467,12 +505,23 @@ function buildTopology(
     DIODE_AC_DEFINITIONS.has(i.definition),
   )
   if (bjtInsts.length > 0 || fetInsts.length > 0 || diodeInsts.length > 0) {
-    const dc = solveDCRobust(world, temperaturesC ? { temperaturesC } : undefined)
+    const dc = solveDCRobust(world, {
+      ...(temperaturesC ? { temperaturesC } : {}),
+      ...(deadline === undefined ? {} : { deadline }),
+    })
     if (dc.status === 'solved') {
       const nodeVoltage = (net: string) => (net === ground ? 0 : (dc.nodes.get(net) ?? 0))
       for (const inst of bjtInsts) {
         const ss = bjtSmallSignalModel(inst, nodeVoltage, temperaturesC?.get(inst.id))
-        if (ss === null) continue
+        if (ss === null) {
+          omitted.push({
+            id: inst.id,
+            definition: inst.definition,
+            reason:
+              'the BJT small-signal model could not be built from its parameters and connections',
+          })
+          continue
+        }
         bjts.push({
           ...ss,
           bIdx: idx(ss.baseNet),
@@ -482,7 +531,15 @@ function buildTopology(
       }
       for (const inst of fetInsts) {
         const ss = mosfetSmallSignalModel(inst, nodeVoltage, temperaturesC?.get(inst.id))
-        if (ss === null) continue
+        if (ss === null) {
+          omitted.push({
+            id: inst.id,
+            definition: inst.definition,
+            reason:
+              'the FET small-signal model could not be built from its parameters and connections',
+          })
+          continue
+        }
         mosfets.push({
           ...ss,
           gIdx: idx(ss.gateNet),
@@ -497,13 +554,29 @@ function buildTopology(
           dc.branches.get(inst.id),
           temperaturesC?.get(inst.id),
         )
-        if (ss === null) continue
+        if (ss === null) {
+          omitted.push({
+            id: inst.id,
+            definition: inst.definition,
+            reason:
+              'the diode small-signal model could not be built from its parameters and connections',
+          })
+          continue
+        }
         diodes.push({ ...ss, aIdx: idx(ss.anodeNet), cIdx: idx(ss.cathodeNet) })
       }
+    } else {
+      for (const inst of [...bjtInsts, ...fetInsts, ...diodeInsts])
+        omitted.push({
+          id: inst.id,
+          definition: inst.definition,
+          reason: `small-signal bias solve was not complete (${dc.status})`,
+        })
     }
   }
 
   return {
+    omitted,
     ground,
     nodeIndex,
     vsources,
@@ -1265,6 +1338,107 @@ export function acResponse(world: World, opts: AcOptions, frequencyHz: number): 
     2 * Math.PI * frequencyHz,
   )
   return toPoint(frequencyHz, vout)
+}
+
+export function acTestResponse(
+  world: World,
+  opts: AcOptions,
+  frequenciesHz: number[],
+  limits: { deadline?: number; maxUnknowns?: number } = {},
+): {
+  points: AcPoint[]
+  omitted: DroppedAcPart[]
+  warnings: string[]
+  complete: boolean
+} {
+  if (
+    frequenciesHz.length === 0 ||
+    frequenciesHz.length > 512 ||
+    frequenciesHz.some(
+      (frequency, index) =>
+        !Number.isFinite(frequency) ||
+        frequency <= 0 ||
+        (index > 0 && frequency <= (frequenciesHz[index - 1] ?? Infinity)),
+    )
+  )
+    return {
+      points: [],
+      omitted: [],
+      warnings: ['Choose 1–512 finite, positive, strictly increasing test frequencies.'],
+      complete: false,
+    }
+  const deadline = solveDeadline(limits.deadline)
+  const maxUnknowns = limits.maxUnknowns ?? MAX_MNA_UNKNOWNS
+  if (!Number.isFinite(deadline) || !Number.isSafeInteger(maxUnknowns) || maxUnknowns < 1)
+    return {
+      points: [],
+      omitted: [],
+      warnings: ['Invalid AC test execution limits.'],
+      complete: false,
+    }
+  if (pastDeadline(deadline))
+    return {
+      points: [],
+      omitted: [],
+      warnings: ['AC test exceeded its shared time budget.'],
+      complete: false,
+    }
+  const topology = buildTopology(world, opts.temperaturesC, undefined, deadline)
+  if (
+    !topology?.vsources.some((source) => source.id === opts.inputSource) ||
+    !world.nets.has(opts.outputNet)
+  )
+    return {
+      points: [],
+      omitted: [],
+      warnings: ['The AC test needs a valid source, output net, and ground reference.'],
+      complete: false,
+    }
+  const ignored = partsWithAcValueIgnored(world)
+  if (topology.dim > maxUnknowns)
+    return {
+      points: [],
+      omitted: topology.omitted,
+      warnings: [tooLargeMessage(topology.dim, maxUnknowns)],
+      complete: false,
+    }
+  const warnings = [
+    'AC includes the numerical 1 nS shunt from each non-ground net to ground.',
+    ...topology.omitted.map((part) => `${part.id}: ${part.reason}`),
+    ...ignored.flatMap((part) =>
+      part.values.map((value) => `${part.id}.${value.parameter}: ${value.reason}`),
+    ),
+    ...partsSolvedAsPerfectReactance(world).map(
+      (part) =>
+        `${part.id}: undeclared or zero ${part.slots.flatMap((slot) => slot.parameters).join(', ')} is modeled as lossless.`,
+    ),
+  ]
+  const points: AcPoint[] = []
+  for (const frequency of frequenciesHz) {
+    if (pastDeadline(deadline)) {
+      warnings.push('AC test exceeded its shared time budget; the sweep is incomplete.')
+      return { points, omitted: topology.omitted, warnings, complete: false }
+    }
+    points.push(
+      toPoint(
+        frequency,
+        solveAtOmega(world, topology, opts.inputSource, opts.outputNet, 2 * Math.PI * frequency),
+      ),
+    )
+  }
+  if (pastDeadline(deadline)) {
+    warnings.push('AC test exceeded its shared time budget during its final matrix solve.')
+    return { points, omitted: topology.omitted, warnings, complete: false }
+  }
+  return {
+    points,
+    omitted: topology.omitted,
+    warnings,
+    complete:
+      topology.omitted.length === 0 &&
+      ignored.length === 0 &&
+      points.every((point) => [point.gain, point.phaseDeg].every(Number.isFinite)),
+  }
 }
 
 /** A logarithmic frequency sweep (a Bode plot's worth of points). */

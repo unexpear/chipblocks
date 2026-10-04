@@ -86,6 +86,9 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // Export GDS (chip-physical chapter): the File menu asks; the renderer builds the placed
   // floorplan's GDSII bytes (gds.ts) and hands them over; main picks a file and writes them verbatim.
   onExportGdsRequest: (callback: () => void) => subscribe('file:export-gds-request', callback),
+  // Compile to iCE40: the File menu asks; the renderer compiles and shows a report. No save dialog.
+  onCompileIce40Request: (callback: () => void) =>
+    subscribe('file:compile-ice40-request', callback),
   saveGdsData: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-gds', data),
   // Export OASIS (compact binary layout): the renderer builds the bytes; main writes them verbatim.

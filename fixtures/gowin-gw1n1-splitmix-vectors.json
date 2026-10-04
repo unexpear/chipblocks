@@ -1,169 +1,169 @@
 {
- "note": "What fixtures/gowin-gw1n1-splitmix.v computes, taken from Icarus Verilog simulating that source directly - NOT from the recovered netlist. Regenerate with: iverilog -o tb.vvp gowin-gw1n1-splitmix-tb.v gowin-gw1n1-splitmix.v && vvp tb.vvp",
- "tool": "Icarus Verilog version 14.0 (devel) (s20260301-328-geda9fdcd1-dirty), from oss-cad-suite",
- "testbench": "gowin-gw1n1-splitmix-tb.v",
- "reading": "The registers are cleared to zero before cycle 0. Each entry holds the four-bit input a driven during that cycle and the two outputs read just before that cycle clock edge, so y0 is a function of THIS cycle a and y1 of the previous one. The pattern walks all sixteen values of a in order and then again in a different order, so both functions are covered exhaustively.",
- "inputBits": 4,
- "cycles": [
-  {
-   "a": 0,
-   "y0": 1,
-   "y1": 0
-  },
-  {
-   "a": 1,
-   "y0": 1,
-   "y1": 1
-  },
-  {
-   "a": 2,
-   "y0": 1,
-   "y1": 1
-  },
-  {
-   "a": 3,
-   "y0": 0,
-   "y1": 1
-  },
-  {
-   "a": 4,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 5,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 6,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 7,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 8,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 9,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 10,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 11,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 12,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 13,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 14,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 15,
-   "y0": 1,
-   "y1": 0
-  },
-  {
-   "a": 0,
-   "y0": 1,
-   "y1": 1
-  },
-  {
-   "a": 7,
-   "y0": 0,
-   "y1": 1
-  },
-  {
-   "a": 14,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 5,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 12,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 3,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 10,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 1,
-   "y0": 1,
-   "y1": 0
-  },
-  {
-   "a": 8,
-   "y0": 0,
-   "y1": 1
-  },
-  {
-   "a": 15,
-   "y0": 1,
-   "y1": 0
-  },
-  {
-   "a": 6,
-   "y0": 0,
-   "y1": 1
-  },
-  {
-   "a": 13,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 4,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 11,
-   "y0": 0,
-   "y1": 0
-  },
-  {
-   "a": 2,
-   "y0": 1,
-   "y1": 0
-  },
-  {
-   "a": 9,
-   "y0": 0,
-   "y1": 1
-  }
- ]
+  "note": "What fixtures/gowin-gw1n1-splitmix.v computes, taken from Icarus Verilog simulating that source directly - NOT from the recovered netlist. Regenerate with: iverilog -o tb.vvp gowin-gw1n1-splitmix-tb.v gowin-gw1n1-splitmix.v && vvp tb.vvp",
+  "tool": "Icarus Verilog version 14.0 (devel) (s20260301-328-geda9fdcd1-dirty), from oss-cad-suite",
+  "testbench": "gowin-gw1n1-splitmix-tb.v",
+  "reading": "The registers are cleared to zero before cycle 0. Each entry holds the four-bit input a driven during that cycle and the two outputs read just before that cycle clock edge, so y0 is a function of THIS cycle a and y1 of the previous one. The pattern walks all sixteen values of a in order and then again in a different order, so both functions are covered exhaustively.",
+  "inputBits": 4,
+  "cycles": [
+    {
+      "a": 0,
+      "y0": 1,
+      "y1": 0
+    },
+    {
+      "a": 1,
+      "y0": 1,
+      "y1": 1
+    },
+    {
+      "a": 2,
+      "y0": 1,
+      "y1": 1
+    },
+    {
+      "a": 3,
+      "y0": 0,
+      "y1": 1
+    },
+    {
+      "a": 4,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 5,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 6,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 7,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 8,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 9,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 10,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 11,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 12,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 13,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 14,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 15,
+      "y0": 1,
+      "y1": 0
+    },
+    {
+      "a": 0,
+      "y0": 1,
+      "y1": 1
+    },
+    {
+      "a": 7,
+      "y0": 0,
+      "y1": 1
+    },
+    {
+      "a": 14,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 5,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 12,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 3,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 10,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 1,
+      "y0": 1,
+      "y1": 0
+    },
+    {
+      "a": 8,
+      "y0": 0,
+      "y1": 1
+    },
+    {
+      "a": 15,
+      "y0": 1,
+      "y1": 0
+    },
+    {
+      "a": 6,
+      "y0": 0,
+      "y1": 1
+    },
+    {
+      "a": 13,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 4,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 11,
+      "y0": 0,
+      "y1": 0
+    },
+    {
+      "a": 2,
+      "y0": 1,
+      "y1": 0
+    },
+    {
+      "a": 9,
+      "y0": 0,
+      "y1": 1
+    }
+  ]
 }

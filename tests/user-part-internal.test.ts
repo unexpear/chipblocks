@@ -12,6 +12,7 @@ import type { BlockData } from '../src/renderer/blocks.ts'
 import { canvasWorld } from '../src/renderer/pipeline/canvas-world.ts'
 import { solveCanvasDispatch } from '../src/renderer/pipeline/solve-canvas.ts'
 import { userPartFromBlock } from '../src/renderer/user-part-draft.ts'
+import { validateUserPart } from '../src/renderer/user-part-validate.ts'
 import { registerUserPart, setUserParts, type UserPart } from '../src/renderer/user-parts.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -315,7 +316,9 @@ describe('userPartFromBlock — save a drawn block as a custom part', () => {
     const internal = r.part.internal as BlockData & { symbol?: string; size?: unknown }
     expect(internal.symbol).toBeUndefined()
     expect(internal.size).toBeUndefined()
-    expect((internal.ports[0] as { kind?: string }).kind).toBeUndefined()
+    expect(internal.ports[0]?.kind).toBe('power_positive')
+    expect(internal.ports[0]?.drive).toBe('input')
+    expect(internal.ports[1]?.drive).toBe('push_pull')
   })
 
   test('the stored internals are a deep copy — editing the source block later can’t change the part', () => {
@@ -355,6 +358,43 @@ describe('userPartFromBlock — save a drawn block as a custom part', () => {
 })
 
 describe('withInternalParts — the library persists a module WITH its custom sub-parts', () => {
+  test('saving and reloading nested blocks preserves port contracts independently', () => {
+    const child = structuredClone(seriesPair)
+    const output = child.ports[1]
+    if (!output) throw new Error('Missing output fixture')
+    Object.assign(output, {
+      drive: 'tristate',
+      domain: 'digital',
+      direction: 'output',
+      role: 'source',
+      unit: 'boolean',
+      enable: { pin: 'a', activeHigh: false },
+    })
+    const parent: BlockData = {
+      name: 'parent',
+      origin: { x: 0, y: 0 },
+      nodes: [{ id: 'child', definition: 'block', x: 0, y: 0, block: child }],
+      edges: [],
+      ports: child.ports.map((port) => ({
+        ...port,
+        inner: { nodeId: 'child', handleId: port.id },
+      })),
+    }
+    const saved = userPartFromBlock('Contract Module', 'U', parent)
+    expect(saved.ok).toBe(true)
+    if (!saved.ok) return
+    const loaded = validateUserPart(JSON.parse(JSON.stringify(saved.part)))
+    expect(loaded?.internal?.ports[1]).toMatchObject({
+      drive: 'tristate',
+      direction: 'output',
+      domain: 'digital',
+      unit: 'boolean',
+    })
+    expect(loaded?.internal?.nodes[0]?.block?.ports[1]).toEqual(output)
+    if (output.enable) output.enable.activeHigh = true
+    expect(saved.part.internal?.nodes[0]?.block?.ports[1]?.enable?.activeHigh).toBe(false)
+  })
+
   test('a module using a custom sub-part persists both (transitively, deduped)', async () => {
     const { withInternalParts } = await import('../src/renderer/user-library.ts')
     const sub: UserPart = {

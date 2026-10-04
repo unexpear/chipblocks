@@ -16,6 +16,7 @@ import {
   type RuntimeWhySystem,
 } from '../runtime-contracts.ts'
 import { type RuntimeWhyNode, whyExplanation, whySystemFor } from '../runtime-why.ts'
+import { BLOCK_TEST_MAX_CYCLES as MAX_TRACE_CYCLES } from './block-persistence.ts'
 import type { BlockData } from './blocks.ts'
 import { type LogicResult, stepLogic } from './logic-sim.ts'
 import {
@@ -60,7 +61,7 @@ export type TraceResult = {
 /** Constant input values to hold across the whole run, by signal name (LSB→bit0). Missing inputs = 0. */
 export type TraceInputs = Map<string, number>
 
-export const MAX_TRACE_CYCLES = 256
+export { BLOCK_TEST_MAX_CYCLES as MAX_TRACE_CYCLES } from './block-persistence.ts'
 
 const readSignal = (last: LogicResult, sig: DebugSignal): number | undefined =>
   readSignalValue((netId) => last.value(HARNESS_BLOCK_ID, netId), sig)

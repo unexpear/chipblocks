@@ -90,6 +90,33 @@ describe('criticalPath + analyzeTiming — the slowest path sets the clock', () 
     expect(report.state).toBe('waiting')
     expect(report.why.state).toBe('waiting')
   })
+  test('never reports 1/Infinity as a measured 0 Hz ceiling', () => {
+    const infinitePath = analyzeTiming(
+      [path('A', 'B', Number.POSITIVE_INFINITY, 1e-9, ['g1'])],
+      reg,
+      10e-9,
+    )
+    expect(infinitePath.state).toBe('blocked')
+    expect(infinitePath.maxFrequency).not.toBe(0)
+    expect(infinitePath.maxFrequency).toBe(Number.POSITIVE_INFINITY)
+    expect(infinitePath.diagnostics[0]?.code).toBe('uncharacterized-delay')
+
+    const infiniteRegister = analyzeTiming(
+      [path('A', 'B', 3e-9, 1e-9, ['g1'])],
+      { clockToQ: Number.POSITIVE_INFINITY, setup: Number.POSITIVE_INFINITY, hold: 0 },
+      10e-9,
+    )
+    expect(infiniteRegister.state).toBe('blocked')
+    expect(infiniteRegister.maxFrequency).not.toBe(0)
+    expect(infiniteRegister.maxFrequency).toBe(Number.POSITIVE_INFINITY)
+    expect(infiniteRegister.diagnostics[0]?.code).toBe('uncharacterized-delay')
+
+    // Direct setup math must not claim 0 Hz when T_min is infinite.
+    const setup = setupCheck(path('A', 'B', Number.POSITIVE_INFINITY, 1e-9, ['g1']), reg, 10e-9)
+    expect(setup.maxFrequency).not.toBe(0)
+    expect(setup.maxFrequency).toBe(Number.POSITIVE_INFINITY)
+  })
+
   test('timing violations expose a target and repair action through the shared diagnostic contract', () => {
     const report = analyzeTiming([path('A', 'B', 6e-9, 1e-9, ['g1'])], reg, 1e-9)
     expect(report.state).toBe('failed')

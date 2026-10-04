@@ -1,3 +1,5 @@
+import { versionedBlockData } from './block-persistence.ts'
+import { copyBlockPortContract } from './block-validation.ts'
 import { type BlockData, isOutputDrive } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
 import {
@@ -180,13 +182,15 @@ export function buildUserPartDraft(input: UserPartInput): DraftResult {
 /**
  * The SOLVE CORE of a block — exactly what a custom part's internals persist: the parts, the wires
  * (with their drawn geometry, so inner wire lengths stay physically real), and the ports. Presentation
- * extras a canvas block can carry (display faces, gate symbols, pin drive/power marks, box size) are
+ * extras a canvas block can carry (display faces, gate symbols, box size) are
  * deliberately NOT part of a saved custom part's internals — the part presents through its own pins —
  * so what saves is exactly what loads (the runtime validator enforces this same core shape). Deep
  * copies throughout: later edits to the source block can't silently change the saved part.
  */
 function coreBlockData(block: BlockData): BlockData {
   return {
+    ...(block.version === undefined ? {} : { version: block.version }),
+    ...(block.tests === undefined ? {} : { tests: structuredClone(block.tests) }),
     name: block.name,
     origin: { x: block.origin.x, y: block.origin.y },
     nodes: block.nodes.map((n) => ({
@@ -211,6 +215,7 @@ function coreBlockData(block: BlockData): BlockData {
       ...(typeof e.curveRadius === 'number' ? { curveRadius: e.curveRadius } : {}),
     })),
     ports: block.ports.map((p) => ({
+      ...copyBlockPortContract(p),
       id: p.id,
       label: p.label,
       ...(p.name ? { name: p.name } : {}),
@@ -237,6 +242,15 @@ export function userPartFromBlock(
 ): DraftResult {
   const named = resolvePartId(rawName)
   if (!named.ok) return named
+  let internal: BlockData
+  try {
+    internal = coreBlockData(versionedBlockData(block))
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'The block could not be serialized.',
+    }
+  }
   if (block.ports.length === 0) {
     return { ok: false, error: 'The block needs at least one pin (wire to it, or add pins first).' }
   }
@@ -259,7 +273,7 @@ export function userPartFromBlock(
     name: named.name,
     designatorPrefix: designatorPrefix.trim().toUpperCase() || 'U',
     pins,
-    internal: coreBlockData(block),
+    internal,
   }
   return { ok: true, part }
 }

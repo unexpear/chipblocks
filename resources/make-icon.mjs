@@ -11,10 +11,10 @@
  * Regenerate whenever the design changes; commit the resulting resources/icon.ico + resources/icon.png.
  */
 
-import { deflateSync } from 'node:zlib'
 import { writeFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { deflateSync } from 'node:zlib'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -169,7 +169,7 @@ function crc32(buf) {
     c ^= buf[n]
     for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1
   }
-  return (~c) >>> 0
+  return ~c >>> 0
 }
 function chunk(type, data) {
   const len = Buffer.alloc(4)
@@ -188,7 +188,8 @@ function toPng(c) {
     for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4
       const o = y * (S * 4 + 1) + 1 + x * 4
-      for (let k = 0; k < 4; k++) raw[o + k] = Math.round(Math.min(1, Math.max(0, c.data[i + k])) * 255)
+      for (let k = 0; k < 4; k++)
+        raw[o + k] = Math.round(Math.min(1, Math.max(0, c.data[i + k])) * 255)
     }
   }
   const ihdr = Buffer.alloc(13)

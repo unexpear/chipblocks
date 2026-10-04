@@ -14,9 +14,10 @@ Canonical measured implementation status and gate results: [PROJECT-STATUS.md](P
 
 ## Core principles (load-bearing)
 
-1. **AI assists. ChipBlocks validates. The user approves.**
-   - **AI** writes docs, READMEs, draft code, explanations, suggestions, BOM notes.
-   - **ChipBlocks (deterministic engine)** owns physics, units, conservation laws, net correctness, simulation, DRC/LVS when applicable, Gerber/GDS/release manifests, and any artifact that goes into the manufacturing ZIP.
+1. **The engine validates. The user approves.**
+   - **Contributor AI tools** may draft docs, READMEs, code, and notes while the project is being written. That drafting is not a feature of the shipped app.
+   - **The shipped app has no model.** It does not draft explanations, suggestions, or manufacturing files.
+   - **ChipBlocks (deterministic engine)** owns physics, units, conservation laws, net correctness, simulation, explanations, DRC/LVS when applicable, Gerber/GDS/release manifests, and any artifact that goes into the manufacturing ZIP.
    - **User** approves at every checkpoint that matters.
    - The manufacturing ZIP is **never** AI-generated. Wrong Gerbers cost real money; AI can be confidently wrong.
 
@@ -27,9 +28,8 @@ Canonical measured implementation status and gate results: [PROJECT-STATUS.md](P
 4. **Free and open-source, no paid tier.**
    - MIT-licensed.
    - Permissive (and file-level-permissive) dependencies only: MIT / Apache 2.0 / BSD / ISC / CC0 / MPL-2.0. Never GPL/AGPL bundled in the shipped product. MPL-2.0 is file-level copyleft (Mozilla's license) and only obligates MPL files themselves — safe to include for build-time tooling like lightningcss (transitive via Vite → Vitest).
-   - BYOK AI (user's own API key) — the project never pays for inference on behalf of users.
-   - A **No-AI mode** is required so the app is fully usable without any AI configured.
-   - Multi-provider AI (Anthropic, OpenAI, possibly Gemini/Ollama later) — never locked to one vendor.
+   - No in-app AI today. The project does not pay for inference.
+   - If in-app AI is ever added, it must be BYOK, off by default, and multi-provider. Do not stub it.
 
 5. **"Fine taking time."** No rushed shortcuts. Sprint pace is dictated by what's actually correct, not by external deadlines.
 
@@ -60,7 +60,7 @@ Each layer is composed from the layer(s) below. The user sees the layer they're 
 - **Layout / GDS (when added)**: **Magic** (for layout) — UC Berkeley BSD-style permissive, bundleable, verified 2026-06-05 at github.com/RTimothyEdwards/magic LICENSE. **KLayout** (for GDS viewing) — GPL-3.0, invoked separately as a user-installed external process, NOT bundled. Verified 2026-06-05 at github.com/KLayout/klayout (SPDX GPL-3.0, maintained by Matthias Köfferlein).
 - **EM solvers (if ever added)**: openEMS (GPL-3.0) or MEEP (GPL-2.0-or-later) — both copyleft, external-process invocation only. NOTE: MEEP's "MIT" in its name refers to Massachusetts Institute of Technology (originating institution), NOT the MIT software license — common misconception, corrected 2026-06-05. See SIMULATION-AND-VISUALIZATION-ARC.md.
 - **Thermal solver (if ever added)**: no clean permissive open-source path. Elmer FEM is dual-LGPL/GPL but the heat-conduction modules are on the GPL side. Recommended path: from-scratch 2-D finite-difference solver in TypeScript using FR4 thermal conductivity (~0.3 W/m·K) and lumped thermal-resistance networks for PCB-scale modeling. See SIMULATION-AND-VISUALIZATION-ARC.md.
-- **AI integration**: BYOK, multi-provider. Anthropic + OpenAI + No-AI required at v1; local (Ollama) + Gemini later.
+- **AI integration**: Not implemented. No SDK. Deferred. See [PROJECT-STATUS.md](PROJECT-STATUS.md).
 
 ## Environment
 
@@ -169,9 +169,9 @@ Variable-length sprints; pace dictated by correctness, not deadlines. The v2 `SP
 - ✅ Ground-up electronics builder (materials → full systems)
 - ✅ Hierarchical block composition with lazy expansion
 - ✅ Deterministic engine for physics validation
-- ✅ AI as project-compiler assistant (docs / code / explanations)
+- Contributor AI drafting (docs / code) is not an in-app feature
 - ✅ Two-deliverables model (editable project + manufacturing ZIP)
-- ✅ Multi-provider AI with No-AI fallback required
+- In-app multi-provider AI is not in the app (deferred; see [PROJECT-STATUS.md](PROJECT-STATUS.md))
 - ✅ Chips (eventually), PCBs (eventually), full devices (eventually)
 - ❌ Cutting-edge ASIC nodes (5nm / 3nm / 2nm)
 - ❌ Manufacturing or fulfillment (software outputs files; user takes them to a fab)

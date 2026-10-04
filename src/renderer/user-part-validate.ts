@@ -1,3 +1,5 @@
+import { BLOCK_FORMAT_VERSION, readSavedBlockTests } from './block-persistence.ts'
+import { readBlockPortContract } from './block-validation.ts'
 import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
 import type { PinElectrical, PinSide, UserPart } from './user-parts.ts'
@@ -60,6 +62,9 @@ function cleanBlockCore(raw: unknown, depth: number): BlockData | null {
   if (depth <= 0) return null
   if (!isObj(raw)) return null
   if (typeof raw.name !== 'string') return null
+  if (raw.version !== undefined && raw.version !== BLOCK_FORMAT_VERSION) return null
+  const tests = readSavedBlockTests(raw.tests)
+  if (tests === null) return null
   if (!isObj(raw.origin) || !isFiniteNum(raw.origin.x) || !isFiniteNum(raw.origin.y)) return null
   if (!Array.isArray(raw.nodes) || !Array.isArray(raw.edges) || !Array.isArray(raw.ports))
     return null
@@ -73,7 +78,7 @@ function cleanBlockCore(raw: unknown, depth: number): BlockData | null {
     if (typeof n.definition !== 'string' || n.definition.length < 1) return null
     if (!isFiniteNum(n.x) || !isFiniteNum(n.y)) return null
     if (n.rotation !== undefined && !isFiniteNum(n.rotation)) return null
-    const parameters = cleanParameters(n.parameters)
+    const parameters = cleanParameters(n.parameters, true)
     if (parameters === null) return null
     let block: BlockData | undefined
     if (n.block !== undefined) {
@@ -136,7 +141,10 @@ function cleanBlockCore(raw: unknown, depth: number): BlockData | null {
     // A port must expose a REAL internal terminal — an unknown inner node would leave the pin dead.
     if (typeof p.inner.nodeId !== 'string' || !nodeIds.has(p.inner.nodeId)) return null
     if (typeof p.inner.handleId !== 'string' || p.inner.handleId.length < 1) return null
+    const contract = readBlockPortContract(p)
+    if (contract === null) return null
     ports.push({
+      ...contract,
       id: p.id,
       label: p.label,
       ...(p.name !== undefined ? { name: p.name } : {}),
@@ -145,7 +153,16 @@ function cleanBlockCore(raw: unknown, depth: number): BlockData | null {
     })
   }
 
-  return { name: raw.name, origin: { x: raw.origin.x, y: raw.origin.y }, nodes, edges, ports }
+  if (ports.some((port) => port.enable && !portIds.has(port.enable.pin))) return null
+  return {
+    ...(raw.version === undefined ? {} : { version: BLOCK_FORMAT_VERSION }),
+    ...(raw.tests === undefined ? {} : { tests }),
+    name: raw.name,
+    origin: { x: raw.origin.x, y: raw.origin.y },
+    nodes,
+    edges,
+    ports,
+  }
 }
 
 /** Validate an optional internal circuit. The top level's ports must be 1:1 with the part's PINS (same
@@ -185,12 +202,17 @@ function cleanBehavesAs(
   return { definition: raw.definition, terminals }
 }
 
-function cleanParameters(raw: unknown): Parameters | null | undefined {
+function cleanParameters(raw: unknown, allowNamedValues = false): Parameters | null | undefined {
   if (raw === undefined) return undefined
   if (!isObj(raw)) return null
   const out: Parameters = {}
   for (const [key, entry] of Object.entries(raw)) {
-    if (!PARAM_KEY_RE.test(key) || !isObj(entry) || !isObj(entry.value)) return null
+    if (!PARAM_KEY_RE.test(key) || !isObj(entry)) return null
+    if (allowNamedValues && typeof entry.value === 'string' && entry.value.length > 0) {
+      out[key] = { value: entry.value }
+      continue
+    }
+    if (!isObj(entry.value)) return null
     const v = entry.value
     if (
       v.kind !== 'scalar' ||

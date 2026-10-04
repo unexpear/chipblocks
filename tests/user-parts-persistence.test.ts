@@ -145,7 +145,10 @@ describe('internal-circuit parts persist (slice 4b Model B)', () => {
   }
 
   test('an internal part survives the round-trip intact (the whole sub-circuit)', () => {
-    expect(roundTrip([moduleUsingSub, subPart]).userParts).toEqual([moduleUsingSub, subPart])
+    expect(roundTrip([moduleUsingSub, subPart]).userParts).toEqual([
+      { ...moduleUsingSub, internal: { ...moduleUsingSub.internal, version: 1 } },
+      subPart,
+    ])
   })
 
   test('the scoped save follows a module’s INTERNALS: its custom sub-parts are saved too', () => {

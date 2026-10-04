@@ -1,23 +1,67 @@
-import type { Footprint } from './footprint.ts'
+import { type Footprint, provisionalLand } from './footprint.ts'
 import { allAvailableFootprints, allUserFootprints, resolveFootprint } from './user-footprints.ts'
 import { resolveUserPart, type UserPart } from './user-parts.ts'
+
+/**
+ * Built-in kinds whose pin order is NOT a total order we can honestly number. A provisional
+ * land would invent which pad is the primary, the common, or a circuit-block port. They stay
+ * export-blocking and named.
+ */
+const ROLE_SENSITIVE_DEFINITIONS = new Set([
+  'transformer',
+  'transformer_center_tapped',
+  'switch_spdt',
+  'op_amp',
+  'relay',
+  'block',
+])
+
+/**
+ * Symmetric two-terminal handles already ordered pad 1 then pad 2. Swapping the two ends does
+ * not change the part, so declaration of terminal_a → 1 / terminal_b → 2 is an honest total
+ * order — and these parts have no manufacturer package yet. Role-sensitive kinds are not here.
+ */
+export const SYMMETRIC_TWO_TERMINAL_PADS: Record<string, Record<string, string>> = {
+  fuse: { terminal_a: '1', terminal_b: '2' },
+  photoresistor: { terminal_a: '1', terminal_b: '2' },
+  incandescent_bulb: { terminal_a: '1', terminal_b: '2' },
+  electromagnet: { terminal_a: '1', terminal_b: '2' },
+}
 
 /**
  * A user-authored part lands on the board too (user-made parts, slice 4a): it declares a footprint id,
  * and its pins map to that footprint's pads IN DECLARATION ORDER (pin 1 → pad 1, …). A footprint only
  * fits if it has at least as many pads as the part has pins. This returns the part's footprint — the
- * per-instance chosen override if it fits, else the part's own default — or undefined if neither fits.
+ * per-instance chosen override if it fits, else the part's own default — or a provisional land when neither is a real package and the pin order is honest.
  */
+function fittingRealFootprint(id: string | undefined, pinCount: number): Footprint | undefined {
+  if (id === undefined) return undefined
+  // resolveFootprint checks the AUTHORED library first, then the built-ins, and carries the
+  // Object.hasOwn guard a persisted (untrusted) footprintId needs — 'constructor' / '__proto__' would
+  // otherwise hand back an inherited member whose `.pads` is undefined → a crash on `.length`.
+  const fp = resolveFootprint(id)
+  if (fp === undefined || fp.provisional === true) return undefined
+  return fp.pads.length >= pinCount ? fp : undefined
+}
+
+/** A user part's pins are a total order (declaration order) unless a role-sensitive behaviour
+ *  would make numbering them a guess, or the pin ids themselves are not unique. */
+function userPartMayTakeProvisional(userPart: UserPart): boolean {
+  if (userPart.pins.length < 1) return false
+  if (ROLE_SENSITIVE_DEFINITIONS.has(userPart.id)) return false
+  const behavesAs = userPart.behavesAs?.definition
+  if (behavesAs !== undefined && ROLE_SENSITIVE_DEFINITIONS.has(behavesAs)) return false
+  const ids = new Set(userPart.pins.map((pin) => pin.id))
+  return ids.size === userPart.pins.length
+}
+
 function userPartFootprint(userPart: UserPart, chosenId?: string): Footprint | undefined {
-  const fits = (id: string | undefined): Footprint | undefined => {
-    if (id === undefined) return undefined
-    // resolveFootprint checks the AUTHORED library first, then the built-ins, and carries the
-    // Object.hasOwn guard a persisted (untrusted) footprintId needs — 'constructor' / '__proto__' would
-    // otherwise hand back an inherited member whose `.pads` is undefined → a crash on `.length`.
-    const fp = resolveFootprint(id)
-    return fp !== undefined && fp.pads.length >= userPart.pins.length ? fp : undefined
-  }
-  return fits(chosenId) ?? fits(userPart.footprintId)
+  const real =
+    fittingRealFootprint(chosenId, userPart.pins.length) ??
+    fittingRealFootprint(userPart.footprintId, userPart.pins.length)
+  if (real !== undefined) return real
+  if (!userPartMayTakeProvisional(userPart)) return undefined
+  return provisionalLand(userPart.pins.length)
 }
 
 /**
@@ -88,7 +132,7 @@ function authoredOptionsFor(defaultFootprintId: string): Footprint[] {
 
 /**
  * The footprint a part lands on: the chosen one if it's a valid option for this part, else the part's
- * default. `undefined` when the part has no real footprint yet (honest — never a wrong package).
+ * default. A symmetric two-terminal part or a user part with no real package gets a provisional land. Role-sensitive kinds stay undefined.
  */
 export function footprintForPart(definition: string, chosenId?: string): Footprint | undefined {
   // Object.hasOwn, not `PART_FOOTPRINTS[definition]`: an untrusted definition ('constructor' etc.) from a
@@ -103,13 +147,18 @@ export function footprintForPart(definition: string, chosenId?: string): Footpri
     return resolveFootprint(allowed && chosenId !== undefined ? chosenId : entry.default)
   }
   const userPart = resolveUserPart(definition)
-  return userPart !== undefined ? userPartFootprint(userPart, chosenId) : undefined
+  if (userPart !== undefined) return userPartFootprint(userPart, chosenId)
+  // No manufacturer package, and not a role-sensitive kind. A symmetric two-terminal map is a
+  // total order, so the part can take a provisional land instead of being skipped.
+  if (ROLE_SENSITIVE_DEFINITIONS.has(definition)) return undefined
+  if (Object.hasOwn(SYMMETRIC_TWO_TERMINAL_PADS, definition)) return provisionalLand(2)
+  return undefined
 }
 
 /** Every footprint this part can take (for the footprint picker); empty when the part is unmapped. A
  *  custom part can take any built-in footprint with at least as many pads as it has pins. */
 export function footprintOptions(definition: string): Footprint[] {
-  const entry = PART_FOOTPRINTS[definition]
+  const entry = Object.hasOwn(PART_FOOTPRINTS, definition) ? PART_FOOTPRINTS[definition] : undefined
   if (entry !== undefined) {
     return [
       ...entry.options
@@ -119,8 +168,18 @@ export function footprintOptions(definition: string): Footprint[] {
     ]
   }
   const userPart = resolveUserPart(definition)
-  if (userPart === undefined) return []
-  return footprintsForPinCount(userPart.pins.length)
+  if (userPart !== undefined) {
+    const real = footprintsForPinCount(userPart.pins.length)
+    if (!userPartMayTakeProvisional(userPart)) return real
+    const land = provisionalLand(userPart.pins.length)
+    return land === undefined ? real : [land, ...real]
+  }
+  if (ROLE_SENSITIVE_DEFINITIONS.has(definition)) return []
+  if (Object.hasOwn(SYMMETRIC_TWO_TERMINAL_PADS, definition)) {
+    const land = provisionalLand(2)
+    return land === undefined ? [] : [land]
+  }
+  return []
 }
 
 /** The built-in footprints a part with `pinCount` pins can take (at least that many pads), sorted
@@ -188,7 +247,12 @@ export const TERMINAL_PADS_BY_FOOTPRINT: Record<string, Record<string, Record<st
 function pinoutFor(definition: string, footprintId?: string): Record<string, string> | undefined {
   const override =
     footprintId !== undefined ? TERMINAL_PADS_BY_FOOTPRINT[definition]?.[footprintId] : undefined
-  return override ?? TERMINAL_PADS[definition]
+  if (override !== undefined) return override
+  if (Object.hasOwn(TERMINAL_PADS, definition)) return TERMINAL_PADS[definition]
+  if (Object.hasOwn(SYMMETRIC_TWO_TERMINAL_PADS, definition)) {
+    return SYMMETRIC_TWO_TERMINAL_PADS[definition]
+  }
+  return undefined
 }
 
 /** The pad a part's terminal solders to, for the part's chosen footprint (or its default pinout when

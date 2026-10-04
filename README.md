@@ -14,15 +14,15 @@ This is a working tool, not a finished product — heed the disclaimer above. Th
 
 ## Vision in one sentence
 
-ChipBlocks is a ground-up electronics design system where every block is physically defined, behavior is checked against real physical/electrical rules, AI helps explain and generate support files, and finished designs export as both editable projects and manufacturing-ready ZIP packages.
+ChipBlocks is a ground-up electronics design system where every block is physically defined, behavior is checked by the deterministic engine, explanations come from that engine, an in-app assistant is not part of the product, and finished designs export as both editable projects and manufacturing-ready ZIP packages.
 
 The three load-bearing principles:
 
-1. **AI assists. ChipBlocks validates. The user approves.** The deterministic engine owns physics, units, netlist correctness, and the manufacturing-package contents. AI helps with docs, code, suggestions, explanations — but never produces the deliverable artifacts that go to a fab.
+1. **The engine validates. The user approves.** The deterministic engine owns physics, units, netlist correctness, explanations, and the manufacturing-package contents. No in-app model drafts explanations or manufacturing files. Contributor AI tools used while building the project are not an app feature.
 
 2. **Real blocks all the way down.** Every block in the library traces to materials + geometry + interfaces + behaviors. A resistor isn't a magic icon; it's a resistive material in a specific shape with two terminals adopting Ohm + Joule + heating behaviors. The user can use it as a single block, or descend into the definition.
 
-3. **Free and open-source, no paid tier ever.** MIT-licensed, permissive dependencies only, BYOK AI (no inference fees passed through to users), all toolchain components either bundled or open-source. A No-AI mode is required so the app works fully without any model.
+3. **Free and open-source, no paid tier ever.** MIT-licensed, permissive dependencies only, no inference fees, no bundled model, and the app does not call a provider or ask for a key. All toolchain components are either bundled or open-source.
 
 ## Visual approach
 

@@ -48,6 +48,26 @@ button:disabled {
   filter: brightness(1.14);
 }
 
+.cb-test-bench fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cb-test-bench label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cb-test-bench input,
+.cb-test-bench select,
+.cb-test-bench textarea {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
 @media (prefers-reduced-motion: reduce) {
   button,
   [draggable="true"],
@@ -64,4 +84,15 @@ button:disabled {
     transform: none;
     box-shadow: none;
   }
+}
+
+/* Trace inspector: keep absolute overlay inside the center pane at narrow widths. */
+.cb-trace-panel {
+  max-width: calc(100% - 32px);
+}
+.cb-trace-panel input,
+.cb-trace-panel select,
+.cb-trace-panel textarea,
+.cb-trace-panel button {
+  max-width: 100%;
 }

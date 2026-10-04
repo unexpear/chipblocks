@@ -5,17 +5,19 @@
  * silicon. It shows what the design BECOMES on a chip — its top-level parts and the real primitive
  * devices they flatten to (the silicon inventory), its timing sign-off + area estimate, and a
  * FLOORPLAN of its gate cells actually placed into rows (cell-place.ts), all from the same
- * flattenBlocks the solver uses. Wiring (routing), a design-rule check, and a GDS layout are the next
- * silicon layers.
+ * flattenBlocks the solver uses. The standard-cell target shows real DRC and LVS summaries (teaching geometry, not a foundry sign-off). The iCE40 target compiles onto one logic tile and shows that report; it does not write a bitstream.
  */
 
-import { type ReactNode, useMemo } from 'react'
+import { type ReactNode, useMemo, useState } from 'react'
 import type { TimingReport } from '../static-timing.ts'
 import { type CanvasEdgeLike, type CanvasNodeLike, flattenBlocks } from './blocks.ts'
+import { type CellDrcReport, summarizeDrc } from './cell-drc.ts'
 import { type CellGeometry, designCellArea, PROCESS, standardCells } from './cell-layout.ts'
 import type { Floorplan } from './cell-place.ts'
 import { ChipCanvas } from './chip-canvas.tsx'
 import type { ChipCellOverride, ChipLensMode } from './chip-layout.ts'
+import { Ice40CompileDetails, type Ice40CompileReport } from './import-report.tsx'
+import { type CellLvsReport, summarizeLvs } from './lvs.ts'
 import { ANNOTATION_DEFINITIONS } from './part-defaults.ts'
 import { THEME } from './theme.ts'
 import { TimingPanel } from './timing-panel.tsx'
@@ -238,6 +240,10 @@ export function ChipView({
   onReplace,
   onMoveCell,
   light,
+  namedCellDrc,
+  namedCellLvs,
+  ice40Report,
+  onCompileIce40,
 }: {
   nodes: CanvasNodeLike[]
   edges: CanvasEdgeLike[]
@@ -255,10 +261,33 @@ export function ChipView({
   /** Drag a cell → record a placement override (undoable). */
   onMoveCell: (cellId: string, x: number, y: number) => void
   light: boolean
+  /** DRC each unique placed-cell name. App passes namedCellDrc; this view only summarizes. */
+  namedCellDrc: (names: Iterable<string>) => CellDrcReport[]
+  /** LVS each unique placed-cell name. App passes namedCellLvs. */
+  namedCellLvs: (names: Iterable<string>) => CellLvsReport[]
+  /** Last iCE40 compile report, or null before the user has compiled. */
+  ice40Report: Ice40CompileReport | null
+  /** Same compile the File menu runs. Report only. */
+  onCompileIce40: () => void
 }) {
   const chip = useMemo(() => deriveChip(nodes, edges), [nodes, edges])
   const cells = useMemo(() => standardCells(), [])
   const area = useMemo(() => designCellArea(nodes, edges), [nodes, edges])
+  const [target, setTarget] = useState<'std' | 'ice40'>('std')
+  const drcSummary = useMemo(() => {
+    const names = floorplan?.cells.map((cell) => cell.name) ?? []
+    const reports = namedCellDrc(names)
+    return reports.length === 0
+      ? 'DRC: no primitive standard cells in this floorplan to check'
+      : summarizeDrc(reports)
+  }, [floorplan, namedCellDrc])
+  const lvsSummary = useMemo(() => {
+    const names = floorplan?.cells.map((cell) => cell.name) ?? []
+    const reports = namedCellLvs(names)
+    return reports.length === 0
+      ? 'LVS: no primitive standard cells in this floorplan to check'
+      : summarizeLvs(reports)
+  }, [floorplan, namedCellLvs])
   const plural = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`
 
   return (
@@ -284,6 +313,39 @@ export function ChipView({
         }}
       >
         <span style={{ fontSize: 12, color: THEME.textSoft, fontWeight: 600 }}>Chip</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => setTarget('std')}
+            style={{
+              border: `1px solid ${THEME.borderStrong}`,
+              background: target === 'std' ? THEME.accentBlue : THEME.surfaceInput,
+              color: target === 'std' ? '#0b1220' : THEME.textSoft,
+              borderRadius: 4,
+              fontSize: 11,
+              padding: '2px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            Standard cells
+          </button>
+          <button
+            type="button"
+            onClick={() => setTarget('ice40')}
+            title="Compile the canvas onto one iCE40 logic tile and show the report. Does not write a .bin."
+            style={{
+              border: `1px solid ${THEME.borderStrong}`,
+              background: target === 'ice40' ? THEME.accentBlue : THEME.surfaceInput,
+              color: target === 'ice40' ? '#0b1220' : THEME.textSoft,
+              borderRadius: 4,
+              fontSize: 11,
+              padding: '2px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            iCE40 logic tile
+          </button>
+        </span>
         <span style={{ fontSize: 11, color: THEME.textFaint }}>
           {chip.isEmpty
             ? 'no design yet'
@@ -294,7 +356,42 @@ export function ChipView({
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
-        {chip.isEmpty ? (
+        {target === 'ice40' ? (
+          <div style={{ maxWidth: 640 }}>
+            <SectionLabel>iCE40 logic tile</SectionLabel>
+            <div
+              style={{ fontSize: 13, color: THEME.textFaint, lineHeight: 1.6, marginBottom: 12 }}
+            >
+              Compiles the canvas through the LUT cover and auto-place onto one logic tile (8
+              cells), budget 20,000. Report only — no .bin is written. The pool is not the whole
+              chip.
+            </div>
+            <button
+              type="button"
+              onClick={onCompileIce40}
+              style={{
+                border: `1px solid ${THEME.borderStrong}`,
+                borderRadius: 4,
+                background: THEME.surfaceInput,
+                color: THEME.textSoft,
+                fontSize: 12,
+                padding: '4px 12px',
+                cursor: 'pointer',
+              }}
+            >
+              Compile to iCE40…
+            </button>
+            <div style={{ marginTop: 16 }}>
+              {ice40Report === null ? (
+                <div style={{ fontSize: 13, color: THEME.textFaint, lineHeight: 1.6 }}>
+                  No iCE40 compile yet. Use this button or File → Compile to iCE40….
+                </div>
+              ) : (
+                <Ice40CompileDetails report={ice40Report} />
+              )}
+            </div>
+          </div>
+        ) : chip.isEmpty ? (
           <div style={{ maxWidth: 460, color: THEME.textSoft, fontSize: 14, lineHeight: 1.6 }}>
             <div style={{ fontWeight: 600, color: THEME.textBright, marginBottom: 6 }}>
               Nothing to lay out yet.
@@ -383,10 +480,21 @@ export function ChipView({
                 />
               </div>
             )}
-            <div style={{ fontSize: 14, color: THEME.textSoft, marginBottom: 18, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 14, color: THEME.textSoft, marginBottom: 8, lineHeight: 1.6 }}>
               This is your circuit projected into silicon — the parts you placed, flattened all the
               way down to the real devices they're made of, then placed above as a floorplan. Below
-              is the design's inventory; wiring (routing) and the design-rule check come next.
+              is the design's inventory.
+            </div>
+            <div
+              style={{ fontSize: 13, color: THEME.textSoft, marginBottom: 18, lineHeight: 1.55 }}
+            >
+              <div>{drcSummary}</div>
+              <div style={{ marginTop: 4 }}>{lvsSummary}</div>
+              <div style={{ marginTop: 6, color: THEME.textFaint }}>
+                Teaching geometry only — not a foundry DRC or LVS sign-off. These strings are the
+                real cell checks on the placed standard cells, not a promise the chip is
+                manufacturable.
+              </div>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
               <Column title="Your design" rows={chip.topParts} />

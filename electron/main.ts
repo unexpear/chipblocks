@@ -732,6 +732,11 @@ function installMenu(window: BrowserWindow): void {
           label: 'Export Liberty…',
           click: () => window.webContents.send('file:export-lib-request'),
         },
+        {
+          // Report only. The renderer reuses fpga:chip-description and does not ask main to save a .bin.
+          label: 'Compile to iCE40…',
+          click: () => window.webContents.send('file:compile-ice40-request'),
+        },
         { type: 'separator' },
         { role: 'quit', label: 'Exit' },
       ],

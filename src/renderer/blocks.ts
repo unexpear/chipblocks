@@ -109,6 +109,7 @@ export type BlockTestCase = {
 }
 
 export type BlockData = {
+  version?: 1
   name: string
   /** The block node's position when grouped — ungroup offsets internals by the displacement. */
   origin: { x: number; y: number }

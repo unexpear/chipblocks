@@ -1,12 +1,5 @@
 {
- "note": "nextpnr-himbaechel placement of gowin-gw1n1-splitkeep.fs - two cells, each registered AND read straight through by other logic on the chip, with only the stored value leaving through a package pin.",
- "lutBels": [
-  "1,6,0",
-  "1,6,1",
-  "1,6,2"
- ],
- "dffBels": [
-  "1,6,0",
-  "1,6,1"
- ]
+  "note": "nextpnr-himbaechel placement of gowin-gw1n1-splitkeep.fs - two cells, each registered AND read straight through by other logic on the chip, with only the stored value leaving through a package pin.",
+  "lutBels": ["1,6,0", "1,6,1", "1,6,2"],
+  "dffBels": ["1,6,0", "1,6,1"]
 }

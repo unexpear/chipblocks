@@ -92,6 +92,11 @@ export type Footprint = {
   labels: FootprintLabels
   courtyard: Courtyard
   provenance: FootprintProvenance
+  /**
+   * True when this land is generated, not a manufacturer package. The BOM and the validation
+   * report print that fact. Never a SOIC, DIP, QFN, or any other named package.
+   */
+  provisional?: boolean
   /** The part's 3-D BODY for the CAD view — its real height above the board, cited. The body's X/Y
    *  extent is the `fabrication` outline (already cited); this adds the third dimension so the assembled
    *  board shows the real part sitting on it. Absent ⇒ no body drawn (only the part's copper). */
@@ -1945,6 +1950,90 @@ export const FOOTPRINT_SOP8_208MIL: Footprint = {
       confidence: 'high',
     },
   },
+}
+
+/** Printed on the BOM and in the validation report. This land is not a manufacturer package. */
+export const PROVISIONAL_LAND_NOTE = 'provisional land, not a manufacturer package.'
+
+const PROVISIONAL_PITCH_MM = 2.54
+const PROVISIONAL_PAD_MM = 1.7
+const PROVISIONAL_DRILL_MM = 1
+/** Courtyard excess past the copper, so the corner-tick silk never sits on a pad. */
+const PROVISIONAL_COURTYARD_MARGIN_MM = 0.92
+/** A generated row this long is no longer a useful stand-in — leave the part unplaced. */
+const PROVISIONAL_MAX_PINS = 256
+
+const roundMm = (value: number): number => Number(value.toFixed(6))
+
+/** provisional_2pad → 2. Anything else, including a non-integer count, is not one of these lands. */
+export function parseProvisionalFootprintId(id: string): number | undefined {
+  const match = /^provisional_(\d+)pad$/.exec(id)
+  if (match === null) return undefined
+  const pinCount = Number(match[1])
+  if (!Number.isInteger(pinCount) || pinCount < 1 || pinCount > PROVISIONAL_MAX_PINS) {
+    return undefined
+  }
+  return pinCount
+}
+
+/**
+ * A single-row 2.54 mm through-hole land for a part whose pin order is already known and which
+ * has no manufacturer package. Pin 1 is the square pad at the origin; the rest are round, one
+ * pitch apart. Flagged provisional so the BOM and the validation report say this is not a
+ * manufacturer package. Not a SOIC, DIP, QFN, or any other named package.
+ */
+export function provisionalLand(pinCount: number): Footprint | undefined {
+  if (!Number.isInteger(pinCount) || pinCount < 1 || pinCount > PROVISIONAL_MAX_PINS) {
+    return undefined
+  }
+  const pads: Pad[] = []
+  for (let i = 0; i < pinCount; i++) {
+    pads.push({
+      id: String(i + 1),
+      center: { x: 0, y: roundMm(i * PROVISIONAL_PITCH_MM) },
+      size: { w: PROVISIONAL_PAD_MM, h: PROVISIONAL_PAD_MM },
+      shape: i === 0 ? 'rect' : 'circle',
+      type: 'through_hole',
+      holeDiameter: PROVISIONAL_DRILL_MM,
+    })
+  }
+  const half = PROVISIONAL_PAD_MM / 2
+  const margin = PROVISIONAL_COURTYARD_MARGIN_MM
+  const span = (pinCount - 1) * PROVISIONAL_PITCH_MM
+  const courtyard: Courtyard = {
+    x: roundMm(-(half + margin)),
+    y: roundMm(-(half + margin)),
+    w: roundMm(PROVISIONAL_PAD_MM + 2 * margin),
+    h: roundMm(span + PROVISIONAL_PAD_MM + 2 * margin),
+  }
+  const bodyHalf = 1.27
+  const bodyEnd = roundMm(span + bodyHalf)
+  const id = `provisional_${String(pinCount)}pad`
+  const name = `Provisional ${String(pinCount)}-pad land`
+  const description = `${String(pinCount)}-pad single-row 2.54 mm through-hole land. ${PROVISIONAL_LAND_NOTE}`
+  return {
+    id,
+    name,
+    description,
+    pads,
+    silkscreen: cornerTicksSilk(courtyard),
+    fabrication: rectOutline(-bodyHalf, -bodyHalf, bodyHalf, bodyEnd),
+    labels: {
+      reference: { x: 0, y: roundMm(courtyard.y - 0.6) },
+      value: { x: 0, y: roundMm(courtyard.y + courtyard.h + 0.6) },
+      fabReference: { x: 0, y: roundMm(span / 2) },
+    },
+    courtyard,
+    provisional: true,
+    provenance: {
+      source_type: 'derived',
+      title: 'Provisional single-row 2.54 mm through-hole land',
+      citation:
+        'Not a manufacturer package. Generic 2.54 mm pitch, 1.7 mm lands, 1.0 mm plated drill — a standard 0.1 inch through-hole pitch — generated because the pin order is known and no package footprint exists.',
+      confidence: 'low',
+      notes: PROVISIONAL_LAND_NOTE,
+    },
+  }
 }
 
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */

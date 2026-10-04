@@ -5,7 +5,7 @@
  * ZIP itself is a structurally valid, byte-deterministic archive — proven by parsing it back with
  * an independent reader in this file and checking CRC-32 against the published check vector.
  */
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import { padForTerminal } from '../src/renderer/footprint-assignment.ts'
 import {
@@ -13,7 +13,9 @@ import {
   computeRatsnest,
   deriveBoard,
   footprintByPlacement,
+  offBoardPins,
   silkReferenceAnchor,
+  unplacedParts,
 } from '../src/renderer/pcb-board.ts'
 import {
   buildBomCsv,
@@ -24,10 +26,11 @@ import {
   type FabInputs,
   innerCopperFileName,
 } from '../src/renderer/pcb-fab.ts'
-import { gerberTopCopper } from '../src/renderer/pcb-gerber.ts'
+import { excellonDrill, gerberTopCopper } from '../src/renderer/pcb-gerber.ts'
 import { routeBoard } from '../src/renderer/pcb-route.ts'
 import { buildStackup } from '../src/renderer/pcb-stackup.ts'
 import { SILK_TEXT, strokeTextWidthMm } from '../src/renderer/stroke-font.ts'
+import { registerUserPart, setUserParts, type UserPart } from '../src/renderer/user-parts.ts'
 import { buildZip, crc32 } from '../src/zip-store.ts'
 
 const WHEN = new Date(2026, 6, 4, 12, 0, 0)
@@ -279,6 +282,9 @@ describe('the validation report', () => {
     })
     const v = buildValidationReport({ ...cleanInputs(), stackup })
     expect(v.status).toBe('pass') // no longer refused — the inner artwork is generated
+    expect(v.reportText).toContain('4 copper layers, all exported')
+    expect(v.reportText).toContain('Inner copper is in this archive (In1–In2 Gerbers)')
+    expect(v.reportText).not.toContain('Two copper layers')
     const zip = buildManufacturingZip({ ...cleanInputs(), stackup })
     // the copper set is F.Cu (L1) / In1.Cu (L2) / In2.Cu (L3) / B.Cu (L4)
     expect(zip.entries).toContain(FAB_FILE_NAMES.topCopper)
@@ -288,6 +294,15 @@ describe('the validation report', () => {
     // a 2-layer board has NO inner-copper files
     const two = buildManufacturingZip(cleanInputs())
     expect(two.entries).not.toContain(innerCopperFileName(1))
+    const twoReport = buildValidationReport(cleanInputs()).reportText
+    expect(twoReport).toContain('2 copper layers, all exported')
+    expect(twoReport).toContain('No inner-copper files: this stack-up is two layers')
+    const fourReadme = new TextDecoder().decode(readZip(zip.bytes).get(FAB_FILE_NAMES.readme))
+    expect(fourReadme).toContain('Stack-up: 4 copper layers.')
+    expect(fourReadme).toContain('Inner copper files are in this archive (In1–In2).')
+    const twoReadme = new TextDecoder().decode(readZip(two.bytes).get(FAB_FILE_NAMES.readme))
+    expect(twoReadme).toContain('Stack-up: 2 copper layers.')
+    expect(twoReadme).toContain('No inner copper files — top and bottom copper only.')
   })
 
   test('a 6-layer board emits four inner copper Gerbers (In1..In4)', () => {
@@ -328,6 +343,73 @@ describe('the validation report', () => {
     expect(v.status).toBe('pass') // an omission in the reference netlist is stated, not a refusal
     expect(v.reportText).toContain('th1 (thermistor)')
     expect(v.reportText).toContain('no SPICE model yet')
+  })
+
+  test('a wired switch with no footprint is absent from placements and NAMED in the FAIL report', () => {
+    const defs: [string, string][] = [
+      ['R1', 'resistor'],
+      ['R2', 'resistor'],
+      ['SW1', 'switch_spst_toggle'],
+      ['T1', 'transformer'],
+    ]
+    const wires: [string, string, string, string][] = [
+      ['R1', 'terminal_b', 'SW1', 'a'],
+      ['SW1', 'b', 'T1', 'primary_positive'],
+    ]
+    const board = deriveBoard(parts(defs))
+    expect(board.placements.some((p) => p.partId === 'SW1' || p.partId === 'T1')).toBe(false)
+    const edges = wires.map(([source, sourceHandle, target, targetHandle]) => ({
+      source,
+      sourceHandle,
+      target,
+      targetHandle,
+    }))
+    const skipped = unplacedParts(parts(defs), edges, board)
+    expect(skipped.map((s) => s.partId)).toEqual(['SW1', 'T1'])
+    const v = buildValidationReport({
+      ...cleanInputs(),
+      offBoardPins: offBoardPins(parts(defs), edges, board),
+      unplacedParts: skipped,
+    })
+    expect(v.status).toBe('fail')
+    expect(v.reportText).toContain('SW1 (switch_spst_toggle, no footprint)')
+    expect(v.reportText).toContain('T1 (transformer, no footprint)')
+    expect(v.problems.some((p) => p.includes('T1') && p.includes('transformer'))).toBe(true)
+    expect(v.reportText).toContain('wired pins have no footprint')
+  })
+
+  test('a placement whose footprint does not resolve FAILS — the CSV must not omit it in silence', () => {
+    const inputs = cleanInputs()
+    const ghost = {
+      partId: 'H1',
+      footprintId: 'NO-SUCH-FOOTPRINT',
+      x: 1,
+      y: 1,
+      rotation: 0 as const,
+      designator: 'H1',
+    }
+    const board = { ...inputs.board, placements: [...inputs.board.placements, ghost] }
+    const problems: string[] = []
+    const csv = buildPlacementCsv(board, problems)
+    expect(csv).toContain('R1,')
+    expect(csv).not.toContain('H1,')
+    expect(problems.some((p) => p.includes('H1') && p.includes('NO-SUCH-FOOTPRINT'))).toBe(true)
+    const v = buildValidationReport({
+      ...inputs,
+      board,
+      bomRows: [
+        ...inputs.bomRows,
+        {
+          reference: 'H1',
+          definition: 'mounting_hole',
+          value: 'hole',
+          footprintId: ghost.footprintId,
+        },
+      ],
+    })
+    expect(v.status).toBe('fail')
+    expect(v.problems.some((p) => p.includes('H1') && p.includes('NO-SUCH-FOOTPRINT'))).toBe(true)
+    expect(v.reportText).toContain('omit a hole the board model still places')
   })
 
   test('an incomplete board FAILS with every reason named — never a silent export', () => {
@@ -505,5 +587,91 @@ describe('the ZIP itself', () => {
     const none = new Uint8Array(0)
     const tooMany = Array.from({ length: 65536 }, (_, i) => ({ name: `f${i}`, data: none }))
     expect(() => buildZip(tooMany, WHEN)).toThrow(/65535/)
+  })
+})
+
+describe('provisional lands', () => {
+  afterEach(() => setUserParts([]))
+
+  test('a 2-pad provisional part places, ratsnests, and appears in copper, drill, BOM, and placement', () => {
+    const probe: UserPart = {
+      id: 'probe',
+      name: 'Probe',
+      designatorPrefix: 'U',
+      pins: [
+        { id: 'a', name: 'A', side: 'left', electrical: 'passive' },
+        { id: 'b', name: 'B', side: 'right', electrical: 'passive' },
+      ],
+    }
+    registerUserPart(probe)
+    const defs: [string, string][] = [
+      ['probe_1', 'probe'],
+      ['R1', 'resistor'],
+    ]
+    const board = deriveBoard(parts(defs))
+    const placed = board.placements.find((p) => p.partId === 'probe_1')
+    expect(placed?.footprintId).toBe('provisional_2pad')
+    expect(placed?.designator).toBe('U1')
+    const fp = placed === undefined ? undefined : footprintByPlacement(placed)
+    expect(fp?.provisional).toBe(true)
+    expect(fp?.pads).toHaveLength(2)
+    expect(fp?.pads[0]?.shape).toBe('rect')
+    expect(fp?.pads[1]?.shape).toBe('circle')
+    expect(fp?.pads.every((pad) => pad.type === 'through_hole' && pad.holeDiameter === 1)).toBe(
+      true,
+    )
+    expect((fp?.pads[1]?.center.y ?? 0) - (fp?.pads[0]?.center.y ?? 0)).toBeCloseTo(2.54, 6)
+    expect((fp?.silkscreen.length ?? 0) > 0).toBe(true)
+    expect((fp?.courtyard.h ?? 0) > (fp?.courtyard.w ?? 0)).toBe(true)
+
+    const wired: [string, string, string, string][] = [['probe_1', 'a', 'R1', 'terminal_a']]
+    const ratsnest = computeRatsnest(world(defs, wired), board)
+    expect(ratsnest.airwires).toHaveLength(1)
+    const edges = wired.map(([source, sourceHandle, target, targetHandle]) => ({
+      source,
+      sourceHandle,
+      target,
+      targetHandle,
+    }))
+    expect(offBoardPins(parts(defs), edges, board)).toBe(0)
+
+    const routing = routeBoard(ratsnest)
+    const copper = gerberTopCopper(board, ratsnest, routing, WHEN)
+    expect(copper).toContain('%TO.P,probe_1,1*%')
+    expect(copper).toContain('%TO.P,probe_1,2*%')
+    const drill = excellonDrill(board, routing, WHEN)
+    expect(drill).toContain('ComponentDrill')
+    expect(drill).toContain('T1C1.000')
+    expect(drill.split('\n').filter((line) => line.startsWith('X'))).toHaveLength(2)
+
+    const placement = buildPlacementCsv(board)
+    expect(placement).toContain('U1,')
+    expect(placement).toContain('R1,')
+
+    const bomRows = [
+      { reference: 'U1', definition: 'probe', value: 'probe', footprintId: 'provisional_2pad' },
+      {
+        reference: 'R1',
+        definition: 'resistor',
+        value: '1k',
+        footprintId: 'R_0603_1608Metric',
+      },
+    ]
+    const bom = buildBomCsv(bomRows)
+    expect(bom).toContain('provisional_2pad')
+    expect(bom).toContain('provisional land, not a manufacturer package.')
+    const report = buildValidationReport({
+      board,
+      ratsnest,
+      routing,
+      drc: [],
+      offBoardPins: 0,
+      bomRows,
+      netlistText: '* probe\n.end\n',
+      when: WHEN,
+    }).reportText
+    expect(report).toContain('PROVISIONAL PACKAGES')
+    expect(report).toContain('U1 (probe_1, provisional_2pad)')
+    expect(report).toContain('provisional land, not a manufacturer package.')
   })
 })

@@ -16,10 +16,13 @@ import { solveTransientThermal } from '../../electro-thermal.ts'
 import { readScalarParam } from '../../instance-params.ts'
 import { type LightSource, worldWithCastLight } from '../../light.ts'
 import { type RelayState, solveWithRelays } from '../../relay.ts'
+import { runtimeAnalysisFor } from '../../runtime-contracts.ts'
 import type { ShockleyDiodeState } from '../../shockley-diode.ts'
 import { CANVAS_SOLVE_BUDGET_MS, solveDeadline } from '../../solver-budget.ts'
 import { STANDARD_AMBIENT_C } from '../../thermal-model.ts'
 import { solveTransient, type TransientResult } from '../../transient-solver.ts'
+import { blockConnectionProblems, blockSemanticProblems } from '../block-semantics.ts'
+import { blockStructureError } from '../block-validation.ts'
 import {
   type BlockData,
   type CanvasEdgeLike as BlockEdgeLike,
@@ -33,6 +36,7 @@ import { canvasHealth, type NodeHealth } from '../health.ts'
 import { digitalSeed, simulateLogic } from '../logic-sim.ts'
 import { terminalVoltages } from '../meter.tsx'
 import type { Point } from '../net-edge.tsx'
+import { networkName } from '../network-names.ts'
 import type { LiveLevels } from '../output-contention.ts'
 import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from '../part-readings.ts'
 import type { DeviceNodeData } from '../symbols.tsx'
@@ -243,6 +247,7 @@ function solveCanvas(
       ...physics,
       data: {
         ...physics.data,
+        ...(networkName(edge.data?.netName) ? { netName: networkName(edge.data?.netName) } : {}),
         ...(waypoints ? { waypoints } : {}),
         ...(edge.data?.curved === true ? { curved: true } : {}),
         ...(typeof edge.data?.curveRadius === 'number'
@@ -362,6 +367,7 @@ function solveCanvasLogic(
         ...(edge.selected !== undefined ? { selected: edge.selected } : {}),
         data: {
           ...(Array.isArray(edge.data?.waypoints) ? { waypoints: edge.data.waypoints } : {}),
+          ...(networkName(edge.data?.netName) ? { netName: networkName(edge.data?.netName) } : {}),
           ...(edge.data?.curved === true ? { curved: true } : {}),
           ...(typeof edge.data?.curveRadius === 'number'
             ? { curveRadius: edge.data.curveRadius }
@@ -586,6 +592,7 @@ function solveCanvasMixed(
         ...(edge.selected !== undefined ? { selected: edge.selected } : {}),
         data: {
           ...(Array.isArray(edge.data?.waypoints) ? { waypoints: edge.data.waypoints } : {}),
+          ...(networkName(edge.data?.netName) ? { netName: networkName(edge.data?.netName) } : {}),
           ...(edge.data?.curved === true ? { curved: true } : {}),
           ...(typeof edge.data?.curveRadius === 'number'
             ? { curveRadius: edge.data.curveRadius }
@@ -805,6 +812,82 @@ function solveTransientCoSim(
   return { result, traces: buildCrtTraces(analogWorld, result.series) }
 }
 
+function checkedBlockCanvas(
+  rawNodes: Node[],
+  edges: Edge[],
+): { nodes: Node[]; problems: string[] } {
+  const structural = rawNodes.flatMap((node) => {
+    if (!node.data.block) return []
+    const problem = blockStructureError(node.data.block, node.id)
+    return problem ? [problem] : []
+  })
+  if (structural.length) return { nodes: rawNodes, problems: structural }
+  const nodes = attachInternalCircuits(rawNodes)
+  const problems = nodes.flatMap((node) =>
+    node.data.block ? blockSemanticProblems(node.data.block as BlockData, node.id) : [],
+  )
+  if (problems.length === 0)
+    problems.push(
+      ...blockConnectionProblems(
+        nodes.map((node) => ({ id: node.id, block: node.data.block as BlockData | undefined })),
+        edges,
+      ),
+    )
+  return { nodes, problems }
+}
+
+function refusedBlockCanvas(
+  nodes: Node[],
+  edges: Edge[],
+  warnings: string[],
+): ReturnType<typeof solveCanvas> {
+  const solution: Solution = {
+    status: 'invalid-circuit',
+    nodes: new Map(),
+    branches: new Map(),
+    ground: undefined,
+    warnings,
+    iterations: 0,
+    converged: false,
+    analysis: runtimeAnalysisFor('dc', 'invalid-circuit', warnings),
+  }
+  return {
+    world: canvasWorld([], []).world,
+    solution,
+    edges: edges.map((edge) => {
+      const data = { ...edge.data }
+      for (const key of [
+        'amps',
+        'drop',
+        'vSource',
+        'vTarget',
+        'endTempA',
+        'endTempB',
+        'lengthM',
+        'ohms',
+      ])
+        delete data[key]
+      const cleared = { ...edge, data, style: { ...edge.style, stroke: IDLE, strokeWidth: 1 } }
+      delete cleared.markerStart
+      delete cleared.markerEnd
+      return cleared
+    }),
+    health: new Map(
+      nodes
+        .filter((node) => node.data.block)
+        .map((node) => [node.id, { warned: true, note: warnings.join(' ') }]),
+    ),
+    readings: new Map(),
+    terminalVolts: new Map(),
+    live: undefined,
+    temperaturesC: new Map(),
+    thermalConverged: false,
+    relayStates: new Map(),
+    shockleyStates: new Map(),
+    relaysSettled: false,
+  }
+}
+
 /**
  * Transient sibling of solveCanvasDispatch. A canvas with BOTH a logic-fidelity block AND a real analog
  * load (the char-gen + the CRT) → the mixed-signal CO-SIMULATION; otherwise the unchanged analog path
@@ -818,7 +901,18 @@ export function solveTransientDispatch(
 ): { result: TransientResult; traces: Map<string, { points: CrtSpot[]; brightness: number }> } {
   // Internal-circuit user parts get their block data attached up front, so the classification AND the
   // co-sim (which reads data.block directly) both see a custom module exactly as they see a block.
-  const nodeList = attachInternalCircuits(rawNodeList)
+  const { nodes: nodeList, problems } = checkedBlockCanvas(rawNodeList, edgeList)
+  if (problems.length)
+    return {
+      result: {
+        status: 'invalid-circuit',
+        series: [],
+        ground: undefined,
+        warnings: problems,
+        analysis: runtimeAnalysisFor('transient', 'invalid-circuit', problems),
+      },
+      traces: new Map(),
+    }
   if (classifyCanvas(nodeList) === 'mixed') return solveTransientCoSim(nodeList, edgeList, options)
   // 'analog' and 'logic' both take the analog transient path — there is no logic-only transient engine.
   const { sources, positions } = lightCastInputs(nodeList)
@@ -842,7 +936,8 @@ export function solveCanvasDispatch(
   // Internal-circuit user parts get their block data attached up front, so the classification, the
   // logic engine (digitalSeed reads data.block), and the mixed co-sim all see a custom module exactly
   // as they see the block it was saved from — including routing a digital module to the fast engine.
-  const nodeList = attachInternalCircuits(rawNodeList)
+  const { nodes: nodeList, problems } = checkedBlockCanvas(rawNodeList, edgeList)
+  if (problems.length) return refusedBlockCanvas(nodeList, edgeList, problems)
   // ONE budget for the whole dispatch, set HERE because this is where the canvas — the thread that
   // draws the window — hands work to the analog engines. The mixed path alternates the two solvers up
   // to five times; sharing the deadline is what makes the canvas's promise a whole-solve promise.

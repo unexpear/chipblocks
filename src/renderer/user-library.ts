@@ -1,3 +1,4 @@
+import { versionedBlockData } from './block-persistence.ts'
 import type { Footprint } from './footprint.ts'
 import { validateUserFootprint } from './user-footprint-validate.ts'
 import { validateUserPart } from './user-part-validate.ts'
@@ -29,17 +30,17 @@ import type { UserPart } from './user-parts.ts'
  */
 
 export const USER_LIBRARY_FORMAT = 'chipblocks-user-library'
-export const USER_LIBRARY_VERSION = 3
+export const USER_LIBRARY_VERSION = 4
 /**
  * Versions this build can READ. v1 held parts only; v2 adds the footprints you author, so that a
  * package you drew follows you between projects the way a part already does; v3 lets a part carry the
- * symbol you drew for it (and its datasheet). An older library still loads and is written back as v3.
+ * symbol you drew for it (and its datasheet). An older library still loads and is written back as v4.
  *
  * v3 is a real bump, not tidiness: a v2 build reads a v3 part by dropping the fields it doesn't know,
  * and every library save rewrites the whole file from that read — so without the bump, authoring any
  * part in an older build would silently erase every symbol you had drawn.
  */
-const READABLE_VERSIONS = new Set([1, 2, 3])
+const READABLE_VERSIONS = new Set([1, 2, 3, 4])
 
 export type UserLibraryFile = {
   format: typeof USER_LIBRARY_FORMAT
@@ -56,7 +57,9 @@ export function serializeUserLibrary(
   const file: UserLibraryFile = {
     format: USER_LIBRARY_FORMAT,
     version: USER_LIBRARY_VERSION,
-    userParts: [...parts],
+    userParts: parts.map((part) =>
+      part.internal ? { ...part, internal: versionedBlockData(part.internal) } : { ...part },
+    ),
   }
   if (footprints.length > 0) file.userFootprints = [...footprints]
   return JSON.stringify(file, null, 2)

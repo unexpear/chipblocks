@@ -43,6 +43,45 @@ const edges = [
 ]
 
 describe('serialize → deserialize round-trip', () => {
+  test('persists normalized network annotations without changing connectivity', () => {
+    const namedNodes = nodes.map((node) => ({
+      ...node,
+      data: { ...node.data, networkGroup: '  Power\nsection  ' },
+    }))
+    const namedEdges = edges.map((edge) => ({
+      ...edge,
+      data: { ...edge.data, netName: '  Supply\trail  ' },
+    }))
+    const saved = serializeCircuit(namedNodes, namedEdges)
+    const loaded = deserializeCircuit(JSON.stringify(saved))
+    expect(loaded.ok).toBe(true)
+    if (!loaded.ok) return
+    expect(loaded.file.nodes.map((node) => node.networkGroup)).toEqual([
+      'Power section',
+      'Power section',
+    ])
+    expect(loaded.file.wires[0]?.netName).toBe('Supply rail')
+    expect(loaded.file.wires[0]).toMatchObject({
+      source: edges[0]?.source,
+      sourceHandle: edges[0]?.sourceHandle,
+      target: edges[0]?.target,
+      targetHandle: edges[0]?.targetHandle,
+    })
+  })
+
+  test('drops malformed or blank network annotations and bounds names', () => {
+    const saved = serializeCircuit(nodes, edges)
+    Object.assign(saved.nodes[0] ?? {}, { networkGroup: { invalid: true } })
+    Object.assign(saved.nodes[1] ?? {}, { networkGroup: 'x'.repeat(121) })
+    Object.assign(saved.wires[0] ?? {}, { netName: ' \n\t ' })
+    const loaded = deserializeCircuit(JSON.stringify(saved))
+    expect(loaded.ok).toBe(true)
+    if (!loaded.ok) return
+    expect(loaded.file.nodes[0]?.networkGroup).toBeUndefined()
+    expect(loaded.file.nodes[1]?.networkGroup).toBe('x'.repeat(120))
+    expect(loaded.file.wires[0]?.netName).toBeUndefined()
+  })
+
   test('round-trips the board ambient; an older file without it reads undefined', () => {
     const withAmbient = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges, 85)))
     expect(withAmbient.ok).toBe(true)
@@ -441,7 +480,14 @@ describe('circuit blocks (S19-v3-67)', () => {
             origin: { x: 260, y: 140 },
             nodes: [{ id: 'r1', definition: 'resistor', x: 0, y: 0 }],
             edges: [],
-            ports: [],
+            ports: [
+              {
+                id: 'port_1',
+                label: 'r1 terminal a',
+                side: 'left' as const,
+                inner: { nodeId: 'r1', handleId: 'terminal_a' },
+              },
+            ],
           },
         },
       ],
@@ -471,7 +517,13 @@ describe('circuit blocks (S19-v3-67)', () => {
     const parsed = deserializeCircuit(JSON.stringify(file))
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-    expect(parsed.file.nodes[0]?.block).toEqual(block)
+    expect(parsed.file.nodes[0]?.block).toEqual({
+      ...block,
+      version: 1,
+      nodes: block.nodes.map((node) =>
+        node.block ? { ...node, block: { ...node.block, version: 1 } } : node,
+      ),
+    })
   })
 
   test('an ordinary part saves WITHOUT a block field — nothing invented', () => {

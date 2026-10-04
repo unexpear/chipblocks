@@ -10,10 +10,13 @@ import type { Edge, Node } from '@xyflow/react'
 import { afterEach, describe, expect, test } from 'vitest'
 import type { BlockData } from '../src/renderer/blocks.ts'
 import { INVERTER_BLOCK } from '../src/renderer/builtin-blocks.ts'
+import { inspectNet } from '../src/renderer/net-inspector.ts'
+import { detectOutputContention } from '../src/renderer/output-contention.ts'
 import { attachInternalCircuits } from '../src/renderer/pipeline/canvas-world.ts'
 import { classifyCanvas } from '../src/renderer/pipeline/partition.ts'
 import { solveCanvasDispatch } from '../src/renderer/pipeline/solve-canvas.ts'
 import { userPartFromBlock } from '../src/renderer/user-part-draft.ts'
+import { validateUserPart } from '../src/renderer/user-part-validate.ts'
 import { registerUserPart, setUserParts, type UserPart } from '../src/renderer/user-parts.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -74,6 +77,68 @@ const inverterCircuit = (
 })
 
 afterEach(() => setUserParts([]))
+
+describe('saved modules retain driver-contention behavior', () => {
+  test('reloaded port domains and units remain visible to net validation', () => {
+    const nodes: Node[] = []
+    for (const domain of ['electrical', 'thermal'] as const) {
+      const block = structuredClone(INVERTER_BLOCK)
+      const output = block.ports.find((port) => port.id === 'out')
+      if (!output) throw new Error('Missing output')
+      output.domain = domain
+      output.unit = domain === 'electrical' ? 'volt' : 'degree_celsius'
+      output.role = domain === 'electrical' ? 'source' : 'load'
+      const draft = userPartFromBlock(`${domain} module`, 'U', block)
+      if (!draft.ok) throw new Error(draft.error)
+      const loaded = validateUserPart(JSON.parse(JSON.stringify(draft.part)))
+      if (!loaded) throw new Error('Failed to reload')
+      registerUserPart(loaded)
+      nodes.push(node(domain, loaded.id))
+    }
+    const report = inspectNet(
+      attachInternalCircuits(nodes),
+      [{ source: 'electrical', sourceHandle: 'out', target: 'thermal', targetHandle: 'out' }],
+      'electrical out',
+    )
+    expect(report?.status).toBe('attention')
+    expect(report?.drivers.map((endpoint) => endpoint.nodeId)).toEqual(['electrical'])
+    expect(report?.loads.map((endpoint) => endpoint.nodeId)).toEqual(['thermal'])
+    expect(
+      report?.net.diagnostics.some((diagnostic) => diagnostic.code === 'incompatible-connection'),
+    ).toBe(true)
+    expect(report?.nextStep).toContain('domain electrical cannot connect directly to thermal')
+  })
+
+  test.each([
+    'push_pull',
+    'open_collector',
+    'tristate',
+  ] as const)('%s survives save, reload and instance attachment', (drive) => {
+    const block = structuredClone(INVERTER_BLOCK)
+    const output = block.ports.find((port) => port.id === 'out')
+    if (!output) throw new Error('Missing inverter output')
+    output.drive = drive
+    const draft = userPartFromBlock('Bus Module', 'U', block)
+    if (!draft.ok) throw new Error(draft.error)
+    const loaded = validateUserPart(JSON.parse(JSON.stringify(draft.part)))
+    if (!loaded) throw new Error('Module did not reload')
+    registerUserPart(loaded)
+    const edges = [
+      {
+        id: 'bus',
+        source: 'first',
+        sourceHandle: output.id,
+        target: 'second',
+        targetHandle: output.id,
+      },
+    ]
+    const original = ['first', 'second'].map((id) => node(id, 'block', { block }))
+    const reused = attachInternalCircuits(['first', 'second'].map((id) => node(id, loaded.id)))
+    const expected = detectOutputContention(original, edges)
+    expect(expected).toHaveLength(1)
+    expect(detectOutputContention(reused, edges)).toEqual(expected)
+  })
+})
 
 describe('classifyCanvas sees a custom module’s internals', () => {
   test('a gates-only module classifies LOGIC (like the block it was saved from)', () => {

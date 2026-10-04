@@ -1,10 +1,10 @@
 {
- "note": "nextpnr-himbaechel placement of gowin-gw1n1-blkselhide.fs, read off NEXTPNR_BEL of every placed cell. This file is the ORACLE for \"a block memory is here\": gowin_unpack finds a BSRAM only where the BSRAM_SP table decodes non-empty, which is exactly the blind spot this design was built to expose, and it reports 0 memories for this bitstream.",
- "blockMemoryBels": {
-  "X4Y5/BSRAM": {
-   "kind": "SP",
-   "blkSel": "111",
-   "bitWidth": "00000000000000000000000000001000"
+  "note": "nextpnr-himbaechel placement of gowin-gw1n1-blkselhide.fs, read off NEXTPNR_BEL of every placed cell. This file is the ORACLE for \"a block memory is here\": gowin_unpack finds a BSRAM only where the BSRAM_SP table decodes non-empty, which is exactly the blind spot this design was built to expose, and it reports 0 memories for this bitstream.",
+  "blockMemoryBels": {
+    "X4Y5/BSRAM": {
+      "kind": "SP",
+      "blkSel": "111",
+      "bitWidth": "00000000000000000000000000001000"
+    }
   }
- }
 }

@@ -18,10 +18,10 @@ Canonical measured implementation status and verification gates: [PROJECT-STATUS
 | Plugin & Content Manager | install community libraries | ◐ catalog is origin-extensible; no install UI |
 | Footprint Editor | a part's physical pads / outline | ✅ **have** — in-app pad/courtyard authoring with validation and persistence |
 | PCB Editor | place parts + route copper | ◐ board workspace, placement, routing, DRC, and fab export are mounted; broader PCB parity remains |
-| Gerber Viewer | check the factory files | ❌ — the "manufacturing ZIP" (second deliverable) |
+| Gerber Viewer | check the factory files | ◐ Check Gerbers, next to Export ZIP, plots the ChipBlocks Gerber and Excellon the manufacturing ZIP writes (that dialect only — not a general gerbview) |
 | Image Converter | logo → symbol / footprint | ❌ niche |
 
-Have 5 (deeper than KiCad on each), 2 half-there, 2 to build.
+Have 5 (deeper than KiCad on each), 3 half-there, 1 to build.
 
 ## Track 1 — the manufacturing spine (the board road; the prize)
 

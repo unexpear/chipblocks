@@ -1,31 +1,21 @@
 {
- "note": "Which wide multiplexers gowin-gw1n1-widemux.fs really uses, read back by Project Apicula\u2019s own unpacker - a separate implementation from ours.",
- "tool": "gowin_unpack (Project Apicula 0.33.dev19+gdfb3c8702), from oss-cad-suite",
- "reading": "selectRouted lists, per tile, the wide multiplexers whose SELECT the bitstream routes to a real signal - gowin_unpack writes an unrouted select as `= VCC`, which is the fabric power-up state. ofRead lists every tile wire that takes its signal FROM a multiplexer output OF<n>.",
- "selectRouted": {
-  "R10C9": [
-   0
-  ],
-  "R9C10": [
-   0,
-   1,
-   2,
-   3,
-   4,
-   5,
-   6
-  ]
- },
- "ofRead": [
-  {
-   "tile": "R9C10",
-   "output": 3,
-   "readBy": "R9C10_S10"
+  "note": "Which wide multiplexers gowin-gw1n1-widemux.fs really uses, read back by Project Apicula\u2019s own unpacker - a separate implementation from ours.",
+  "tool": "gowin_unpack (Project Apicula 0.33.dev19+gdfb3c8702), from oss-cad-suite",
+  "reading": "selectRouted lists, per tile, the wide multiplexers whose SELECT the bitstream routes to a real signal - gowin_unpack writes an unrouted select as `= VCC`, which is the fabric power-up state. ofRead lists every tile wire that takes its signal FROM a multiplexer output OF<n>.",
+  "selectRouted": {
+    "R10C9": [0],
+    "R9C10": [0, 1, 2, 3, 4, 5, 6]
   },
-  {
-   "tile": "R10C9",
-   "output": 0,
-   "readBy": "R10C9_SN10"
-  }
- ]
+  "ofRead": [
+    {
+      "tile": "R9C10",
+      "output": 3,
+      "readBy": "R9C10_S10"
+    },
+    {
+      "tile": "R10C9",
+      "output": 0,
+      "readBy": "R10C9_SN10"
+    }
+  ]
 }

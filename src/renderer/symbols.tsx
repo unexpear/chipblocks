@@ -2262,6 +2262,14 @@ const SOURCE_TAP_R = 21
  * popping out radially around the circle's lower rim, tap_1 nearest the +
  * and sweeping toward the − in stack order.
  */
+export function hasTerminalDefinition(definition: string): boolean {
+  return (
+    ANNOTATION_DEFINITIONS.has(definition) ||
+    Object.hasOwn(TERMINALS, definition) ||
+    resolveUserPart(definition) !== undefined
+  )
+}
+
 export function terminalsOf(
   definition: string,
   parameters?: Parameters,

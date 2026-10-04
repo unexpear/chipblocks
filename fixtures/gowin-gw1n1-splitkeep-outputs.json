@@ -1,45 +1,41 @@
 [
- {
-  "x": 1,
-  "y": 6,
-  "cell": 0,
-  "init": 26208,
-  "hasFlipFlop": true,
-  "combinationalInside": true,
-  "registeredInside": false,
-  "readBy": {
-   "F": [
-    "1,6,2C"
-   ],
-   "Q": []
+  {
+    "x": 1,
+    "y": 6,
+    "cell": 0,
+    "init": 26208,
+    "hasFlipFlop": true,
+    "combinationalInside": true,
+    "registeredInside": false,
+    "readBy": {
+      "F": ["1,6,2C"],
+      "Q": []
+    }
+  },
+  {
+    "x": 1,
+    "y": 6,
+    "cell": 1,
+    "init": 7918,
+    "hasFlipFlop": true,
+    "combinationalInside": true,
+    "registeredInside": false,
+    "readBy": {
+      "F": ["1,6,2D"],
+      "Q": []
+    }
+  },
+  {
+    "x": 1,
+    "y": 6,
+    "cell": 2,
+    "init": 13000,
+    "hasFlipFlop": true,
+    "combinationalInside": false,
+    "registeredInside": false,
+    "readBy": {
+      "F": [],
+      "Q": []
+    }
   }
- },
- {
-  "x": 1,
-  "y": 6,
-  "cell": 1,
-  "init": 7918,
-  "hasFlipFlop": true,
-  "combinationalInside": true,
-  "registeredInside": false,
-  "readBy": {
-   "F": [
-    "1,6,2D"
-   ],
-   "Q": []
-  }
- },
- {
-  "x": 1,
-  "y": 6,
-  "cell": 2,
-  "init": 13000,
-  "hasFlipFlop": true,
-  "combinationalInside": false,
-  "registeredInside": false,
-  "readBy": {
-   "F": [],
-   "Q": []
-  }
- }
 ]

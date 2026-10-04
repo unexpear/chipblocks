@@ -32,6 +32,27 @@ describe('footprintForPart', () => {
     expect(footprintForPart('not_a_part')).toBeUndefined()
   })
 
+  test('a symmetric two-terminal part gets a provisional land; role-sensitive kinds do not', () => {
+    expect(footprintForPart('fuse')?.id).toBe('provisional_2pad')
+    expect(footprintForPart('fuse')?.provisional).toBe(true)
+    expect(padForTerminal('fuse', 'terminal_a')).toBe('1')
+    expect(padForTerminal('fuse', 'terminal_b')).toBe('2')
+    expect(terminalForPad('fuse', '1')).toBe('terminal_a')
+    for (const def of [
+      'transformer',
+      'transformer_center_tapped',
+      'switch_spdt',
+      'op_amp',
+      'relay',
+      'block',
+      'switch_spst_toggle',
+      'diode_zener_silicon',
+      'dc_motor',
+    ]) {
+      expect(footprintForPart(def), def).toBeUndefined()
+    }
+  })
+
   test('a diode lands on the SOD-123 SMD package (pad 1 = cathode)', () => {
     expect(footprintForPart('diode')?.id).toBe('D_SOD-123')
     // cathode → pad 1 (the band-marked end), anode → pad 2 — the diode-footprint convention

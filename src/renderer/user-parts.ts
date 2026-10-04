@@ -83,7 +83,8 @@ export type UserPart = {
    */
   symbol?: DrawnSymbol
   /** The board package this part lands on (a BUILTIN_FOOTPRINTS id) — its pins map to the footprint's
-   *  pads in declaration order. Absent ⇒ the part has no footprint yet, so it stays off the board. */
+   *  pads in declaration order. Absent or too small ⇒ a provisional 2.54 mm land when the pin order
+   *  is honest (not a manufacturer package). A role-sensitive behaviour stays off the board. */
   footprintId?: string
   /**
    * Optional REAL, simulatable behaviour (user-made parts, slice 4b): the part behaves as a built-in

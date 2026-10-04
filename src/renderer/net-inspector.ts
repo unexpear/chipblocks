@@ -29,6 +29,7 @@ export type NetInspectorNode = {
   data?: {
     definition?: string
     label?: string
+    networkGroup?: string
     parameters?: Parameters
     block?: { ports?: BlockPort[] }
   }
@@ -42,6 +43,7 @@ export type NetInspectorEdge = {
   targetHandle?: string | null
   data?: {
     amps?: unknown
+    netName?: unknown
     drop?: unknown
     lengthM?: unknown
     ohms?: unknown
@@ -101,8 +103,8 @@ const endpointInfo = (node: NetInspectorNode | undefined, portId: string): NetEn
   const nodeLabel = node?.data?.label ?? node?.id ?? 'unknown'
   const blockPort = node?.data?.block?.ports?.find((port) => port.id === portId)
   if (blockPort !== undefined) {
-    const role: NetEndpointRole =
-      blockPort.drive === undefined ? 'unknown' : blockPort.drive === 'input' ? 'load' : 'driver'
+    const declaredRole = runtimePortOf(blockPort).role
+    const role: NetEndpointRole = declaredRole === 'source' ? 'driver' : declaredRole
     return {
       nodeId: node?.id ?? '',
       nodeLabel,

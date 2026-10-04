@@ -118,6 +118,35 @@
     "$comment": "A part simulates ONE way — as a single device (behavesAs) or as its internal circuit (internal), never both."
   },
   "$defs": {
+    "savedBlockTest": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "\\S" },
+        "name": { "type": "string", "pattern": "\\S" },
+        "cycles": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "inputs": {
+          "type": "object",
+          "maxProperties": 1024,
+          "propertyNames": { "pattern": "\\S" },
+          "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+        },
+        "expected": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1024,
+          "propertyNames": { "pattern": "\\S" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+          }
+        }
+      },
+      "required": ["id", "name", "cycles", "inputs", "expected"],
+      "additionalProperties": false,
+      "description": "Digital regression expectations, not cached pass results. Runtime validation also requires unique test ids and exactly cycles samples per output; execution rechecks signal names, widths and settlement."
+    },
     "point": {
       "type": "object",
       "description": "A point in the drawing's own px space; y grows downward, like the canvas.",
@@ -256,8 +285,14 @@
     },
     "blockCore": {
       "type": "object",
-      "description": "The solve core of an internal circuit — the same shape a canvas circuit block flattens from: the real parts (nodes), the wires between them (edges, with their drawn geometry so inner wire lengths stay physically real), and the ports that expose internal terminals. Presentation extras a canvas block can carry (display faces, gate symbols, pin drive marks) are deliberately not persisted here.",
+      "description": "The solve core of an internal circuit: real parts, wires with geometry, and external ports with their declared contracts. Presentation extras such as display faces and gate symbols are not persisted here. Enable references must name an existing port, enforced by the runtime validator.",
       "properties": {
+        "version": { "const": 1 },
+        "tests": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/savedBlockTest" }
+        },
         "name": { "type": "string" },
         "origin": {
           "type": "object",
@@ -282,14 +317,19 @@
                     "type": "object",
                     "properties": {
                       "value": {
-                        "type": "object",
-                        "properties": {
-                          "kind": { "const": "scalar" },
-                          "amount": { "type": "number" },
-                          "unit": { "type": "string" }
-                        },
-                        "required": ["kind", "amount", "unit"],
-                        "additionalProperties": false
+                        "anyOf": [
+                          { "type": "string", "minLength": 1 },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": { "const": "scalar" },
+                              "amount": { "type": "number" },
+                              "unit": { "type": "string" }
+                            },
+                            "required": ["kind", "amount", "unit"],
+                            "additionalProperties": false
+                          }
+                        ]
                       }
                     },
                     "required": ["value"],
@@ -343,6 +383,38 @@
               "label": { "type": "string" },
               "name": { "type": "string" },
               "side": { "enum": ["left", "right", "top", "bottom"] },
+              "kind": { "enum": ["signal", "power_positive", "power_negative"] },
+              "drive": { "enum": ["input", "push_pull", "open_collector", "tristate"] },
+              "domain": {
+                "enum": ["electrical", "thermal", "magnetic", "mechanical", "control", "digital"]
+              },
+              "direction": { "enum": ["input", "output", "bidirectional", "unknown"] },
+              "role": { "enum": ["source", "load", "passive", "unknown"] },
+              "unit": {
+                "enum": [
+                  "unknown",
+                  "boolean",
+                  "dimensionless",
+                  "volt",
+                  "ampere",
+                  "ohm",
+                  "watt",
+                  "farad",
+                  "henry",
+                  "second",
+                  "hertz",
+                  "degree_celsius"
+                ]
+              },
+              "enable": {
+                "type": "object",
+                "properties": {
+                  "pin": { "type": "string", "minLength": 1 },
+                  "activeHigh": { "type": "boolean" }
+                },
+                "required": ["pin", "activeHigh"],
+                "additionalProperties": false
+              },
               "inner": {
                 "type": "object",
                 "properties": {

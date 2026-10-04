@@ -13,7 +13,8 @@ import { resolveFootprint } from './user-footprints.ts'
  * `deriveBoard` seeds a layout from the schematic: it lays the footprinted parts out in a neat row (a
  * real auto-placer optimises for net length; this just gives every part a real spot to start from) and
  * fits the board outline around them. Parts with no footprint are honestly skipped — they aren't on the
- * board until their package exists.
+ * board until their package exists, unless footprintForPart gives them a provisional land because
+ * their pin order is already known.
  */
 
 export type Rotation = 0 | 90 | 180 | 270
@@ -555,36 +556,101 @@ export type BoardEdge = {
  *  anything else (a BJT, a battery, a circuit block's port) is a real thing the user wired. */
 const NOT_A_PART = new Set(['junction', 'net_label', 'ground'])
 
+/** Why a wired part is not on the copper: no package was placed, or a placed package has no pad for
+ *  that terminal. Naming the reason is the whole point — a count alone hides which part was skipped. */
+export type UnplacedReason = 'no-footprint' | 'terminal-unmapped'
+
+/** One wired part the board cannot show. One row per part, not per pin. */
+export type UnplacedPart = {
+  partId: string
+  definition: string
+  reason: UnplacedReason
+}
+
+type OffBoardHit = UnplacedPart & { terminal: string }
+
+/**
+ * Every wired pin the existing pad-mapping test rejects. Same rules offBoardPins has always used
+ * (un-flattened schematic, junctions/grounds/labels are not pins, a pin with several wires counts
+ * once): no placement, or a placement whose footprint did not resolve, is `no-footprint`; a resolved
+ * footprint whose terminal has no pad is `terminal-unmapped`. No new geometry — this only names the
+ * skip the ratsnest already drops.
+ */
+function offBoardHits(
+  parts: readonly BoardPart[],
+  edges: readonly BoardEdge[],
+  board: Board,
+): OffBoardHit[] {
+  const definitionOf = new Map(parts.map((p) => [p.id, p.definition]))
+  const placementOf = new Map(board.placements.map((p) => [p.partId, p]))
+  const hits: OffBoardHit[] = []
+  const seenPins = new Set<string>()
+  const consider = (nodeId: string, handleId: string | null | undefined) => {
+    if (handleId === null || handleId === undefined) return
+    const definition = definitionOf.get(nodeId)
+    if (definition === undefined || NOT_A_PART.has(definition)) return
+    const pinKey = `${nodeId}/${handleId}`
+    if (seenPins.has(pinKey)) return
+    const placement = placementOf.get(nodeId)
+    const padId = padForTerminal(definition, handleId, placement?.footprintId)
+    const fp = placement !== undefined ? footprintByPlacement(placement) : undefined
+    const onBoard = padId !== undefined && fp?.pads.some((pad) => pad.id === padId) === true
+    if (onBoard) return
+    seenPins.add(pinKey)
+    const reason: UnplacedReason =
+      placement === undefined || fp === undefined ? 'no-footprint' : 'terminal-unmapped'
+    hits.push({ partId: nodeId, definition, reason, terminal: handleId })
+  }
+  for (const edge of edges) {
+    consider(edge.source, edge.sourceHandle)
+    consider(edge.target, edge.targetHandle)
+  }
+  return hits
+}
+
 /**
  * How many wired pins the board CAN'T show yet — the honest number for the panel header. Counted from
  * the UN-flattened schematic (the parts and wires the user actually drew), NOT the solver world:
  * flattening expands circuit blocks and multi-lead sources into internals whose seam terminals sit in
  * wired nets but aren't pins anyone can point at, so counting world members over-reports. Each drawn
  * wire endpoint on a real part counts once (a pin with several wires is still one pin) when its part
- * has no placement or the terminal has no pad mapping.
+ * has no placement or the terminal has no pad mapping. The names live in unplacedParts.
  */
 export function offBoardPins(
   parts: readonly BoardPart[],
   edges: readonly BoardEdge[],
   board: Board,
 ): number {
-  const definitionOf = new Map(parts.map((p) => [p.id, p.definition]))
-  const placementOf = new Map(board.placements.map((p) => [p.partId, p]))
-  const counted = new Set<string>()
-  const countEndpoint = (nodeId: string, handleId: string | null | undefined) => {
-    if (handleId === null || handleId === undefined) return
-    const definition = definitionOf.get(nodeId)
-    if (definition === undefined || NOT_A_PART.has(definition)) return
-    const placement = placementOf.get(nodeId)
-    const padId = padForTerminal(definition, handleId, placement?.footprintId)
-    const fp = placement !== undefined ? footprintByPlacement(placement) : undefined
-    const onBoard = padId !== undefined && fp?.pads.some((p) => p.id === padId) === true
-    if (onBoard) return
-    counted.add(`${nodeId}/${handleId}`)
+  return offBoardHits(parts, edges, board).length
+}
+
+/** The wired parts behind offBoardPins, one entry per part, in the order the wires first mention them. */
+export function unplacedParts(
+  parts: readonly BoardPart[],
+  edges: readonly BoardEdge[],
+  board: Board,
+): UnplacedPart[] {
+  const seen = new Map<string, UnplacedPart>()
+  for (const hit of offBoardHits(parts, edges, board)) {
+    if (seen.has(hit.partId)) continue
+    seen.set(hit.partId, {
+      partId: hit.partId,
+      definition: hit.definition,
+      reason: hit.reason,
+    })
   }
-  for (const edge of edges) {
-    countEndpoint(edge.source, edge.sourceHandle)
-    countEndpoint(edge.target, edge.targetHandle)
-  }
-  return counted.size
+  return [...seen.values()]
+}
+
+/**
+ * A placed part whose footprint id did not resolve. The drill / placement / Gerber writers cannot
+ * invent its holes — they must record this instead of `continue`, and the validation report fails
+ * the board so a ZIP is never offered with those holes missing.
+ */
+export function unresolvedFootprintProblem(p: Placement): string {
+  const name = p.designator ?? p.partId
+  return (
+    `${name} (footprint ${p.footprintId}) has no footprint geometry — ` +
+    'its pads and holes were not written, so the archive would omit a hole the board model still places.'
+  )
 }

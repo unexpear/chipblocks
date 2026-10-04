@@ -1,4 +1,6 @@
 import { type CSSProperties, useMemo, useState } from 'react'
+import { type BlockPortPatch, portContractProblems } from './block-contracts.ts'
+import { BLOCK_PORT_ENUMS } from './block-validation.ts'
 import type { BlockData, BlockPort, DriveKind, PinKind, PinSide } from './blocks.ts'
 import { characterizeBlock } from './logic-sim.ts'
 import type { Fidelity } from './symbols.tsx'
@@ -50,13 +52,9 @@ const fidelityActive: CSSProperties = {
 }
 const SIDE_ORDER: Record<PinSide, number> = { left: 0, right: 1, top: 2, bottom: 3 }
 
-export type BlockPortPatch = {
-  name?: string
-  kind?: PinKind
-  side?: PinSide
-  drive?: DriveKind
-  enable?: { pin: string; activeHigh: boolean }
-}
+export type { BlockPortPatch } from './block-contracts.ts'
+
+const CONTRACT_FIELDS = ['domain', 'direction', 'role', 'unit'] as const
 
 /** An internal terminal that isn't a pin yet — offered in the "add pin" picker. */
 export type AddableTerminal = { nodeId: string; handleId: string; label: string }
@@ -232,16 +230,61 @@ export function BlockInspector({
             </select>
           </div>
           <select
-            value={port.drive ?? 'input'}
-            onChange={(e) => onEditPort(port.id, { drive: e.target.value as DriveKind })}
+            aria-label={`${port.name ?? port.label} drive type`}
+            value={port.drive ?? ''}
+            onChange={(e) =>
+              onEditPort(port.id, {
+                drive: e.target.value === '' ? undefined : (e.target.value as DriveKind),
+              })
+            }
             style={{ ...field, width: '100%' }}
             title="Signal direction / drive type — the basis of the output-combining (driver-contention) checks"
           >
+            <option value="">drive not declared</option>
             <option value="input">input</option>
             <option value="push_pull">output: push-pull (normal)</option>
             <option value="open_collector">output: open-collector / drain</option>
             <option value="tristate">output: tri-state</option>
           </select>
+          <details>
+            <summary>Port contract</summary>
+            <div style={{ fontSize: 9, color: THEME.textFaint, margin: '4px 0' }}>
+              Declarations describe this pin; they do not convert signals or add a simulation model.
+            </div>
+            {CONTRACT_FIELDS.map((key) => (
+              <label
+                key={key}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 4,
+                  marginBottom: 3,
+                }}
+              >
+                {key}
+                <select
+                  aria-label={`${port.name ?? port.label} ${key}`}
+                  value={port[key] ?? ''}
+                  onChange={(event) =>
+                    onEditPort(port.id, { [key]: event.target.value || undefined })
+                  }
+                  style={{ ...field, width: 114 }}
+                >
+                  <option value="">not declared</option>
+                  {BLOCK_PORT_ENUMS[key]?.map((value) => (
+                    <option key={value} value={value}>
+                      {value.replaceAll('_', ' ')}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </details>
+          {portContractProblems(port).map((problem) => (
+            <div key={problem} role="alert" style={{ color: THEME.statusDanger, fontSize: 10 }}>
+              {problem}
+            </div>
+          ))}
           {port.drive === 'tristate' ? (
             <div style={{ display: 'flex', gap: 4 }}>
               <select

@@ -171,6 +171,7 @@ export type SolveOptions = {
 
 export type SolutionStatus =
   | 'solved'
+  | 'invalid-circuit'
   | 'no-ground'
   | 'singular-matrix'
   | 'unsupported-element'
@@ -197,7 +198,7 @@ export function dcRan(status: SolutionStatus): boolean {
  *  relay fixed points) must check this and stop: each of them would otherwise walk into the same wall
  *  hundreds of times over, which is the hang this exists to prevent. */
 export function dcRefused(status: SolutionStatus): boolean {
-  return status === 'too-large' || status === 'over-budget'
+  return status === 'too-large' || status === 'over-budget' || status === 'invalid-circuit'
 }
 
 export type Solution = {

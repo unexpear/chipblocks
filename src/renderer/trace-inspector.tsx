@@ -134,13 +134,18 @@ export function TraceInspector({
     return buildTraceCausalReplay(result, chosenBlock, { id: chosenId, label: chosenLabel })
   }, [result, chosenBlock, chosenId, chosenLabel])
 
+  // Stay inside the center canvas parent (gridArea center). Prefer CSS min() so a fixed 640px
+  // width cannot spill into the left dock at narrow windows; never size against 100vw.
   const panel: React.CSSProperties = {
     position: 'absolute',
     top: 16,
     bottom: 16,
     right: 16,
-    width: 640,
-    maxWidth: 'calc(100vw - 32px)',
+    left: 'auto',
+    width: 'min(640px, calc(100% - 32px))',
+    maxWidth: 'calc(100% - 32px)',
+    minWidth: 0,
+    boxSizing: 'border-box',
     display: 'flex',
     flexDirection: 'column',
     background: 'var(--surfacePanel)',
@@ -152,20 +157,31 @@ export function TraceInspector({
   }
 
   return (
-    <div style={panel}>
+    <div className="nodrag nopan cb-test-bench cb-trace-panel" style={panel}>
       <header
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: 8,
           padding: '8px 12px',
           borderBottom: '1px solid var(--borderSubtle)',
           color: 'var(--textBright)',
           fontSize: 13,
           fontWeight: 600,
+          minWidth: 0,
         }}
       >
-        <span>Run-trace inspector</span>
+        <span
+          style={{
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Run-trace inspector
+        </span>
         <button
           type="button"
           onClick={onClose}
@@ -314,7 +330,7 @@ export function TraceInspector({
                     onChange={(event) => setTestName(event.target.value)}
                     style={{
                       flex: '1 1 150px',
-                      minWidth: 130,
+                      minWidth: 0,
                       background: 'var(--surfaceInput)',
                       color: 'var(--textPrimary)',
                       border: '1px solid var(--borderStrong)',
@@ -352,7 +368,7 @@ export function TraceInspector({
                           color: 'var(--textSoft)',
                         }}
                       >
-                        <span style={{ flex: '1 1 180px' }}>
+                        <span style={{ flex: '1 1 180px', minWidth: 0 }}>
                           {test.name} · {test.cycles} cycles
                           {testResult ? (
                             <strong
@@ -389,7 +405,7 @@ export function TraceInspector({
                               .slice(0, 2)
                               .map(
                                 (failure) =>
-                                  `${failure.signal} cycle ${failure.cycle}: expected ${failure.expected ?? '—'}, got ${failure.actual ?? '—'}`,
+                                  `${failure.signal} cycle ${failure.cycle}: expected ${failure.expected ?? '—'}, got ${failure.actual ?? '—'}${failure.reason ? ` — ${failure.reason}` : ''}`,
                               )
                               .join(' · ')}
                           </span>
