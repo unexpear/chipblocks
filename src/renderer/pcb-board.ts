@@ -568,6 +568,8 @@ export type UnplacedPart = {
   partId: string
   definition: string
   reason: UnplacedReason
+  /** Handle ids that have no pad when reason is `terminal-unmapped` — named so export never hides which pin failed. */
+  terminals?: string[]
 }
 
 type OffBoardHit = UnplacedPart & { terminal: string }
@@ -635,11 +637,20 @@ export function unplacedParts(
 ): UnplacedPart[] {
   const seen = new Map<string, UnplacedPart>()
   for (const hit of offBoardHits(parts, edges, board)) {
-    if (seen.has(hit.partId)) continue
+    const existing = seen.get(hit.partId)
+    if (existing !== undefined) {
+      if (hit.reason === 'terminal-unmapped') {
+        const terminals = existing.terminals ?? []
+        if (!terminals.includes(hit.terminal)) terminals.push(hit.terminal)
+        existing.terminals = terminals
+      }
+      continue
+    }
     seen.set(hit.partId, {
       partId: hit.partId,
       definition: hit.definition,
       reason: hit.reason,
+      ...(hit.reason === 'terminal-unmapped' ? { terminals: [hit.terminal] } : {}),
     })
   }
   return [...seen.values()]

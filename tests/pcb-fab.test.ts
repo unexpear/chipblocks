@@ -24,6 +24,7 @@ import {
   buildValidationReport,
   FAB_FILE_NAMES,
   type FabInputs,
+  formatUnplacedPart,
   innerCopperFileName,
 } from '../src/renderer/pcb-fab.ts'
 import { excellonDrill, gerberTopCopper } from '../src/renderer/pcb-gerber.ts'
@@ -679,5 +680,21 @@ describe('provisional lands', () => {
     expect(report).toContain('PROVISIONAL PACKAGES')
     expect(report).toContain('U1 (probe_1, provisional_2pad)')
     expect(report).toContain('provisional land, not a manufacturer package.')
+  })
+})
+
+describe('formatUnplacedPart names the failed terminal', () => {
+  test('terminal-unmapped lists handle ids; no-footprint stays as before', () => {
+    expect(
+      formatUnplacedPart({
+        partId: 'R1',
+        definition: 'resistor',
+        reason: 'terminal-unmapped',
+        terminals: ['not_a_terminal', 'also_missing'],
+      }),
+    ).toBe('R1 (resistor, terminal unmapped: not_a_terminal, also_missing)')
+    expect(
+      formatUnplacedPart({ partId: 'T1', definition: 'transformer', reason: 'no-footprint' }),
+    ).toBe('T1 (transformer, no footprint)')
   })
 })

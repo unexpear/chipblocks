@@ -277,8 +277,10 @@ export function buildStackupSpec(stackup: Stackup): string {
 
 /** How one skipped part reads in the report and the panel: id, definition, and why. */
 export function formatUnplacedPart(p: UnplacedPart): string {
-  const why = p.reason === 'no-footprint' ? 'no footprint' : 'terminal unmapped'
-  return `${p.partId} (${p.definition}, ${why})`
+  if (p.reason === 'no-footprint') return `${p.partId} (${p.definition}, no footprint)`
+  const named =
+    p.terminals !== undefined && p.terminals.length > 0 ? `: ${p.terminals.join(', ')}` : ''
+  return `${p.partId} (${p.definition}, terminal unmapped${named})`
 }
 
 function wiredPinsProblem(count: number, named: readonly UnplacedPart[] | undefined): string {

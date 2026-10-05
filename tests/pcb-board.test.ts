@@ -398,7 +398,14 @@ describe('offBoardPins (the header count)', () => {
       wires([['R1', 'not_a_terminal', 'R2', 'terminal_a']]),
       board,
     )
-    expect(skipped).toEqual([{ partId: 'R1', definition: 'resistor', reason: 'terminal-unmapped' }])
+    expect(skipped).toEqual([
+      {
+        partId: 'R1',
+        definition: 'resistor',
+        reason: 'terminal-unmapped',
+        terminals: ['not_a_terminal'],
+      },
+    ])
     expect(
       offBoardPins(parts(defs), wires([['R1', 'not_a_terminal', 'R2', 'terminal_a']]), board),
     ).toBe(1)

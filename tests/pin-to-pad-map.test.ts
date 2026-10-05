@@ -10,7 +10,12 @@
 
 import { afterEach, describe, expect, test } from 'vitest'
 import type { Footprint } from '../src/renderer/footprint.ts'
-import { padForTerminal, terminalForPad } from '../src/renderer/footprint-assignment.ts'
+import {
+  padForTerminal,
+  padMapFailuresFor,
+  resolvePadMap,
+  terminalForPad,
+} from '../src/renderer/footprint-assignment.ts'
 import { registerUserFootprint, setUserFootprints } from '../src/renderer/user-footprints.ts'
 import { buildUserPartDraft } from '../src/renderer/user-part-draft.ts'
 import { validateUserPart } from '../src/renderer/user-part-validate.ts'
@@ -90,12 +95,15 @@ describe('a pin that names its pad', () => {
     expect(terminalForPad('TEST_FPGA', '3')).toBeUndefined()
   })
 
-  test('a pad name that is not on the footprint is ignored, not invented', () => {
+  test('a pad name that is not on the footprint refuses that pin — no silent remap', () => {
     registerUserFootprint(footprint('TEST_PKG', ['1', '2']))
     registerUserPart(part('TEST_X', [{ name: 'A', pad: 'NOPE' }, { name: 'B' }]))
-    // falls back through the remaining rules rather than pointing at a pad that doesn't exist
-    expect(padForTerminal('TEST_X', 'pin_0')).toBe('1')
-    expect(padForTerminal('TEST_X', 'pin_1')).toBe('2')
+    // explicit miss stays unmapped; the other pin still takes declaration-order
+    expect(padForTerminal('TEST_X', 'pin_0')).toBeUndefined()
+    expect(padForTerminal('TEST_X', 'pin_1')).toBe('1')
+    expect(padMapFailuresFor('TEST_X')).toEqual([
+      { pinId: 'pin_0', pinName: 'A', reason: 'pad-missing', pad: 'NOPE' },
+    ])
   })
 })
 
@@ -151,7 +159,7 @@ describe('no two pins ever share a pad', () => {
     expect(pads).not.toContain(undefined)
   })
 
-  test('two pins asking for the same pad: the first keeps it, the second is placed elsewhere', () => {
+  test('two pins asking for the same pad: the first keeps it, the second is refused', () => {
     registerUserFootprint(footprint('TEST_PKG', ['1', '2']))
     registerUserPart(
       part('TEST_DUP', [
@@ -159,10 +167,56 @@ describe('no two pins ever share a pad', () => {
         { name: 'b', pad: '1' },
       ]),
     )
-    const first = padForTerminal('TEST_DUP', 'pin_0')
-    const second = padForTerminal('TEST_DUP', 'pin_1')
-    expect(first).toBe('1')
-    expect(second).not.toBe('1') // never two pins on one pad — that is a short
-    expect(second).toBe('2')
+    expect(padForTerminal('TEST_DUP', 'pin_0')).toBe('1')
+    expect(padForTerminal('TEST_DUP', 'pin_1')).toBeUndefined()
+    expect(padMapFailuresFor('TEST_DUP')).toEqual([
+      { pinId: 'pin_1', pinName: 'b', reason: 'pad-claimed', pad: '1' },
+    ])
+  })
+})
+
+describe('ambiguous name-match refuses rather than guessing', () => {
+  test('two pins named GND and one GND pad: neither steals the name; both stay unmapped', () => {
+    registerUserFootprint(footprint('TEST_PKG', ['GND', 'VCC']))
+    registerUserPart(part('TEST_GNDS', [{ name: 'GND' }, { name: 'GND' }]))
+    expect(padForTerminal('TEST_GNDS', 'pin_0')).toBeUndefined()
+    expect(padForTerminal('TEST_GNDS', 'pin_1')).toBeUndefined()
+    expect(padMapFailuresFor('TEST_GNDS').map((f) => f.reason)).toEqual([
+      'name-ambiguous',
+      'name-ambiguous',
+    ])
+  })
+})
+
+describe('resolvePadMap labels how each pin was placed', () => {
+  test('explicit, unique name, and declaration-order are distinct vias', () => {
+    registerUserFootprint(footprint('TEST_PKG', ['5', 'GND', '3']))
+    const result = resolvePadMap(
+      [
+        { id: 'a', name: 'IO', pad: '5' },
+        { id: 'b', name: 'GND' },
+        { id: 'c', name: 'misc' },
+      ],
+      footprint('TEST_PKG', ['5', 'GND', '3']),
+    )
+    expect(result.map.get('a')).toBe('5')
+    expect(result.via.get('a')).toBe('pin.pad')
+    expect(result.map.get('b')).toBe('GND')
+    expect(result.via.get('b')).toBe('pad-name')
+    expect(result.map.get('c')).toBe('3')
+    expect(result.via.get('c')).toBe('declaration-order')
+    expect(result.failures).toEqual([])
+  })
+})
+
+describe('built-in hand maps on a user land with different pad ids', () => {
+  test("sequential-ordinal remaps 1..N onto the land's pad list; non-numeric refuse", () => {
+    const land = footprint('USER_AB', ['A', 'B'])
+    registerUserFootprint(land)
+    // resistor TERMINAL_PADS is terminal_a→1, terminal_b→2; land pads are A,B
+    expect(padForTerminal('resistor', 'terminal_a', 'USER_AB')).toBe('A')
+    expect(padForTerminal('resistor', 'terminal_b', 'USER_AB')).toBe('B')
+    expect(terminalForPad('resistor', 'A', 'USER_AB')).toBe('terminal_a')
+    expect(terminalForPad('resistor', 'B', 'USER_AB')).toBe('terminal_b')
   })
 })

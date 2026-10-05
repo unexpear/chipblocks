@@ -285,16 +285,50 @@ function pinoutFor(definition: string, footprintId?: string): Record<string, str
 }
 
 /** The pad a part's terminal solders to, for the part's chosen footprint (or its default pinout when
- *  no footprint is given). undefined when the part or terminal isn't mapped (honest). */
+ *  no footprint is given). undefined when the part or terminal isn't mapped (honest).
+ *
+ *  Built-in hand maps (`TERMINAL_PADS` / per-footprint overrides / symmetric two-terminal) win first.
+ *  When that map names a pad id the chosen footprint does not have, a labeled sequential-ordinal
+ *  remap is tried: only when every pad label in the hand map is a positive integer `1..N` and the
+ *  footprint has at least N pads in declaration order. Otherwise the terminal stays unmapped —
+ *  never a guessed manufacturer pinout. User parts use `resolvePadMap` (explicit / unique name /
+ *  declaration-order). */
 export function padForTerminal(
   definition: string,
   handleId: string,
   footprintId?: string,
 ): string | undefined {
   const pinout = pinoutFor(definition, footprintId)
-  if (pinout !== undefined) return pinout[handleId]
+  if (pinout !== undefined) {
+    return resolveHandMapPad(pinout, handleId, definition, footprintId)
+  }
   const map = userPartPadMap(definition, footprintId)
   return map?.get(handleId)
+}
+
+/** How a pin in `resolvePadMap` landed on its pad — explicit data first, then labeled heuristics. */
+export type PadMapVia = 'pin.pad' | 'pad-name' | 'declaration-order'
+
+/** Why a pin could not be assigned a pad. Named so export / validation never look like success. */
+export type PadMapFailureReason =
+  | 'pad-missing' // pin.pad set but that id is not on the footprint
+  | 'pad-claimed' // pin.pad set but an earlier pin already took that pad
+  | 'name-ambiguous' // more than one still-open pin shares a name that matches a pad
+  | 'no-pad-left' // declaration-order ran out of unclaimed pads
+
+export type PadMapFailure = {
+  pinId: string
+  pinName: string
+  reason: PadMapFailureReason
+  /** The pad the pin asked for, when the failure is about an explicit `pin.pad`. */
+  pad?: string
+}
+
+export type PadMapResult = {
+  map: Map<string, string>
+  failures: PadMapFailure[]
+  /** Per assigned pin: which rule placed it. Absent pins are in `failures` or simply unused. */
+  via: Map<string, PadMapVia>
 }
 
 /**
@@ -302,50 +336,162 @@ export function padForTerminal(
  * board's pin→pad and its pad→pin can never disagree, and the symbol editor can show a pin's pad while
  * the part is still being drawn, before it is registered.
  *
- * Three ways, in this order:
+ * Three ways, in this order (explicit data before heuristics):
  *  1. the pad the pin NAMES (`pin.pad`) — a real symbol carries the package's pad label alongside the
- *     signal name, and on a 48-pin chip 'IO_12' and pad '31' have nothing to do with each other;
- *  2. a pad whose label matches the pin's name — so a package drawn with GND / VCC / OUT pads lines
- *     itself up with a part whose pins are called that, with nothing to fill in;
- *  3. declaration order over whatever pads are left — pin 1 → pad 1, which is what a two-pin part
- *     wants and what every part authored before pins could name a pad already relies on.
+ *     signal name, and on a 48-pin chip 'IO_12' and pad '31' have nothing to do with each other.
+ *     A named pad that is missing or already claimed REFUSES that pin (no silent remap that looks
+ *     like success);
+ *  2. a pad whose label uniquely matches the pin's name — so a package drawn with GND / VCC / OUT
+ *     pads lines itself up with a part whose pins are called that. If two still-open pins share the
+ *     same name matching one pad, name-match is ambiguous and both refuse that rule;
+ *  3. declaration order over whatever pads are left (labeled heuristic) — pin order → remaining pad
+ *     order, which is what a two-pin part wants and what every part authored before pins could name
+ *     a pad already relies on. Pins that refused an explicit `pin.pad` or an ambiguous name-match
+ *     stay unmapped (no silent heal).
  *
- * A pad is claimed once, so an explicit or by-name match never steals the pad an earlier pin took.
+ * A pad is claimed once. Role-sensitive manufacturer pinouts are never invented here.
  */
+export function resolvePadMap(
+  pins: readonly { id: string; name: string; pad?: string }[],
+  footprint: Footprint,
+): PadMapResult {
+  const padIds = new Set(footprint.pads.map((p) => p.id))
+  const assigned = new Map<string, string>()
+  const via = new Map<string, PadMapVia>()
+  const failures: PadMapFailure[] = []
+  const claimed = new Set<string>()
+  const refusedExplicit = new Set<string>()
+  const take = (pinId: string, padId: string, how: PadMapVia) => {
+    assigned.set(pinId, padId)
+    claimed.add(padId)
+    via.set(pinId, how)
+  }
+
+  for (const pin of pins) {
+    const explicit = pin.pad?.trim() ?? ''
+    if (explicit === '') continue
+    if (!padIds.has(explicit)) {
+      failures.push({ pinId: pin.id, pinName: pin.name, reason: 'pad-missing', pad: explicit })
+      refusedExplicit.add(pin.id)
+      continue
+    }
+    if (claimed.has(explicit)) {
+      failures.push({ pinId: pin.id, pinName: pin.name, reason: 'pad-claimed', pad: explicit })
+      refusedExplicit.add(pin.id)
+      continue
+    }
+    take(pin.id, explicit, 'pin.pad')
+  }
+
+  // Name-match only when the pin name equals exactly one pad id AND no other still-open pin shares
+  // that name (two GND pins + one GND pad is ambiguous — refuse the name rule for both).
+  const openForName = pins.filter((p) => !assigned.has(p.id) && !refusedExplicit.has(p.id))
+  const nameCounts = new Map<string, number>()
+  for (const pin of openForName) {
+    nameCounts.set(pin.name, (nameCounts.get(pin.name) ?? 0) + 1)
+  }
+  for (const pin of openForName) {
+    if (!padIds.has(pin.name) || claimed.has(pin.name)) continue
+    if ((nameCounts.get(pin.name) ?? 0) > 1) {
+      failures.push({ pinId: pin.id, pinName: pin.name, reason: 'name-ambiguous', pad: pin.name })
+      continue
+    }
+    take(pin.id, pin.name, 'pad-name')
+  }
+
+  // Name-ambiguous and explicit refusals stay unmapped — healing them by order would hide the
+  // ambiguity and look like success.
+  const blocked = new Set<string>([
+    ...refusedExplicit,
+    ...failures.filter((f) => f.reason === 'name-ambiguous').map((f) => f.pinId),
+  ])
+  const unclaimed = footprint.pads.filter((p) => !claimed.has(p.id))
+  let next = 0
+  for (const pin of pins) {
+    if (assigned.has(pin.id) || blocked.has(pin.id)) continue
+    const pad = unclaimed[next++]
+    if (pad === undefined) {
+      failures.push({ pinId: pin.id, pinName: pin.name, reason: 'no-pad-left' })
+      continue
+    }
+    take(pin.id, pad.id, 'declaration-order')
+  }
+
+  return { map: assigned, failures, via }
+}
+
+/** Map-only view of `resolvePadMap` — same honesty rules (failed explicit pads stay absent). */
 export function padMapFor(
   pins: readonly { id: string; name: string; pad?: string }[],
   footprint: Footprint,
 ): Map<string, string> {
-  const padIds = new Set(footprint.pads.map((p) => p.id))
-  const assigned = new Map<string, string>()
-  const claimed = new Set<string>()
-  const take = (pinId: string, padId: string) => {
-    assigned.set(pinId, padId)
-    claimed.add(padId)
-  }
+  return resolvePadMap(pins, footprint).map
+}
 
-  for (const pin of pins) {
-    if (pin.pad !== undefined && padIds.has(pin.pad) && !claimed.has(pin.pad)) take(pin.id, pin.pad)
+/**
+ * Hand-authored pinouts name pads as `'1'`, `'2'`, … matching shipped packages. A user-authored
+ * land with the same pad COUNT but different pad ids still fits the part (authoredOptionsFor).
+ * Remap ordinal `k` → `footprint.pads[k - 1].id` only when every hand-map value is a positive
+ * integer and the footprint has at least that many pads — labeled sequential-ordinal, never a
+ * guessed pinout for role-sensitive packages.
+ */
+function resolveHandMapPad(
+  pinout: Record<string, string>,
+  handleId: string,
+  definition: string,
+  footprintId?: string,
+): string | undefined {
+  const wanted = pinout[handleId]
+  if (wanted === undefined) return undefined
+  const fp =
+    footprintId !== undefined
+      ? resolveFootprint(footprintId)
+      : footprintForPart(definition, footprintId)
+  if (fp === undefined) return wanted
+  if (fp.pads.some((p) => p.id === wanted)) return wanted
+  return sequentialOrdinalPad(wanted, pinout, fp)
+}
+
+/** Sequential-ordinal heuristic: hand-map labels must all be positive integers; `wanted` indexes
+ *  the footprint's pad list (1-based). Undefined when the hand map is not a clean 1..N set or the
+ *  ordinal is out of range — refuse rather than invent. */
+function sequentialOrdinalPad(
+  wanted: string,
+  pinout: Record<string, string>,
+  footprint: Footprint,
+): string | undefined {
+  const labels = Object.values(pinout)
+  if (labels.length === 0) return undefined
+  const ordinals: number[] = []
+  for (const label of labels) {
+    if (!/^[1-9]\d*$/.test(label)) return undefined
+    ordinals.push(Number(label))
   }
-  for (const pin of pins) {
-    if (assigned.has(pin.id)) continue
-    if (padIds.has(pin.name) && !claimed.has(pin.name)) take(pin.id, pin.name)
-  }
-  const unclaimed = footprint.pads.filter((p) => !claimed.has(p.id))
-  let next = 0
-  for (const pin of pins) {
-    if (assigned.has(pin.id)) continue
-    const pad = unclaimed[next++]
-    if (pad !== undefined) assigned.set(pin.id, pad.id)
-  }
-  return assigned
+  const max = Math.max(...ordinals)
+  if (max > footprint.pads.length) return undefined
+  // Every ordinal in the map must be unique (two terminals → same pad would be a short).
+  if (new Set(ordinals).size !== ordinals.length) return undefined
+  if (!/^[1-9]\d*$/.test(wanted)) return undefined
+  const n = Number(wanted)
+  return footprint.pads[n - 1]?.id
 }
 
 function userPartPadMap(definition: string, footprintId?: string): Map<string, string> | undefined {
   const userPart = resolveUserPart(definition)
   if (userPart === undefined) return undefined
   const footprint = userPartFootprint(userPart, footprintId)
-  return footprint === undefined ? undefined : padMapFor(userPart.pins, footprint)
+  return footprint === undefined ? undefined : resolvePadMap(userPart.pins, footprint).map
+}
+
+/** Named failures for a user part's pin→pad join — empty when every pin mapped or the part/footprint
+ *  is absent. Built-ins with hand maps are not listed here; the board surfaces those as
+ *  `terminal-unmapped` with the handle id. */
+export function padMapFailuresFor(definition: string, footprintId?: string): PadMapFailure[] {
+  const userPart = resolveUserPart(definition)
+  if (userPart === undefined) return []
+  const footprint = userPartFootprint(userPart, footprintId)
+  if (footprint === undefined) return []
+  return resolvePadMap(userPart.pins, footprint).failures
 }
 
 /** The terminal (handle) a footprint pad belongs to — the inverse of padForTerminal, for the part's
@@ -356,10 +502,10 @@ export function terminalForPad(
   padId: string,
   footprintId?: string,
 ): string | undefined {
-  const pads = pinoutFor(definition, footprintId)
-  if (pads !== undefined) {
-    for (const handle in pads) {
-      if (pads[handle] === padId) return handle
+  const pinout = pinoutFor(definition, footprintId)
+  if (pinout !== undefined) {
+    for (const handle in pinout) {
+      if (resolveHandMapPad(pinout, handle, definition, footprintId) === padId) return handle
     }
     return undefined
   }

@@ -59,8 +59,9 @@ export type UserPin = {
    * Which PAD of the part's footprint this pin solders to, named as the package labels it ('1', 'A5').
    * A real schematic symbol carries both — the pin's NAME says what the signal is (VCC, IO_12), the pad
    * says where it physically lands, and on a 48-pin chip those are nothing like each other. Omitted ⇒
-   * fall back to matching the pin's name against a pad, then to declaration order (pin 1 → pad 1),
-   * which is what a two-pin part wants and what parts authored before this existed rely on.
+   * fall back to matching the pin's name against a pad when that name is unique among open pins,
+   * then to declaration order (pin 1 → pad 1). A `pin.pad` that is missing or already claimed
+   * refuses that pin — it is not silently remapped. Role-sensitive manufacturer pinouts are never invented.
    */
   pad?: string
 }

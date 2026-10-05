@@ -170,8 +170,9 @@ that can be *authored* OR *derived*, always present, always matching.
 
 **Three gaps to close:**
 
-1. **Authoring parity.** Symbol and footprint authoring surfaces now exist. Remaining work is to make
-   edit/reload flows and terminal→pad assignment equally complete for every user-part path.
+1. **Authoring parity.** Symbol and footprint authoring surfaces now exist. Terminal→pad assignment
+   now shares the same explicit / unique-name / declaration-order rules (with named refusals) for
+   user parts and provisional lands; remaining work is edit/reload flow polish.
 2. **"A footprint always exists" isn't guaranteed.** Device kinds not in `PART_FOOTPRINTS` (op-amp,
    switch, transformer, circuit blocks, ill-fitting user parts) resolve to `undefined`, and `deriveBoard`
    **silently skips** them (`pcb-board.ts:223` `if (fp === undefined) continue`) — surfaced as "N wired
@@ -188,12 +189,21 @@ that can be *authored* OR *derived*, always present, always matching.
    pad copper / SMD pad — labeled derived, not a vendor aperture) and an F.Fab assembly-drawing
    Gerber that strokes body outlines when a footprint has them — never redrawn as silk; a
    footprint with only silk invents no fab lines. Provisional lands stay `provisional_<N>pad`.
-   Still open: chip-level author-or-derive, a terminal→pad map for every user-part path beyond
-   declaration / `pin.pad` / name match (`TERMINAL_PADS` is still hand-authored per device kind),
-   and a full Gerber viewer (still ◐ our dialect). Nothing re-derives a footprint *from* a
-   placement.
+   Terminal→pad maps (this slice): `resolvePadMap` prefers explicit `pin.pad`, then unique
+   pad-name match, then labeled declaration-order over leftover pads. A missing or already-claimed
+   `pin.pad` refuses that pin (named `pad-missing` / `pad-claimed`) — no silent remap that looks
+   like success; ambiguous shared names refuse (`name-ambiguous`). Built-in `TERMINAL_PADS` /
+   per-footprint overrides still hand-author role-aware pinouts (diode cathode, transistor packages);
+   when a fitting user land uses different pad ids, a labeled sequential-ordinal remap (`1..N` →
+   pad list order) applies only when the hand map is a clean unique positive-integer set — otherwise
+   the terminal stays unmapped. Failures surface with the handle id on `UnplacedPart.terminals` /
+   `formatUnplacedPart` the same way fab validation names skipped parts. Role-sensitive kinds
+   (transformer, SPDT, op-amp, relay, circuit-block ports) stay unassigned. Still open: chip-level
+   author-or-derive, and a full Gerber viewer (still ◐ our dialect). Nothing re-derives a footprint
+   *from* a placement. `TERMINAL_PADS` remains hand-authored for built-in device kinds that need a
+   manufacturer pinout — that is intentional, not a gap to fill with guesses.
 
 Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
-the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop and board/fabrication
-parity (paste, mask, silk vs fab) above are the current slice. Chip-level author-or-derive and
-terminal→pad maps beyond declaration remain open.
+the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop, board/fabrication
+parity (paste, mask, silk vs fab), and richer terminal→pad maps above are the current board-parity
+slices. Chip-level author-or-derive remains open.
