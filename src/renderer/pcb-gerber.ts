@@ -419,6 +419,7 @@ export function gerberMask(
   const flashes = planFlashes(board, apertures, filter, null, problems)
   return [
     ...gerberHeader(`Soldermask,${side}`, 'Negative', when),
+    'G04 ChipBlocks derived mask openings = pad copper (clearance 0); not a manufacturer expansion*',
     ...apertures.block(),
     ...flashBody(flashes, null),
     'M02*',
@@ -444,6 +445,7 @@ export function gerberPaste(
   const flashes = planFlashes(board, apertures, filter, null, problems)
   return [
     ...gerberHeader(`Paste,${side}`, 'Positive', when),
+    'G04 ChipBlocks derived paste openings = SMD pad copper; not a vendor stencil shrink*',
     ...apertures.block(),
     ...flashBody(flashes, null),
     'M02*',
@@ -504,6 +506,58 @@ export function gerberSilkscreen(
   }
   return [
     ...gerberHeader(`Legend,${side}`, 'Positive', when),
+    ...apertures.block(),
+    ...body,
+    'M02*',
+    '',
+  ].join('\n')
+}
+
+/**
+ * Fabrication / body outlines (F.Fab) — the component BODY, distinct from silkscreen. Only strokes
+ * footprints that already carry a `fabrication` outline; a footprint with only silk does not invent
+ * fab lines here. This is an assembly documentation layer (AssemblyDrawing), not a manufacturing
+ * copper / mask / paste sheet a fab mills or prints as ink on the finished board. Positive polarity.
+ */
+export function gerberFabrication(
+  board: Board,
+  side: 'Top' | 'Bot',
+  when: Date,
+  problems?: string[],
+): string {
+  const apertures = new Apertures()
+  const body: string[] = []
+  let currentCode = -1
+  const draw = (code: number, from: { x: number; y: number }, to: { x: number; y: number }) => {
+    if (code !== currentCode) {
+      body.push(`D${code}*`)
+      currentCode = code
+    }
+    body.push(`${xy(from)}D02*`)
+    body.push(`${xy(to)}D01*`)
+  }
+  // No footprint mounts parts on the bottom yet — the bottom fab drawing is honestly empty.
+  const placements = side === 'Top' ? board.placements : []
+  for (const placement of placements) {
+    const fp = footprintByPlacement(placement)
+    if (fp === undefined) {
+      problems?.push(unresolvedFootprintProblem(placement))
+      continue
+    }
+    if (fp.fabrication.length === 0) continue
+    body.push(`%TO.C,${safeField(placement.partId)}*%`)
+    for (const s of fp.fabrication) {
+      draw(
+        apertures.code(`C,${apNum(s.width)}`, null),
+        placePoint(placement, s.from),
+        placePoint(placement, s.to),
+      )
+    }
+    body.push('%TD*%')
+  }
+  return [
+    ...gerberHeader(`AssemblyDrawing,${side}`, 'Positive', when),
+    'G04 F.Fab body outlines only — distinct from silkscreen; empty when a footprint has no fabrication*',
     ...apertures.block(),
     ...body,
     'M02*',

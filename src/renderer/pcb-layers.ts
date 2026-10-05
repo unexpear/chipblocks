@@ -7,6 +7,9 @@ import type { Stackup } from './pcb-stackup.ts'
  * lamination (foliation) of these sheets, top → bottom; each carries specific artwork:
  *
  *   F.Silkscreen  the printed ink — part outlines + reference designators
+ *   F.Fab         the component BODY outline (assembly drawing) — only when the footprint has one
+ *   F.Paste       solder-paste stencil openings — ChipBlocks-derived = SMD pad copper
+ *   F.Mask        solder-mask openings — ChipBlocks-derived = pad copper
  *   F.Cu          top copper — every pad, the top-layer traces, the via barrels
  *   FR4 core      the substrate slab — the drilled holes pass through it
  *   B.Cu          bottom copper — the through-hole pads' rings, the bottom traces, the via barrels
@@ -19,6 +22,9 @@ import type { Stackup } from './pcb-stackup.ts'
 
 export type BoardLayerId =
   | 'f_silk'
+  | 'f_fab'
+  | 'f_paste'
+  | 'f_mask'
   | 'f_cu'
   | 'in1_cu'
   | 'in2_cu'
@@ -27,8 +33,8 @@ export type BoardLayerId =
   | 'core'
   | 'b_cu'
 
-/** The router's copper layer a drawable layer maps to (undefined for silk / dielectric). Lets the
- *  route tool draw on a chosen inner layer. */
+/** The router's copper layer a drawable layer maps to (undefined for silk / fab / paste / mask /
+ *  dielectric). Lets the route tool draw on a chosen inner layer. */
 export function copperLayerOf(id: BoardLayerId): CopperLayer | undefined {
   switch (id) {
     case 'f_cu':
@@ -65,7 +71,7 @@ export function copperTraceColor(cl: CopperLayer): string {
   return INNER_TRACE_COLORS[Number(cl.slice(5)) - 1] ?? '#7a9a7a'
 }
 
-export type BoardLayerKind = 'silk' | 'copper' | 'dielectric'
+export type BoardLayerKind = 'silk' | 'fab' | 'paste' | 'mask' | 'copper' | 'dielectric'
 
 export type BoardLayer = {
   id: BoardLayerId
@@ -74,7 +80,7 @@ export type BoardLayer = {
   kind: BoardLayerKind
   side: 'top' | 'core' | 'bottom'
   /** The layer's real thickness in mm (copper weight / FR4 core), for the sheet's label. Undefined
-   *  for silkscreen (ink, not a stack-up layer). */
+   *  for silkscreen / fab / paste / mask (ink or derived openings, not a stack-up thickness). */
   thicknessMm?: number
   /** Display colour for the sheet. */
   color: string
@@ -84,20 +90,27 @@ const COPPER_TOP = '#d9a441'
 const COPPER_BOTTOM = '#4a7fd4'
 const COPPER_INNER = '#b0863c' // a dimmer copper for the buried inner layers
 const SILK_COLOR = '#e8eaed'
+const FAB_COLOR = '#8a7a5a' // muted body outline (matches the footprint editor's F.Fab)
+const PASTE_COLOR = '#d5dde6'
+const MASK_COLOR = '#d2a4ff'
 const FR4_COLOR = '#0d3b26'
 
 /**
  * The drawable layer stack, top → bottom, with real thicknesses read from the stack-up. Walks the
- * stack-up's cross-section: F.Silkscreen above the top copper, then every copper layer (F.Cu, the
- * buried In1.Cu / In2.Cu… on a 4-/6-layer board, then B.Cu) with a dielectric sheet between each
- * copper pair (a core or prepreg). A two-layer board is exactly F.Silkscreen / F.Cu / FR4 core / B.Cu
- * as before; a multilevel board additionally pages through — and shows in the exploded view — its
- * real inner copper planes.
+ * stack-up's cross-section: F.Silkscreen / F.Fab / F.Paste / F.Mask above the top copper, then every
+ * copper layer (F.Cu, the buried In1.Cu / In2.Cu… on a 4-/6-layer board, then B.Cu) with a dielectric
+ * sheet between each copper pair (a core or prepreg). Paste and mask openings are ChipBlocks-derived
+ * from pad geometry (opening = pad copper; SMD-only for paste) — not manufacturer stencil shrinks or
+ * fab mask expansions. A two-layer board is F.Silkscreen / F.Fab / F.Paste / F.Mask / F.Cu / FR4
+ * core / B.Cu; a multilevel board additionally pages through its real inner copper planes.
  */
 export function boardLayers(stackup: Stackup): BoardLayer[] {
   const copperCount = stackup.layers.filter((l) => l.type === 'copper').length
   const sheets: BoardLayer[] = [
     { id: 'f_silk', name: 'F.Silkscreen', kind: 'silk', side: 'top', color: SILK_COLOR },
+    { id: 'f_fab', name: 'F.Fab', kind: 'fab', side: 'top', color: FAB_COLOR },
+    { id: 'f_paste', name: 'F.Paste', kind: 'paste', side: 'top', color: PASTE_COLOR },
+    { id: 'f_mask', name: 'F.Mask', kind: 'mask', side: 'top', color: MASK_COLOR },
   ]
   let copperSeen = 0
   let pendingDielectric = 0 // dielectric thickness accumulated since the last copper layer
@@ -106,7 +119,7 @@ export function boardLayers(stackup: Stackup): BoardLayer[] {
       if (copperSeen > 0) pendingDielectric += layer.thicknessMm // only the dielectric BETWEEN coppers
       continue
     }
-    if (layer.type !== 'copper') continue // solder mask isn't a drawable sheet (silk stands in on top)
+    if (layer.type !== 'copper') continue // solder-mask stack-up entries are not drawable sheets
     // Flush the dielectric between the previous copper and this one as its own FR4 sheet.
     if (copperSeen > 0 && pendingDielectric > 0) {
       sheets.push({
@@ -141,8 +154,12 @@ export function boardLayers(stackup: Stackup): BoardLayer[] {
 
 /** A short human label for a layer including its real thickness (for the sheet header). */
 export function layerLabel(layer: BoardLayer): string {
+  if (layer.kind === 'silk') return `${layer.name} (ink)`
+  if (layer.kind === 'fab') return `${layer.name} (body outline)`
+  if (layer.kind === 'paste') return `${layer.name} (derived = SMD pad)`
+  if (layer.kind === 'mask') return `${layer.name} (derived = pad)`
   const t = layer.thicknessMm
-  if (t === undefined) return `${layer.name} (ink)`
+  if (t === undefined) return layer.name
   // a copper weight reads better as its ounce label; the core as mm
   if (layer.kind === 'copper') {
     const oz = t >= 0.06 ? '2 oz' : t <= 0.02 ? '0.5 oz' : '1 oz'

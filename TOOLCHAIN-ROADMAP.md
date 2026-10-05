@@ -159,8 +159,8 @@ neither level has both:
   `PART_FOOTPRINTS`, e.g. resistor → 0603), and `deriveBoard` (`pcb-board.ts:206`, live in an App
   useMemo at `App.tsx:3545`) re-projects them onto the board on *every* edit — the board is always a
   rotate+translate of footprint geometry plus an auto-fit outline. The in-app `footprint-editor.tsx`
-  now authors pads and courtyard geometry, validates it, and persists user footprints; the remaining
-  work is richer board/fabrication parity.
+  now authors pads and courtyard geometry, validates it, and persists user footprints; board
+  view + export now surface paste/mask (derived) and F.Fab body lines separately from silk.
 - The **chip** already does *place → derive*: a standard cell's geometry is **computed from the gates it
   contains** (`cell-polygons.ts` / `cell-layout.ts` — Euler-path netlist → per-mask rectangles), not
   authored. On the chip side the footprint-analog is already auto-derived from what you built.
@@ -183,11 +183,17 @@ that can be *authored* OR *derived*, always present, always matching.
    footprint writes that id back onto the part (`applyUserOwnedFootprintEdit`) when the package
    honestly fits. Built-ins cannot be shadowed. Role-sensitive kinds are not given a guessed
    package. Provisional lands stay `provisional_<N>pad` and labeled provisional — that id cannot
-   be registered over. Still open: chip-level author-or-derive, a terminal→pad map for every
-   user-part path beyond declaration / `pin.pad` / name match (`TERMINAL_PADS` is still
-   hand-authored per device kind), and fabrication parity (the editor draws the body outline;
-   the board view and Gerber export still ship silkscreen, not those fabrication lines, and
-   there is no paste/mask layer). Nothing re-derives a footprint *from* a placement.
+   be registered over. Fabrication parity for this slice: the board view pages F.Fab / F.Paste /
+   F.Mask alongside silk and copper; Gerber export ships paste and mask (ChipBlocks-derived =
+   pad copper / SMD pad — labeled derived, not a vendor aperture) and an F.Fab assembly-drawing
+   Gerber that strokes body outlines when a footprint has them — never redrawn as silk; a
+   footprint with only silk invents no fab lines. Provisional lands stay `provisional_<N>pad`.
+   Still open: chip-level author-or-derive, a terminal→pad map for every user-part path beyond
+   declaration / `pin.pad` / name match (`TERMINAL_PADS` is still hand-authored per device kind),
+   and a full Gerber viewer (still ◐ our dialect). Nothing re-derives a footprint *from* a
+   placement.
 
 Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
-the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop above is the current slice. Richer fabrication parity and the chip side are still open.
+the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop and board/fabrication
+parity (paste, mask, silk vs fab) above are the current slice. Chip-level author-or-derive and
+terminal→pad maps beyond declaration remain open.

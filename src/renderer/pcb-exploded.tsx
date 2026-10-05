@@ -36,6 +36,9 @@ const COPPER_EDGE = '#b5852b'
 const COPPER_BOTTOM = '#4a7fd4'
 const HOLE = '#06180f'
 const SILK = '#e8eaed'
+const FAB = '#8a7a5a'
+const PASTE = '#d5dde6'
+const MASK = '#d2a4ff'
 const COURTYARD = '#7fe3b0'
 const VIA_BARREL = '#e8c069'
 const LABEL = '#9fb0c3'
@@ -249,6 +252,79 @@ export function PcbExplodedView({
     })
   }
 
+  const fabEls = () => {
+    const lift = liftOf(layers.findIndex((l) => l.id === 'f_fab'))
+    const p = project(lift)
+    const els: ReactElement[] = []
+    for (const pl of board.placements) {
+      const fp = footprintByPlacement(pl)
+      if (fp === undefined || fp.fabrication.length === 0) continue
+      for (const s of fp.fabrication) {
+        const a = placePoint(pl, s.from)
+        const b = placePoint(pl, s.to)
+        const sa = at(p(a.x, a.y))
+        const sb = at(p(b.x, b.y))
+        els.push(
+          <line
+            key={`fab-${pl.partId}-${s.from.x},${s.from.y}-${s.to.x},${s.to.y}`}
+            x1={sa.x}
+            y1={sa.y}
+            x2={sb.x}
+            y2={sb.y}
+            stroke={FAB}
+            strokeWidth={Math.max(0.7, s.width * pxPerMm)}
+            strokeLinecap="round"
+          />,
+        )
+      }
+    }
+    return els
+  }
+
+  const openingEls = (kind: 'paste' | 'mask') => {
+    const lift = liftOf(layers.findIndex((l) => l.id === (kind === 'paste' ? 'f_paste' : 'f_mask')))
+    const p = project(lift)
+    const fill = kind === 'paste' ? PASTE : MASK
+    const els: ReactElement[] = []
+    for (const pl of board.placements) {
+      const fp = footprintByPlacement(pl)
+      if (fp === undefined) continue
+      const pads = kind === 'paste' ? fp.pads.filter((pad) => pad.type === 'smd') : fp.pads
+      for (const pad of pads) {
+        const c = placePoint(pl, pad.center)
+        const s = at(p(c.x, c.y))
+        const w = pad.size.w * pxPerMm
+        const h = pad.size.h * pxPerMm
+        if (pad.shape === 'circle') {
+          els.push(
+            <circle
+              key={`${kind}-${pl.partId}-${pad.id}`}
+              cx={s.x}
+              cy={s.y}
+              r={Math.min(w, h) / 2}
+              fill={fill}
+              opacity={0.85}
+            />,
+          )
+        } else {
+          els.push(
+            <rect
+              key={`${kind}-${pl.partId}-${pad.id}`}
+              x={s.x - w / 2}
+              y={s.y - h / 2}
+              width={w}
+              height={h}
+              rx={pad.shape === 'roundrect' ? Math.min(w, h) * 0.25 : 0}
+              fill={fill}
+              opacity={0.85}
+            />,
+          )
+        }
+      }
+    }
+    return els
+  }
+
   const silkEls = () => {
     const lift = liftOf(layers.findIndex((l) => l.id === 'f_silk'))
     const p = project(lift)
@@ -402,6 +478,9 @@ export function PcbExplodedView({
             {l.id === 'core' && i === firstCoreIndex && drillEls()}
             {l.id === 'f_cu' && padsFor('top')}
             {l.id === 'f_silk' && silkEls()}
+            {l.id === 'f_fab' && fabEls()}
+            {l.id === 'f_paste' && openingEls('paste')}
+            {l.id === 'f_mask' && openingEls('mask')}
           </g>
         )
       })}

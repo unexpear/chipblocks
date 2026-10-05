@@ -40,7 +40,7 @@ import { SILK_TEXT, strokeText } from './stroke-font.ts'
  *  - 'flat'   the full top-down layout, all layers at once — the editable board (drag a part, R to
  *             rotate, click to select; the airwires + outline follow live).
  *  - 'layers' the LAMINATION as a stack of paper: one layer at a time, page up/down through the
- *             stack (F.Silkscreen → F.Cu → FR4 core → B.Cu). View-only — you're inspecting a sheet.
+ *             stack (F.Silkscreen → F.Fab → F.Paste → F.Mask → F.Cu → FR4 core → B.Cu). View-only.
  *
  * (The 3-D exploded mode is a further rung.) Geometry comes from pcb-board.ts in real mm scaled
  * mm → px; the pointer maths inverts the same scale, so a part lands exactly where it's dropped.
@@ -52,6 +52,9 @@ const COPPER = '#d9a441'
 const COPPER_EDGE = '#b5852b'
 const HOLE = '#06180f' // a drilled hole shows through to the dark substrate
 const SILK = '#e8eaed'
+const FAB = '#8a7a5a' // component body outline (F.Fab) — muted vs white silk
+const PASTE = '#d5dde6' // ChipBlocks-derived stencil opening (= SMD pad)
+const MASK = '#d2a4ff' // ChipBlocks-derived mask opening (= pad); vias stay tented
 const COURTYARD = '#7fe3b0'
 const AIRWIRE = '#f5f0dc' // thin pale ratsnest lines, the EDA convention
 const SELECT = '#9ecbff' // the selected part's halo
@@ -100,12 +103,25 @@ function MeasureLabel({
 }
 
 function padShape(p: Pad, scale: number, key: string) {
+  return padOpening(p, scale, key, COPPER, COPPER_EDGE, true)
+}
+
+/** A pad flash as copper, paste, or mask — same geometry, different ink. Paste/mask openings are
+ *  ChipBlocks-derived (= the pad copper); this is not a vendor stencil shrink or fab mask expansion. */
+function padOpening(
+  p: Pad,
+  scale: number,
+  key: string,
+  fill: string,
+  stroke: string,
+  withHole: boolean,
+) {
   const w = p.size.w * scale
   const h = p.size.h * scale
   const cx = p.center.x * scale
   const cy = p.center.y * scale
   const hole =
-    p.type === 'through_hole' && p.holeDiameter !== undefined ? (
+    withHole && p.type === 'through_hole' && p.holeDiameter !== undefined ? (
       <circle cx={cx} cy={cy} r={(p.holeDiameter * scale) / 2} fill={HOLE} />
     ) : null
   if (p.shape === 'circle') {
@@ -115,9 +131,10 @@ function padShape(p: Pad, scale: number, key: string) {
           cx={cx}
           cy={cy}
           r={Math.min(w, h) / 2}
-          fill={COPPER}
-          stroke={COPPER_EDGE}
+          fill={fill}
+          stroke={stroke}
           strokeWidth={0.5}
+          opacity={fill === COPPER ? 1 : 0.85}
         />
         {hole}
       </g>
@@ -134,9 +151,10 @@ function padShape(p: Pad, scale: number, key: string) {
         height={h}
         rx={rx}
         ry={rx}
-        fill={COPPER}
-        stroke={COPPER_EDGE}
+        fill={fill}
+        stroke={stroke}
         strokeWidth={0.5}
+        opacity={fill === COPPER ? 1 : 0.85}
       />
       {hole}
     </g>
@@ -749,6 +767,75 @@ export function PcbView({
                 />
               )}
               {pads.map((p) => padShape(p, pxPerMm, `${pl.partId}-p${p.id}`))}
+            </g>
+          )
+        })}
+
+      {/* F.Fab sheet: component BODY outlines — only when the footprint has fabrication lines.
+          Never redrawn as silk. A footprint with only silk shows nothing here. */}
+      {show('f_fab') &&
+        board.placements.map((pl) => {
+          const fp = footprintByPlacement(pl)
+          if (fp === undefined || fp.fabrication.length === 0) return null
+          return (
+            <g key={`fab-${pl.partId}`} pointerEvents="none" data-fab={pl.partId}>
+              {fp.fabrication.map((s) => {
+                const a = placePoint(pl, s.from)
+                const b = placePoint(pl, s.to)
+                return (
+                  <line
+                    key={`${pl.partId}-fab${s.from.x},${s.from.y},${s.to.x},${s.to.y}`}
+                    x1={sx(a.x)}
+                    y1={sy(a.y)}
+                    x2={sx(b.x)}
+                    y2={sy(b.y)}
+                    stroke={FAB}
+                    strokeWidth={Math.max(0.7, s.width * pxPerMm)}
+                    strokeLinecap="round"
+                  />
+                )
+              })}
+            </g>
+          )
+        })}
+
+      {/* F.Paste sheet: ChipBlocks-derived stencil openings (= SMD pad copper). Through-hole pads
+          get no paste. Labeled derived in the layer stack — not a manufacturer aperture. */}
+      {show('f_paste') &&
+        board.placements.map((pl) => {
+          const fp = footprintByPlacement(pl)
+          if (fp === undefined) return null
+          const pads = fp.pads.filter((p) => p.type === 'smd')
+          if (pads.length === 0) return null
+          return (
+            <g
+              key={`paste-${pl.partId}`}
+              transform={`translate(${sx(pl.x)} ${sy(pl.y)}) rotate(${pl.rotation})`}
+              pointerEvents="none"
+              data-paste={pl.partId}
+            >
+              {pads.map((p) =>
+                padOpening(p, pxPerMm, `${pl.partId}-paste${p.id}`, PASTE, '#9aa3ad', false),
+              )}
+            </g>
+          )
+        })}
+
+      {/* F.Mask sheet: ChipBlocks-derived mask openings (= every pad). Vias stay tented (no opening). */}
+      {show('f_mask') &&
+        board.placements.map((pl) => {
+          const fp = footprintByPlacement(pl)
+          if (fp === undefined) return null
+          return (
+            <g
+              key={`mask-${pl.partId}`}
+              transform={`translate(${sx(pl.x)} ${sy(pl.y)}) rotate(${pl.rotation})`}
+              pointerEvents="none"
+              data-mask={pl.partId}
+            >
+              {fp.pads.map((p) =>
+                padOpening(p, pxPerMm, `${pl.partId}-mask${p.id}`, MASK, '#b07ad4', false),
+              )}
             </g>
           )
         })}

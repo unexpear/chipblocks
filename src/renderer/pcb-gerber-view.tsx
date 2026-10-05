@@ -19,6 +19,7 @@ function inkFor(name: string): string {
   if (name.includes('Mask')) return '#d2a4ff'
   if (name.includes('Paste')) return '#d5dde6'
   if (name.includes('Silk')) return '#f4f6f8'
+  if (name.includes('Fab')) return '#8a7a5a'
   if (name.includes('Edge')) return '#5ee0a0'
   return '#e2b15c'
 }

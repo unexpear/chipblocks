@@ -8,6 +8,7 @@
  */
 import { describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
+import type { Footprint } from '../src/renderer/footprint.ts'
 import {
   type Board,
   type BoardPart,
@@ -20,6 +21,7 @@ import {
   GERBER_CONVENTIONS,
   gerberBottomCopper,
   gerberEdgeCuts,
+  gerberFabrication,
   gerberInnerCopper,
   gerberMask,
   gerberPaste,
@@ -27,6 +29,7 @@ import {
   gerberTopCopper,
 } from '../src/renderer/pcb-gerber.ts'
 import { routeBoard } from '../src/renderer/pcb-route.ts'
+import { setUserFootprints } from '../src/renderer/user-footprints.ts'
 
 const WHEN = new Date(2026, 6, 4, 12, 0, 0)
 
@@ -186,6 +189,7 @@ describe('solder mask — negative polarity, opening = pad (cited: fab applies e
     const mask = gerberMask(board, 'Top', WHEN)
     expect(mask).toContain('%TF.FileFunction,Soldermask,Top*%')
     expect(mask).toContain('%TF.FilePolarity,Negative*%')
+    expect(mask).toContain('ChipBlocks derived mask openings = pad copper')
     expect(mask.match(/D03\*/g)).toHaveLength(4)
     // the same flash coordinates as the copper — openings sit exactly on the pads
     const copper = gerberTopCopper(board, ratsnest, routing, WHEN)
@@ -218,6 +222,7 @@ describe('solder paste — the stencil, reflow pads only', () => {
     const flashes = paste.match(/X-?\d+Y-?\d+D03\*/g) ?? []
     expect(flashes).toHaveLength(4)
     for (const flash of flashes) expect(copper).toContain(flash)
+    expect(paste).toContain('ChipBlocks derived paste openings = SMD pad copper')
     expect(paste).toContain(
       'RoundRect,0.200000X-0.200000X-0.275000X0.200000X-0.275000X0.200000X0.275000X-0.200000X0.275000X0*%',
     )
@@ -228,6 +233,101 @@ describe('solder paste — the stencil, reflow pads only', () => {
     const paste = gerberPaste(board, 'Bot', WHEN)
     expect(paste).toContain('%TF.FileFunction,Paste,Bot*%')
     expect(paste).not.toContain('D03*')
+  })
+})
+
+describe('fabrication (F.Fab) — body outlines, never silk', () => {
+  test('top fab strokes each footprint’s body outline where the part sits', () => {
+    const { board } = routedPair()
+    const fab = gerberFabrication(board, 'Top', WHEN)
+    expect(fab).toContain('%TF.FileFunction,AssemblyDrawing,Top*%')
+    expect(fab).toContain('%TF.FilePolarity,Positive*%')
+    expect(fab).toContain('F.Fab body outlines only')
+    expect(fab).toContain('%TO.C,R1*%')
+    expect(fab).toMatch(/D02\*/)
+    expect(fab).toMatch(/D01\*/)
+    // 0603 fab body strokes are 0.1 mm — distinct from silk corner ticks (0.15 mm)
+    expect(fab).toContain('C,0.100000')
+  })
+
+  test('fab is not silk redrawn — same board’s silk and fab Gerbers disagree on geometry', () => {
+    const { board } = routedPair()
+    const silk = gerberSilkscreen(board, 'Top', WHEN)
+    const fab = gerberFabrication(board, 'Top', WHEN)
+    expect(silk).toContain('C,0.150000') // corner-tick silk
+    expect(fab).toContain('C,0.100000') // body fab
+    expect(fab).not.toContain('C,0.150000')
+  })
+
+  test('a footprint with only silk invents no fab lines', () => {
+    const silkOnly: Footprint = {
+      id: 'silk_only_test',
+      name: 'silk-only test land',
+      description: 'Test footprint with silk and empty fabrication.',
+      pads: [
+        {
+          id: '1',
+          center: { x: -1, y: 0 },
+          size: { w: 0.8, h: 0.9 },
+          shape: 'rect',
+          type: 'smd',
+        },
+        {
+          id: '2',
+          center: { x: 1, y: 0 },
+          size: { w: 0.8, h: 0.9 },
+          shape: 'rect',
+          type: 'smd',
+        },
+      ],
+      silkscreen: [{ from: { x: -1.5, y: -1 }, to: { x: 1.5, y: -1 }, width: 0.15 }],
+      fabrication: [],
+      labels: {
+        reference: { x: 0, y: -2 },
+        value: { x: 0, y: 2 },
+        fabReference: { x: 0, y: 0 },
+      },
+      courtyard: { x: -2, y: -1.5, w: 4, h: 3 },
+      provenance: {
+        source_type: 'derived',
+        title: 'test silk-only footprint',
+        citation: 'test fixture — empty fabrication on purpose',
+        confidence: 'low',
+      },
+    }
+    setUserFootprints([silkOnly])
+    try {
+      const board: Board = {
+        outline: { x: 0, y: 0, w: 20, h: 20 },
+        placements: [
+          {
+            partId: 'X1',
+            footprintId: 'silk_only_test',
+            x: 10,
+            y: 10,
+            rotation: 0,
+            designator: 'X1',
+          },
+        ],
+      }
+      const fab = gerberFabrication(board, 'Top', WHEN)
+      const silk = gerberSilkscreen(board, 'Top', WHEN)
+      expect(silk).toContain('%TO.C,X1*%')
+      expect(silk).toContain('C,0.150000')
+      // No body strokes and no part attribute — fabrication was empty, so nothing invented.
+      expect(fab).not.toContain('%TO.C,X1*%')
+      expect(fab).not.toMatch(/D01\*/)
+    } finally {
+      setUserFootprints([])
+    }
+  })
+
+  test('bottom fab is honestly empty — no bottom-mounted parts', () => {
+    const { board } = routedPair()
+    const fab = gerberFabrication(board, 'Bot', WHEN)
+    expect(fab).toContain('%TF.FileFunction,AssemblyDrawing,Bot*%')
+    expect(fab).not.toContain('D03*')
+    expect(fab).not.toMatch(/D01\*/)
   })
 })
 

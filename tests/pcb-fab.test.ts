@@ -490,6 +490,12 @@ describe('the ZIP itself', () => {
     expect(decoder.decode(files.get(FAB_FILE_NAMES.report))).toContain('STATUS: PASS')
     expect(decoder.decode(files.get(FAB_FILE_NAMES.netlist))).toContain('.end')
     expect(decoder.decode(files.get(FAB_FILE_NAMES.readme))).toContain(FAB_FILE_NAMES.drill)
+    expect(decoder.decode(files.get(FAB_FILE_NAMES.readme))).toContain(FAB_FILE_NAMES.topFab)
+    const topFab = decoder.decode(files.get(FAB_FILE_NAMES.topFab))
+    expect(topFab).toContain('%TF.FileFunction,AssemblyDrawing,Top*%')
+    const report = decoder.decode(files.get(FAB_FILE_NAMES.report))
+    expect(report).toContain('ChipBlocks-derived')
+    expect(report).toContain('F.Fab carries each footprint')
     // the fab-order spec: material / thickness / copper weight / finish, cited
     const stackup = decoder.decode(files.get(FAB_FILE_NAMES.stackup))
     expect(stackup).toContain('FR4')

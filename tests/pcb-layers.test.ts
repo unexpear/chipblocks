@@ -10,10 +10,26 @@ import { boardLayers, copperLayerOf, layerLabel } from '../src/renderer/pcb-laye
 import { buildStackup, defaultStackup } from '../src/renderer/pcb-stackup.ts'
 
 describe('boardLayers — the lamination, top → bottom', () => {
-  test('the default 2-layer board is F.Silkscreen / F.Cu / FR4 core / B.Cu', () => {
+  test('the default 2-layer board is F.Silk / F.Fab / F.Paste / F.Mask / F.Cu / FR4 / B.Cu', () => {
     const layers = boardLayers(defaultStackup())
-    expect(layers.map((l) => l.id)).toEqual(['f_silk', 'f_cu', 'core', 'b_cu'])
-    expect(layers.map((l) => l.kind)).toEqual(['silk', 'copper', 'dielectric', 'copper'])
+    expect(layers.map((l) => l.id)).toEqual([
+      'f_silk',
+      'f_fab',
+      'f_paste',
+      'f_mask',
+      'f_cu',
+      'core',
+      'b_cu',
+    ])
+    expect(layers.map((l) => l.kind)).toEqual([
+      'silk',
+      'fab',
+      'paste',
+      'mask',
+      'copper',
+      'dielectric',
+      'copper',
+    ])
   })
 
   test('the copper sheets carry the real copper weight; the core its real thickness', () => {
@@ -62,6 +78,9 @@ describe('boardLayers — the lamination, top → bottom', () => {
     )
     expect(layers.map((l) => l.id)).toEqual([
       'f_silk',
+      'f_fab',
+      'f_paste',
+      'f_mask',
       'f_cu',
       'core',
       'in1_cu',
@@ -84,12 +103,15 @@ describe('boardLayers — the lamination, top → bottom', () => {
 })
 
 describe('layerLabel', () => {
-  test('copper reads as its ounce weight + µm; the core as mm; silk as ink', () => {
+  test('copper reads as its ounce weight + µm; the core as mm; silk/fab/paste/mask labeled honestly', () => {
     const layers = boardLayers(defaultStackup())
     const byId = (id: string) => layers.find((l) => l.id === id)
     expect(layerLabel(byId('f_cu') as never)).toBe('F.Cu (1 oz, 35 µm)')
     expect(layerLabel(byId('core') as never)).toBe('FR4 core (1.51 mm)')
     expect(layerLabel(byId('f_silk') as never)).toBe('F.Silkscreen (ink)')
+    expect(layerLabel(byId('f_fab') as never)).toBe('F.Fab (body outline)')
+    expect(layerLabel(byId('f_paste') as never)).toBe('F.Paste (derived = SMD pad)')
+    expect(layerLabel(byId('f_mask') as never)).toBe('F.Mask (derived = pad)')
   })
 
   test('2 oz copper reads as 2 oz', () => {
@@ -101,12 +123,15 @@ describe('layerLabel', () => {
 })
 
 describe('copperLayerOf — drawable layer → router copper layer', () => {
-  test('maps outer + inner copper; silk / dielectric map to nothing', () => {
+  test('maps outer + inner copper; silk / fab / paste / mask / dielectric map to nothing', () => {
     expect(copperLayerOf('f_cu')).toBe('top')
     expect(copperLayerOf('b_cu')).toBe('bottom')
     expect(copperLayerOf('in1_cu')).toBe('inner1')
     expect(copperLayerOf('in2_cu')).toBe('inner2')
     expect(copperLayerOf('f_silk')).toBeUndefined()
+    expect(copperLayerOf('f_fab')).toBeUndefined()
+    expect(copperLayerOf('f_paste')).toBeUndefined()
+    expect(copperLayerOf('f_mask')).toBeUndefined()
     expect(copperLayerOf('core')).toBeUndefined()
   })
 })
