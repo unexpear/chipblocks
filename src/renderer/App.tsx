@@ -97,6 +97,7 @@ import { ConnectPointsOverlay, PendingWirePreview } from './canvas-overlays.tsx'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import { groundedComponent } from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
+import { applyChipFootprintEdit, chipPinsFromBlock } from './chip-footprint.ts'
 import {
   type CircuitFile,
   deserializeCircuit,
@@ -4094,11 +4095,19 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     void authoredFootprints
     const board = deriveBoard(
       nodes.map((n) => {
-        const data = n.data as DeviceNodeData
+        const data = n.data as DeviceNodeData & {
+          block?: { ports: { id: string; label: string; name?: string }[] }
+        }
+        const block = data.block
+        const chipPins =
+          data.definition === 'block' && block !== undefined && block.ports.length > 0
+            ? chipPinsFromBlock(block)
+            : undefined
         return {
           id: n.id,
           definition: data.definition,
           ...(data.footprintId ? { footprintId: data.footprintId } : {}),
+          ...(chipPins !== undefined ? { chipPins } : {}),
         }
       }),
       pcbPlacements,
@@ -10412,14 +10421,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
               void persistAuthoredFootprint(footprint)
               const node = nodesRef.current.find((n) => n.id === partId)
               if (node === undefined) return
-              const data = node.data as DeviceNodeData
-              const next = applyUserOwnedFootprintEdit(
-                {
-                  definition: data.definition,
-                  ...(data.footprintId ? { footprintId: data.footprintId } : {}),
-                },
-                footprint,
-              )
+              const data = node.data as DeviceNodeData & {
+                block?: { ports: { id: string; label: string; name?: string }[] }
+              }
+              const base = {
+                definition: data.definition,
+                ...(data.footprintId ? { footprintId: data.footprintId } : {}),
+              }
+              // Chip/block keep-matching: when the node carries honest ports, prefer the chip path
+              // so an authored package write-back stays consistent with chip-level author-or-derive.
+              const block = data.block
+              const next =
+                data.definition === 'block' && block !== undefined && block.ports.length > 0
+                  ? applyChipFootprintEdit(base, chipPinsFromBlock(block), footprint)
+                  : applyUserOwnedFootprintEdit(base, footprint)
               if (next.footprintId !== undefined && next.footprintId !== data.footprintId) {
                 onEditFootprint(partId, next.footprintId)
               }

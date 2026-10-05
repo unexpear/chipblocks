@@ -15,12 +15,14 @@ import { type CellDrcReport, summarizeDrc } from './cell-drc.ts'
 import { type CellGeometry, designCellArea, PROCESS, standardCells } from './cell-layout.ts'
 import type { Floorplan } from './cell-place.ts'
 import { ChipCanvas } from './chip-canvas.tsx'
+import { footprintForCell, footprintForChipDesign } from './chip-footprint.ts'
 import type { ChipCellOverride, ChipLensMode } from './chip-layout.ts'
 import { Ice40CompileDetails, type Ice40CompileReport } from './import-report.tsx'
 import { type CellLvsReport, summarizeLvs } from './lvs.ts'
 import { ANNOTATION_DEFINITIONS } from './part-defaults.ts'
 import { THEME } from './theme.ts'
 import { TimingPanel } from './timing-panel.tsx'
+import { extractTopNetlist } from './top-netlist.ts'
 
 type Tally = { label: string; count: number }
 
@@ -273,6 +275,19 @@ export function ChipView({
   const chip = useMemo(() => deriveChip(nodes, edges), [nodes, edges])
   const cells = useMemo(() => standardCells(), [])
   const area = useMemo(() => designCellArea(nodes, edges), [nodes, edges])
+  // Chip-level author-OR-derive: package from top-level I/O pins when honest; refuse when none.
+  const chipPackage = useMemo(
+    () => footprintForChipDesign(extractTopNetlist(nodes, edges)),
+    [nodes, edges],
+  )
+  const cellPackages = useMemo(
+    () =>
+      cells.map((cell) => ({
+        name: cell.name,
+        resolution: footprintForCell(cell.name),
+      })),
+    [cells],
+  )
   const [target, setTarget] = useState<'std' | 'ice40'>('std')
   const drcSummary = useMemo(() => {
     const names = floorplan?.cells.map((cell) => cell.name) ?? []
@@ -419,6 +434,41 @@ export function ChipView({
                   No clocked elements yet — a chip's timing sign-off (its top clock speed and the
                   critical path that limits it) appears once the design has a flip-flop or register,
                   like the CPU.
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: 26 }}>
+              <SectionLabel>Chip package (author or derive)</SectionLabel>
+              <div
+                style={{ fontSize: 13, color: THEME.textBright, lineHeight: 1.55, maxWidth: 640 }}
+              >
+                {chipPackage.ok ? (
+                  <>
+                    {chipPackage.source === 'authored' ? 'Authored' : 'Derived'} package{' '}
+                    <code style={{ fontSize: 12 }}>{chipPackage.footprint.id}</code>
+                    {chipPackage.source === 'derived'
+                      ? ' — labeled provisional land from top-level I/O pin order, not a manufacturer package.'
+                      : ' — user-authored package assigned to this chip.'}
+                  </>
+                ) : (
+                  <>
+                    Packageless ({chipPackage.reason}): {chipPackage.detail}
+                  </>
+                )}
+              </div>
+              {cellPackages.some((c) => c.resolution.ok) && (
+                <div style={{ fontSize: 12, color: THEME.textFaint, marginTop: 8, maxWidth: 640 }}>
+                  Standard-cell abstracts:{' '}
+                  {cellPackages
+                    .filter((c) => c.resolution.ok)
+                    .map((c) =>
+                      c.resolution.ok
+                        ? `${c.name} → ${c.resolution.source} ${c.resolution.footprint.id}`
+                        : '',
+                    )
+                    .filter(Boolean)
+                    .join('; ')}
+                  . Derived from LEF-facing pin order (A/B/Y/VDD/VSS), never a guessed package.
                 </div>
               )}
             </div>

@@ -183,7 +183,7 @@ that can be *authored* OR *derived*, always present, always matching.
 2. **"A footprint always exists" isn't guaranteed.** Device kinds not in `PART_FOOTPRINTS` (op-amp,
    switch, transformer, circuit blocks, ill-fitting user parts) resolve to `undefined`, and `deriveBoard`
    **silently skips** them (`pcb-board.ts:223` `if (fp === undefined) continue`) — surfaced as "N wired
-   pins not on the board yet" and an **export-blocking** fab failure (`pcb-fab.ts:286`). Symmetric two-terminal kinds already get a labeled `provisional_<N>pad` land instead of being skipped. Role-sensitive kinds (transformer, SPDT, op-amp, relay, circuit-block ports) stay unassigned — this does not invent a manufacturer package for them. A part is still packageless when its pin order is not an honest total order.
+   pins not on the board yet" and an **export-blocking** fab failure (`pcb-fab.ts:286`). Symmetric two-terminal kinds already get a labeled `provisional_<N>pad` land instead of being skipped. Role-sensitive kinds (transformer, SPDT, op-amp, relay) stay unassigned without explicit pin→pad data — this does not invent a manufacturer package for them. A circuit block without chip pin data stays skipped; with honest ports it uses chip-level author-or-derive (below). A part is still packageless when its pin order is not an honest total order.
 3. **Keep-matching is the part ↔ board loop, not both levels.** Changing a part's footprint
    assignment re-derives its placement (`deriveBoard` reads `footprintForPart` on every call, and a
    hand spot stays put). The board view subscribes to the authored-footprint store, so a same-id
@@ -205,12 +205,22 @@ that can be *authored* OR *derived*, always present, always matching.
    pad list order) applies only when the hand map is a clean unique positive-integer set — otherwise
    the terminal stays unmapped. Failures surface with the handle id on `UnplacedPart.terminals` /
    `formatUnplacedPart` the same way fab validation names skipped parts. Role-sensitive kinds
-   (transformer, SPDT, op-amp, relay, circuit-block ports) stay unassigned. Still open: chip-level
-   author-or-derive, and a full Gerber viewer (still ◐ our dialect). Nothing re-derives a footprint
-   *from* a placement. `TERMINAL_PADS` remains hand-authored for built-in device kinds that need a
-   manufacturer pinout — that is intentional, not a gap to fill with guesses.
+   (transformer, SPDT, op-amp, relay) stay unassigned without explicit pin→pad data. Chip-level author-or-derive (2026-10-05 slice): `chip-footprint.ts` resolves a
+   package from known pin/pad data (block ports, LEF-facing cell abstracts A/B/Y/VDD/VSS, top-level
+   chip I/O) — **authored** when a fitting user/builtin package maps every pin honestly, else a
+   labeled `provisional_<N>pad` **derived** land when pin ids are a unique total order. Role-sensitive
+   kinds (transformer, SPDT, op-amp, relay) still refuse derive; they accept an authored package only
+   with explicit `pin.pad` / unique pad-name maps (no declaration-order inventing of manufacturer
+   pinouts). `deriveBoard` takes optional `chipPins` so a circuit block with ports is not packageless;
+   `definition: 'block'` alone (no pin data) stays skipped. Keep-matching: `applyChipFootprintEdit`
+   writes a user-owned id back onto the chip/block part when it fits; the chip workspace surfaces
+   authored vs derived for the design and for standard-cell abstracts. Still open: a full Gerber
+   viewer (still ≠ our dialect). Nothing re-derives a footprint *from* a placement. `TERMINAL_PADS`
+   remains hand-authored for built-in device kinds that need a manufacturer pinout — that is
+   intentional, not a gap to fill with guesses.
 
 Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
 the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop, board/fabrication
-parity (paste, mask, silk vs fab), and richer terminal→pad maps above are the current board-parity
-slices. Chip-level author-or-derive remains open.
+parity (paste, mask, silk vs fab), richer terminal→pad maps, and chip-level author-or-derive above
+are the current footprint-parity slices. Still open beyond this slice: place→re-derive a board
+footprint from a placement, and Gerber viewer generality.

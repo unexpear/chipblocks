@@ -1,3 +1,4 @@
+import { type ChipFootprintPin, resolveChipFootprint } from './chip-footprint.ts'
 import { type Footprint, fabricationBounds, footprintBounds, type Pad } from './footprint.ts'
 import { boardDesignator, footprintForPart, padForTerminal } from './footprint-assignment.ts'
 import { SILK_TEXT, strokeTextWidthMm } from './stroke-font.ts'
@@ -107,7 +108,37 @@ export function outlineRing(board: Pick<Board, 'outline' | 'profile'>): BoardPoi
 }
 
 /** The minimal part shape deriveBoard reads (a schematic node). */
-export type BoardPart = { id: string; definition: string; footprintId?: string }
+export type BoardPart = {
+  id: string
+  definition: string
+  footprintId?: string
+  /**
+   * Chip/cell pins when this part carries honest pin/pad data (a circuit block's ports, a cell
+   * abstract, top-level chip I/O). When present, deriveBoard uses chip-level author-OR-derive
+   * instead of footprintForPart alone — so a chip is not packageless when the pin order is known.
+   */
+  chipPins?: readonly ChipFootprintPin[]
+  /** When true, chip-level derive is refused (role-sensitive manufacturer pinouts). */
+  chipRoleSensitive?: boolean
+}
+
+/** Pad id for a board part terminal — chip pin map when chipPins are present. */
+export function padForBoardPart(
+  part: BoardPart,
+  handleId: string,
+  footprintId?: string,
+): string | undefined {
+  if (part.chipPins !== undefined) {
+    const authoredId = footprintId ?? part.footprintId
+    const resolved = resolveChipFootprint({
+      pins: part.chipPins,
+      ...(authoredId !== undefined ? { authoredId } : {}),
+      roleSensitive: part.chipRoleSensitive === true,
+    })
+    return resolved.ok ? resolved.padMap.get(handleId) : undefined
+  }
+  return padForTerminal(part.definition, handleId, footprintId)
+}
 
 /** Resolve a placement's footprint (it stores the id, not the object). */
 export function footprintByPlacement(p: Placement): Footprint | undefined {
@@ -218,8 +249,21 @@ export function deriveBoard(
   const takenDesignators = new Set<string>()
   let cursorX = 0
   for (const part of parts) {
-    // The user's chosen package if valid for this part, else the part's default (footprintForPart guards).
-    const fp = footprintForPart(part.definition, part.footprintId)
+    // Chip-level author-OR-derive when honest pin/pad data is present; else the part catalog path.
+    const chip =
+      part.chipPins !== undefined
+        ? resolveChipFootprint({
+            pins: part.chipPins,
+            ...(part.footprintId !== undefined ? { authoredId: part.footprintId } : {}),
+            roleSensitive: part.chipRoleSensitive === true,
+          })
+        : undefined
+    const fp =
+      chip !== undefined
+        ? chip.ok
+          ? chip.footprint
+          : undefined
+        : footprintForPart(part.definition, part.footprintId)
     if (fp === undefined) continue
     const b = footprintBounds(fp)
     const override = overrides?.get(part.id)
@@ -586,25 +630,25 @@ function offBoardHits(
   edges: readonly BoardEdge[],
   board: Board,
 ): OffBoardHit[] {
-  const definitionOf = new Map(parts.map((p) => [p.id, p.definition]))
+  const partOf = new Map(parts.map((p) => [p.id, p]))
   const placementOf = new Map(board.placements.map((p) => [p.partId, p]))
   const hits: OffBoardHit[] = []
   const seenPins = new Set<string>()
   const consider = (nodeId: string, handleId: string | null | undefined) => {
     if (handleId === null || handleId === undefined) return
-    const definition = definitionOf.get(nodeId)
-    if (definition === undefined || NOT_A_PART.has(definition)) return
+    const part = partOf.get(nodeId)
+    if (part === undefined || NOT_A_PART.has(part.definition)) return
     const pinKey = `${nodeId}/${handleId}`
     if (seenPins.has(pinKey)) return
     const placement = placementOf.get(nodeId)
-    const padId = padForTerminal(definition, handleId, placement?.footprintId)
+    const padId = padForBoardPart(part, handleId, placement?.footprintId)
     const fp = placement !== undefined ? footprintByPlacement(placement) : undefined
     const onBoard = padId !== undefined && fp?.pads.some((pad) => pad.id === padId) === true
     if (onBoard) return
     seenPins.add(pinKey)
     const reason: UnplacedReason =
       placement === undefined || fp === undefined ? 'no-footprint' : 'terminal-unmapped'
-    hits.push({ partId: nodeId, definition, reason, terminal: handleId })
+    hits.push({ partId: nodeId, definition: part.definition, reason, terminal: handleId })
   }
   for (const edge of edges) {
     consider(edge.source, edge.sourceHandle)
