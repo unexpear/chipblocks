@@ -7,7 +7,8 @@ import {
   type SolveOptions,
   solveDC,
 } from './dc-solver.ts'
-import { solveDeadline } from './solver-budget.ts'
+import { pastDeadline, solveDeadline } from './solver-budget.ts'
+import { SparseSession } from './sparse-linear.ts'
 
 /**
  * Robust DC operating-point finding by SOURCE STEPPING — the textbook fallback for
@@ -112,6 +113,8 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
     maxIterations: RAMP_SOLVE_MAX_ITERATIONS,
     ...options,
     deadline,
+    // Every level is the same circuit at a different supply — one solver session for the whole ramp.
+    sparseSession: options?.sparseSession ?? new SparseSession(),
   }
   let alpha = 0
   let step = RAMP_STEP_INITIAL
@@ -144,21 +147,173 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
   return solveDC(world, rampOptions)
 }
 
+/** Gmin stepping's starting shunt — SPICE's dynamic-gmin start (its 1 pS GMIN × 10¹⁰). At 10 mS to ground
+ *  every high-impedance node of a logic netlist is held firmly, so the first level converges in a few
+ *  Newton passes from a cold start (8 on the hex → 7-segment decoder). */
+const GMIN_STEP_START = 1e-2
+/** Below this shunt the next level is the real circuit — at 1 pS it is already the devices' own GMIN. */
+const GMIN_STEP_FLOOR = 1e-12
+/** Newton budget per gmin level. Each level starts from the previous level's answer, so a level that
+ *  needs more than this is a sign the step was too big — it is retried with a smaller step instead. */
+const GMIN_LEVEL_MAX_ITERATIONS = 100
+/** Step schedule in DECADES of shunt: start at one decade, widen after an easy level, halve on failure. */
+const GMIN_STEP_DECADES_INITIAL = 1
+const GMIN_STEP_DECADES_MAX = 3
+const GMIN_STEP_DECADES_MIN = 1 / 16
+/** A level that converged in at most this many passes earns a wider next step. */
+const GMIN_EASY_LEVEL_ITERATIONS = 6
+const GMIN_MAX_LEVELS = 80
+
+/**
+ * Robust DC operating-point finding by GMIN STEPPING — SPICE's other textbook continuation, and the one
+ * that suits large transistor (CMOS) netlists. A conductance is added from every node to ground, large
+ * enough that the circuit is easy (every floating-ish node — a stack node between off transistors, an
+ * unloaded output — is pinned near ground instead of wandering to absurd voltages); the shunt is then
+ * stepped down decade by decade, each level seeded from the one before, until the last solve is the
+ * REAL circuit with no shunt at all.
+ *
+ * Why it exists (measured, tests/solver-scale.test.ts): the built-in hex → 7-segment decoder (722
+ * MOSFETs, ~4,000 MNA unknowns) never converged from a cold start — the direct Newton ran 831 passes in
+ * its 60 s budget without settling, and source stepping did not finish inside the budget either. Its
+ * unloaded outputs and series stacks are held only by off transistors' 1 pS, so every early iterate puts
+ * them at 10⁴⁰ V and the 1 V-per-pass step limit then has to walk the transistors back. Gmin stepping
+ * reaches the converged operating point in ~130 Newton passes in total.
+ *
+ * Accuracy is preserved the same way source stepping preserves it: the shunt only changes the path; the
+ * final level is the real circuit solved by the same MNA + Newton-Raphson. A stalled ramp returns that
+ * failed solve's honest status — never a shunted solve dressed up as the answer.
+ */
+export function solveDCByGminStepping(world: World, options?: SolveOptions): Solution {
+  const deadline = solveDeadline(options?.deadline)
+  const levelOptions: SolveOptions = {
+    maxIterations: GMIN_LEVEL_MAX_ITERATIONS,
+    ...options,
+    deadline,
+    sparseSession: options?.sparseSession ?? new SparseSession(),
+  }
+  const floorDecade = Math.log10(GMIN_STEP_FLOOR)
+  let decade = Math.log10(GMIN_STEP_START) // the shunt of the next level to try, as log10(siemens)
+  let lastGood: number | undefined // the shunt decade of the last level that converged
+  let step = GMIN_STEP_DECADES_INITIAL
+  let seed: Map<string, number> | undefined
+  let last: Solution | undefined
+
+  for (let level = 0; level < GMIN_MAX_LEVELS; level++) {
+    const real = decade < floorDecade // past the floor: the next level is the real circuit
+    const sol = solveDC(world, {
+      ...levelOptions,
+      gminShunt: real ? 0 : 10 ** decade,
+      ...(seed ? { initialNodes: seed } : {}),
+    })
+    last = sol
+    if (dcRefused(sol.status)) {
+      if (sol.status !== 'over-budget' || lastGood === undefined) return sol
+      // Say how far the continuation got, after the refusal itself (which must stay first): being told
+      // what was NOT finished is the difference between a bound and a hang.
+      const [refusal, ...rest] = sol.warnings
+      const progress =
+        `Gmin stepping had converged with a ${(10 ** lastGood).toExponential(0)} S shunt on every node ` +
+        '(the real circuit has none) when time ran out — the voltages shown are not an operating point.'
+      return { ...sol, warnings: refusal === undefined ? [progress] : [refusal, progress, ...rest] }
+    }
+    if (dcRan(sol.status)) {
+      if (real) return sol
+      seed = sol.nodes
+      lastGood = decade
+      if (sol.iterations <= GMIN_EASY_LEVEL_ITERATIONS)
+        step = Math.min(step * 2, GMIN_STEP_DECADES_MAX)
+      decade = lastGood - step
+      continue
+    }
+    // A cold start that fails even at the starting shunt has nothing to continue from.
+    if (lastGood === undefined) return sol
+    step /= 2
+    if (step < GMIN_STEP_DECADES_MIN) break // can't step any finer — give up honestly
+    decade = lastGood - step
+  }
+  // Out of levels or step: the last attempt's own (failed) status — never a shunted solve.
+  return last ?? solveDC(world, { ...levelOptions })
+}
+
+/**
+ * How much of the budget the DIRECT Newton attempt may spend before solveDCRobust hands the circuit to a
+ * continuation. A third: every circuit in this repo whose direct solve converges does so in a small
+ * fraction of it (the slowest, a 520-pass LED-matrix pattern, in well under a second), so they are
+ * byte-for-byte unaffected; a large netlist that is still iterating after a third of the budget is the
+ * signature of one that needs a continuation, and spending the whole budget there (as it used to — the
+ * hex decoder burnt all 60 s on 831 direct passes) leaves the continuation nothing to work with.
+ * An unbounded caller (deadline Infinity) keeps an unbounded direct attempt.
+ */
+const DIRECT_BUDGET_SHARE = 1 / 3
+
+/**
+ * The direct Newton budget for a CMOS netlist (see isCmosNetlist), in place of the generous 1000 the
+ * junction circuits need. Measured: every built-in CMOS block that converges directly does so in at
+ * most 125 passes (the 4-bit calculator in 29–72 across its inputs, the hex → 7-segment decoder in
+ * 55–125), while the ones that do not converge are still wandering at 1000. Past this count, gmin
+ * stepping is the faster road to the same operating point — on the calculator inputs that need it,
+ * ~1000 hopeless direct passes cost ~11 s before the continuation could even start. SPICE's own direct
+ * limit (ITL1) is 100. A caller's explicit maxIterations still overrides it.
+ */
+const CMOS_DIRECT_MAX_ITERATIONS = 200
+
 /**
  * The DC operating point, robust to convergence failure. Tries the direct solve with
- * a full Newton budget first (the fast path for every circuit that converges); only
- * on failure does it fall back to source stepping. Returns the direct result
- * unchanged when it succeeds, so existing circuits are untouched. The generous budget
- * is only the DEFAULT — a caller that passes its own maxIterations is honored.
+ * a full Newton budget first (the fast path for every circuit that converges) — capped at
+ * DIRECT_BUDGET_SHARE of the wall-clock budget, and at CMOS_DIRECT_MAX_ITERATIONS passes for a
+ * CMOS netlist — and only on failure falls back to a continuation (solveDCByContinuation: gmin
+ * stepping for a CMOS netlist, source stepping for everything else). Returns the direct result
+ * unchanged when it succeeds. The generous Newton budget is only the DEFAULT — a caller that
+ * passes its own maxIterations is honored.
  */
 export function solveDCRobust(world: World, options?: SolveOptions): Solution {
   const deadline = solveDeadline(options?.deadline)
+  // One solver session for the direct attempt and every continuation level: same circuit, same structure.
+  const sparseSession = options?.sparseSession ?? new SparseSession()
   const direct = solveDC(world, {
-    maxIterations: RAMP_SOLVE_MAX_ITERATIONS,
+    maxIterations: isCmosNetlist(world) ? CMOS_DIRECT_MAX_ITERATIONS : RAMP_SOLVE_MAX_ITERATIONS,
     ...options,
     deadline,
+    // The share is taken inside solveDC on the clock read it already makes, so a refused robust solve
+    // costs no more clock reads than the plain solve it wraps (the refusal tests count them).
+    deadlineShare: DIRECT_BUDGET_SHARE,
+    sparseSession,
   })
-  if (dcRan(direct.status) || direct.status === 'no-ground' || dcRefused(direct.status))
-    return direct
-  return solveDCBySourceStepping(world, { ...options, deadline })
+  if (dcRan(direct.status) || direct.status === 'no-ground') return direct
+  // Over its OWN share of the budget is not a refusal — the continuations get the rest. Any other
+  // refusal (too large, invalid, or the caller's whole budget gone) is final.
+  const directOutOfShare = direct.status === 'over-budget' && !pastDeadline(deadline)
+  if (dcRefused(direct.status) && !directOutOfShare) return direct
+  // The continuations run to the caller's whole deadline (a share of 1 = the full remaining budget).
+  return solveDCByContinuation(world, { ...options, deadline, deadlineShare: 1, sparseSession })
+}
+
+/**
+ * The continuation fallback once the direct Newton has failed. A transistor-level CMOS netlist — MOSFETs
+ * plus wires, supplies, resistors and capacitors, nothing else — takes GMIN stepping first (the
+ * continuation that suits it; see solveDCByGminStepping) and falls back to source stepping if that
+ * stalls. Every other circuit keeps SOURCE stepping, exactly as before: it was chosen for rail-referenced
+ * junction bias (a PNP emitter, an op-amp's current-mirror top), and those circuits' paths are unchanged.
+ */
+function solveDCByContinuation(world: World, options: SolveOptions): Solution {
+  if (!isCmosNetlist(world)) return solveDCBySourceStepping(world, options)
+  const gmin = solveDCByGminStepping(world, options)
+  if (dcRan(gmin.status) || dcRefused(gmin.status)) return gmin
+  return solveDCBySourceStepping(world, options)
+}
+
+/** The only device kinds a "CMOS netlist" may contain. An allow-list on purpose: anything not named here
+ *  (a diode, a BJT, a JFET, a tube, a part added later) keeps the circuit on the unchanged path. */
+const CMOS_NETLIST_MOSFETS = new Set(['transistor_mosfet_nmos', 'transistor_mosfet_pmos'])
+const CMOS_NETLIST_LINEAR = new Set(['wire', 'power_source', 'ground', 'resistor', 'capacitor'])
+
+/** At least one MOSFET, and every circuit element is a MOSFET or one of the plain linear parts above. */
+function isCmosNetlist(world: World): boolean {
+  let mosfets = 0
+  for (const inst of world.instances.values()) {
+    if (inst.kind_ref !== 'primitive_device') continue
+    if (CMOS_NETLIST_MOSFETS.has(inst.definition)) mosfets++
+    else if (!CMOS_NETLIST_LINEAR.has(inst.definition)) return false
+  }
+  return mosfets > 0
 }

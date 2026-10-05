@@ -52,20 +52,27 @@ already have; ticks the PRD's defining metric (an outside user exports a manufac
 
 ## Track 4 — the solver scaling (the chip-depth road; the "thing from before")
 
-The transistor-level DC solve doesn't scale to chip-size digital (~650-MOSFET decoder ≈ 60 s). Measured:
-the cost is the gmin / source-stepping **continuation's iteration count**, NOT the per-solve linear
-algebra — wiring in sparse hurt (its O(N²) overhead + no-pivoting issues on feedback circuits), and a
-naive operating-point seed fights the stepping. The real fix is a better continuation:
+**Status (2026-10-05 slice, working tree):** the two measured walls for large transistor DC are addressed
+in-tree — not commercial-ngspice parity, and not a claim of chip-scale transient. Honest limits below.
 
-- **Pseudo-transient** (lead-approved 2026-06-24, accepting a startup-ramp "offset") — find the steady
-  state by ramping the supply up in *fake* time and letting the circuit "boot up", so each step starts
-  near the last; rock-solid for CMOS, every transistor still real. The (correct, validated) logic-sim
-  operating-point seed can feed it.
-- Keep the instant logic-sim as the fast "does it compute" layer alongside the real transistor solve.
+1. **Linear solve (pivoted sparse).** The old no-pivot sparse factor bailed on the zero diagonals that
+   ideal wires / MOSFET-gate nets put into an MNA matrix, so every Newton pass of a transistor netlist
+   fell through to dense GE (~90% of the hex→7-seg decoder's wall time). `factorizePivoted` /
+   `solvePivoted` in `src/sparse-linear.ts` pivot around them; `SparseSession` prefers no-pivot while it
+   works, then stays pivoted, absorbs a few consecutive near-singular misses before going dense, and
+   applies one iterative-refinement step so ill-conditioned diode Newton linearisations stay dense-quality.
+   Tests: `tests/solver-scale.test.ts` (pivoted unit + calculator stays on pivoted).
+2. **Convergence (gmin stepping for CMOS).** Some built-in CMOS inputs never converged from a cold
+   start (hex→7-seg: 831 direct passes / 60 s over-budget). `solveDCByGminStepping` in `src/dc-robust.ts`
+   is SPICE-style gmin continuation; `solveDCRobust` caps the direct attempt (share of wall clock + a
+   CMOS-only 200-pass cap) and routes a MOSFET+linear netlist to gmin stepping (else source stepping,
+   unchanged). Correctness oracle: `digitalSeed` on every gate pin. Final level is the real circuit (no
+   shunt); a stalled ramp returns the failed solve's honest status + how far the continuation got.
 
-Already built + validated but isolated (not wired in): `src/sparse-linear.ts` (correct, but net-negative
-when wired into real circuit matrices), `digitalSeed` in `src/renderer/logic-sim.ts` (correct mapping,
-120/120 vs the converged operating point).
+Still open (not this slice): pseudo-transient as another continuation; ngspice parity; wiring a logic
+seed into the transistor solve as a warm start; anything beyond DC operating point at this scale.
+
+Already validated alongside: `digitalSeed` in `src/renderer/logic-sim.ts` (correct mapping vs converged OP).
 
 ## HDL bridge — Verilog ⇄ gates (added 2026-07-13, lead: "Full RTL flow, including synthesis")
 

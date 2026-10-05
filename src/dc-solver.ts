@@ -70,7 +70,7 @@ import {
   MAX_MNA_UNKNOWNS,
   overBudgetMessage,
   pastDeadline,
-  solveDeadline,
+  SOLVE_BUDGET_MS,
   tooLargeMessage,
 } from './solver-budget.ts'
 import { NR_MAX_ITERATIONS } from './solver-constants.ts'
@@ -167,6 +167,32 @@ export type SolveOptions = {
    * having to build — and dense-factor — a six-thousand-unknown one to reach the shipped limit.
    */
   maxUnknowns?: number
+  /**
+   * An EXTRA conductance (siemens) from every circuit node to ground, on top of the devices' own GMIN —
+   * SPICE's gmin-stepping knob. A continuation (dc-robust.ts `solveDCByGminStepping`) solves with a large
+   * shunt, where every high-impedance node is held near ground and Newton converges in a few passes, then
+   * steps the shunt down decade by decade, seeding each solve from the last. It CHANGES the circuit, so
+   * only a continuation's intermediate steps pass it; its final solve is the real circuit (no shunt).
+   * Absent / 0 ⇒ the circuit exactly as drawn.
+   */
+  gminShunt?: number
+  /**
+   * A linear-solver session to REUSE across a run of solves of the same circuit — a continuation's
+   * levels (gmin / source stepping) or a direct attempt followed by its fallback. The session caches the
+   * fill-reducing order, the sparse-vs-dense verdict and which sparse factor works, all of which depend on
+   * the circuit's STRUCTURE, not the shunt or supply level; reusing it skips that setup (~0.3 s on a
+   * 4,000-unknown transistor netlist) on every level after the first. Safe if misapplied: a size change
+   * recomputes everything, and every sparse answer is residual-checked against the matrix actually solved.
+   * Absent ⇒ a fresh session for this solve.
+   */
+  sparseSession?: SparseSession
+  /**
+   * Stop THIS solve after the given fraction (0 < share < 1) of the time left until `deadline`. How
+   * solveDCRobust caps its direct Newton attempt so a continuation still has the rest of the budget: an
+   * 'over-budget' result then means this attempt's share ran out, and the caller checks its own deadline
+   * to tell the two apart. Absent (or ≥ 1) ⇒ the whole remaining budget.
+   */
+  deadlineShare?: number
 }
 
 export type SolutionStatus =
@@ -434,10 +460,17 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
   // The budget is read FIRST, before any per-instance work: the loops above this one (thermal, relay,
   // source-stepping) keep calling back after their shared deadline has passed, and each of those calls
   // must cost nothing rather than one more full solve.
-  const deadline = solveDeadline(options?.deadline)
-  if (pastDeadline(deadline)) {
+  // One clock read for the default deadline, the already-past check and the optional share of it.
+  const startedAt = performance.now()
+  const outerDeadline = options?.deadline ?? startedAt + SOLVE_BUDGET_MS
+  if (startedAt >= outerDeadline) {
     return emptyResult('over-budget', undefined, [overBudgetMessage('0 solver passes')])
   }
+  const share = options?.deadlineShare
+  const deadline =
+    share !== undefined && share > 0 && share < 1 && Number.isFinite(outerDeadline)
+      ? startedAt + (outerDeadline - startedAt) * share
+      : outerDeadline
 
   const ground = identifyGround(inputWorld, options, warnings)
   if (ground === undefined) {
@@ -718,7 +751,8 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
   // iteration (only the companion-model VALUES change), so the fill-reducing order is computed once and
   // reused, and sparse-vs-dense is decided once — the reuse that makes sparse a net win here and avoids
   // the per-iteration thrash. Small circuits (< the sparse threshold) fall straight through to dense.
-  const sparseSession = new SparseSession()
+  const sparseSession = options?.sparseSession ?? new SparseSession()
+  const gminShunt = options?.gminShunt ?? 0
 
   // buildAndSolve stamps resistors + linear voltage sources + (optionally) the
   // Shockley companion models at their current guesses, then solves. Returns
@@ -940,6 +974,8 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
     for (const tube of screenTubes) {
       stampScreenGridTubeCompanion(tube, nodeIndex, M, b)
     }
+
+    if (gminShunt > 0) for (let i = 0; i < N; i++) M.set([i, i], M.get([i, i]) + gminShunt)
 
     let x: DenseVector
     try {

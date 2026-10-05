@@ -37,6 +37,13 @@ const RESIDUAL_TOLERANCE = 1e-6
  * paying the small-n penalty on mesh/banded systems.
  */
 const SPARSE_THRESHOLD = 100
+/**
+ * How many CONSECUTIVE sparse misses (no usable pivot, or a residual the check rejects) a session absorbs
+ * — answering each from dense — before it decides the structure no longer factors and goes dense for
+ * good. Large enough that an isolated near-singular Newton iterate does not forfeit the rest of the solve,
+ * small enough that a structure which never factors stops paying for the attempt almost at once.
+ */
+const SPARSE_MISS_LIMIT = 3
 
 /**
  * A fill-reducing elimination order (minimum degree): repeatedly eliminate the lowest-degree node,
@@ -92,11 +99,14 @@ export type SparseOrder = { order: number[]; inverse: number[] }
 
 /**
  * The symbolic analysis: derive a fill-reducing (minimum-degree) elimination order from A's nonzero
- * pattern. This is the majority of a sparse solve's cost (two O(n²) structure scans + the ordering), and
+ * pattern. `deferZeroDiagonal` (the default) pushes structurally-zero-diagonal rows to the end — what the
+ * no-pivot factor needs and nothing else does: the pivoted factor takes the PLAIN order, because deferring
+ * every wire row and wire-only net past the rest is exactly what fills a rail-heavy netlist in (measured on
+ * a 4,002-unknown rail-and-wire netlist: 2.5 M factor entries deferred vs 9,600 plain). This is the majority of a sparse solve's cost (two O(n²) structure scans + the ordering), and
  * it depends only on WHICH entries are nonzero — so a simulation computes it once and reuses it for every
  * subsequent solve of the same circuit (SparseSession), leaving only the cheap numeric factor per solve.
  */
-export function computeOrder(A: DenseMatrix): SparseOrder {
+export function computeOrder(A: DenseMatrix, deferZeroDiagonal = true): SparseOrder {
   const n = A.size
   // Symmetric nonzero structure (the elimination graph).
   const adjacency: Set<number>[] = Array.from({ length: n }, () => new Set<number>())
@@ -113,7 +123,7 @@ export function computeOrder(A: DenseMatrix): SparseOrder {
   // nonzero-diagonal node rows — otherwise the no-pivot factor bails on a zero pivot at the first such row.
   const zeroDiagonal = new Array<boolean>(n)
   for (let i = 0; i < n; i++) zeroDiagonal[i] = Math.abs(A.data[i * n + i] as number) <= PIVOT_FLOOR
-  const order = minimumDegreeOrder(adjacency, zeroDiagonal)
+  const order = minimumDegreeOrder(adjacency, deferZeroDiagonal ? zeroDiagonal : undefined)
   const inverse = new Array<number>(n)
   for (let k = 0; k < n; k++) inverse[order[k] as number] = k
   return { order, inverse }
@@ -293,6 +303,337 @@ export function solveFactor(f: SparseFactor, b: DenseVector): DenseVector | null
     x.data[order[k] as number] = xk
   }
   return x
+}
+
+/**
+ * Threshold for partial pivoting in the pivoted factor: a candidate pivot is acceptable when its
+ * magnitude is at least this fraction of the largest entry in its column. 0.1 is the conventional
+ * sparse-LU compromise (UMFPACK's default) — it keeps element growth bounded like full partial pivoting
+ * while leaving room to prefer the diagonal / the sparsest row, which keeps the fill small.
+ */
+const PIVOT_THRESHOLD = 0.1
+
+/**
+ * A sparse LU factorisation WITH row pivoting — the factor the no-pivot `factorize` cannot produce for a
+ * real transistor netlist. Measured on the built-in hex → 7-segment decoder (722 MOSFETs, 4,026 MNA
+ * unknowns): 2,582 rows have a structurally ZERO diagonal (every ideal wire, switch and supply is an
+ * aux branch row, and a net reached only by wires and MOSFET gates has no conductance of its own). The
+ * diagonal-deferral order cannot fill all of them, so the no-pivot factor bailed at the first one and the
+ * WHOLE solve fell back to dense Gaussian elimination: ~90% of the decoder's wall time was that dense
+ * factor, every Newton iteration.
+ *
+ * This eliminates columns in a plain minimum-degree order (computeOrder with no zero-diagonal deferral)
+ * and picks each pivot ROW at factor time (threshold partial pivoting, preferring the diagonal and then
+ * the sparsest acceptable row), so a zero diagonal is simply pivoted around instead of forfeiting the
+ * circuit to dense. Every index stored here is an
+ * ORIGINAL row / column number:
+ *   - step k eliminates column `colOrder[k]` using original row `pivotRow[k]`;
+ *   - its L multipliers are rows `lRow[lPtr[k] .. lPtr[k+1])` (each subtracts `lVal ×` the pivot row);
+ *   - its U row is the pivot row's entries in LATER columns, `uCol/uVal[uPtr[k] .. uPtr[k+1])`, plus the
+ *     pivot value `uDiag[k]`;
+ *   - `aPtr/aCol` is the CSR pattern of the A that was factored, so the residual check can read A·x in
+ *     O(nonzeros) from A's CURRENT values (a reused factor is therefore still verified exactly).
+ */
+export type PivotedFactor = {
+  colOrder: number[]
+  pivotRow: Int32Array
+  lPtr: Int32Array
+  lRow: Int32Array
+  lVal: Float64Array
+  uPtr: Int32Array
+  uCol: Int32Array
+  uVal: Float64Array
+  uDiag: Float64Array
+  aPtr: Int32Array
+  aCol: Int32Array
+}
+
+/**
+ * Right-looking sparse Gaussian elimination under a fixed column order with threshold partial pivoting.
+ * Returns null — fall back to dense, which owns the singular / floating-node cases — when a column has no
+ * usable pivot (all candidates ≤ PIVOT_FLOOR: a floating net or a genuinely singular system) or the fill
+ * grows dense. A is not mutated.
+ */
+export function factorizePivoted(
+  A: DenseMatrix,
+  colOrder: readonly number[],
+): PivotedFactor | null {
+  const n = A.size
+  const rowCol: number[][] = new Array<number[]>(n)
+  const rowVal: number[][] = new Array<number[]>(n)
+  const colRows: number[][] = Array.from({ length: n }, () => [])
+  const aPtr = new Int32Array(n + 1)
+  const aColList: number[] = []
+  for (let i = 0; i < n; i++) {
+    const base = i * n
+    const rc: number[] = []
+    const rv: number[] = []
+    for (let j = 0; j < n; j++) {
+      const v = A.data[base + j] as number
+      if (v !== 0) {
+        rc.push(j)
+        rv.push(v)
+        aColList.push(j)
+        ;(colRows[j] as number[]).push(i)
+      }
+    }
+    rowCol[i] = rc
+    rowVal[i] = rv
+    aPtr[i + 1] = aColList.length
+  }
+  let nnz = aColList.length
+  // Past this many stored entries the factor is effectively dense — bail, dense is faster there.
+  const fillCap = Math.max(n * 16, Math.floor((n * n) / 2))
+
+  const active = new Uint8Array(n).fill(1)
+  const seen = new Int32Array(n).fill(-1)
+  const work = new Float64Array(n)
+  const mark = new Int32Array(n).fill(-1)
+  let stamp = -1
+  const pivotRow = new Int32Array(n)
+  const uDiag = new Float64Array(n)
+  const lPtr = new Int32Array(n + 1)
+  const uPtr = new Int32Array(n + 1)
+  const lRowList: number[] = []
+  const lValList: number[] = []
+  const uColList: number[] = []
+  const uValList: number[] = []
+  const candRow: number[] = []
+  const candVal: number[] = []
+
+  for (let k = 0; k < n; k++) {
+    const c = colOrder[k] as number
+    // Candidates: every still-active row holding an entry in column c.
+    candRow.length = 0
+    candVal.length = 0
+    let maxAbs = 0
+    const rowsOfC = colRows[c] as number[]
+    for (let t = 0; t < rowsOfC.length; t++) {
+      const i = rowsOfC[t] as number
+      if (active[i] === 0 || seen[i] === k) continue
+      seen[i] = k
+      const ci = rowCol[i] as number[]
+      let v = 0
+      for (let s = 0; s < ci.length; s++) {
+        if (ci[s] === c) {
+          v = (rowVal[i] as number[])[s] as number
+          break
+        }
+      }
+      candRow.push(i)
+      candVal.push(v)
+      const mag = Math.abs(v)
+      if (mag > maxAbs) maxAbs = mag
+    }
+    // No usable pivot (also catches NaN): a floating / singular column — dense handles it specially.
+    if (!(maxAbs > PIVOT_FLOOR)) return null
+
+    // Pivot choice: the diagonal row when it is acceptable (keeps the symmetric order's fill estimate
+    // honest), else the sparsest acceptable row, ties to the larger magnitude.
+    const threshold = PIVOT_THRESHOLD * maxAbs
+    let pick = -1
+    for (let t = 0; t < candRow.length; t++) {
+      if (candRow[t] === c && Math.abs(candVal[t] as number) >= threshold) {
+        pick = t
+        break
+      }
+    }
+    if (pick < 0) {
+      let bestLen = Number.POSITIVE_INFINITY
+      let bestMag = 0
+      for (let t = 0; t < candRow.length; t++) {
+        const mag = Math.abs(candVal[t] as number)
+        if (mag < threshold) continue
+        const len = (rowCol[candRow[t] as number] as number[]).length
+        if (len < bestLen || (len === bestLen && mag > bestMag)) {
+          bestLen = len
+          bestMag = mag
+          pick = t
+        }
+      }
+    }
+    const p = candRow[pick] as number
+    const pivot = candVal[pick] as number
+    active[p] = 0
+    pivotRow[k] = p
+    uDiag[k] = pivot
+    const cp = rowCol[p] as number[]
+    const vp = rowVal[p] as number[]
+    for (let s = 0; s < cp.length; s++) {
+      if (cp[s] === c) continue
+      uColList.push(cp[s] as number)
+      uValList.push(vp[s] as number)
+    }
+    uPtr[k + 1] = uColList.length
+
+    // Eliminate column c from every other candidate row, dropping c from its pattern.
+    for (let t = 0; t < candRow.length; t++) {
+      if (t === pick) continue
+      const i = candRow[t] as number
+      const vic = candVal[t] as number
+      const ci = rowCol[i] as number[]
+      const vi = rowVal[i] as number[]
+      if (vic !== 0) {
+        const factor = vic / pivot
+        lRowList.push(i)
+        lValList.push(factor)
+        stamp++
+        for (let s = 0; s < ci.length; s++) {
+          const j = ci[s] as number
+          work[j] = vi[s] as number
+          mark[j] = stamp
+        }
+        for (let s = 0; s < cp.length; s++) {
+          const j = cp[s] as number
+          if (j === c) continue
+          if (mark[j] !== stamp) {
+            work[j] = 0
+            mark[j] = stamp
+            ci.push(j)
+            ;(colRows[j] as number[]).push(i)
+            if (++nnz > fillCap) return null
+          }
+          work[j] = (work[j] as number) - factor * (vp[s] as number)
+        }
+        let w = 0
+        for (let s = 0; s < ci.length; s++) {
+          const j = ci[s] as number
+          if (j === c) continue
+          ci[w] = j
+          vi[w] = work[j] as number
+          w++
+        }
+        ci.length = w
+        vi.length = w
+      } else {
+        // An exact-zero entry left in the pattern by cancellation: drop it so an eliminated column
+        // never reappears in a later U row.
+        let w = 0
+        for (let s = 0; s < ci.length; s++) {
+          if (ci[s] === c) continue
+          ci[w] = ci[s] as number
+          vi[w] = vi[s] as number
+          w++
+        }
+        ci.length = w
+        vi.length = w
+      }
+    }
+    lPtr[k + 1] = lRowList.length
+  }
+  return {
+    colOrder: [...colOrder],
+    pivotRow,
+    lPtr,
+    lRow: Int32Array.from(lRowList),
+    lVal: Float64Array.from(lValList),
+    uPtr,
+    uCol: Int32Array.from(uColList),
+    uVal: Float64Array.from(uValList),
+    uDiag,
+    aPtr,
+    aCol: Int32Array.from(aColList),
+  }
+}
+
+/**
+ * Solve with a pivoted factor: replay the row eliminations on b (forward), then back-substitute the U
+ * rows in reverse elimination order. O(nonzeros of L + U). Null (→ dense) on a non-finite result.
+ */
+export function solvePivoted(f: PivotedFactor, b: DenseVector): DenseVector | null {
+  const n = f.colOrder.length
+  const y = Float64Array.from(b.data)
+  for (let k = 0; k < n; k++) {
+    const yp = y[f.pivotRow[k] as number] as number
+    if (yp === 0) continue
+    const end = f.lPtr[k + 1] as number
+    for (let t = f.lPtr[k] as number; t < end; t++) {
+      const i = f.lRow[t] as number
+      y[i] = (y[i] as number) - (f.lVal[t] as number) * yp
+    }
+  }
+  const x = new DenseVector(n)
+  for (let k = n - 1; k >= 0; k--) {
+    let sum = y[f.pivotRow[k] as number] as number
+    const end = f.uPtr[k + 1] as number
+    for (let t = f.uPtr[k] as number; t < end; t++) {
+      sum -= (f.uVal[t] as number) * (x.data[f.uCol[t] as number] as number)
+    }
+    const xk = sum / (f.uDiag[k] as number)
+    if (!Number.isFinite(xk)) return null
+    x.data[f.colOrder[k] as number] = xk
+  }
+  return x
+}
+
+/**
+ * One step of iterative refinement on a pivoted solve. Threshold partial pivoting (PIVOT_THRESHOLD)
+ * keeps fill small but lets element growth on an ill-conditioned Newton linearisation put the first
+ * solve several ulps (measured: ~1e-4 V) away from the dense answer — still a tiny residual, so the
+ * residual check accepts it, but stiff diode Newton then wanders for a thousand passes. One
+ * correction (r = b − A·x, solve A·d = r with the same factor, x += d) recovers the dense-quality
+ * answer; measured on the multiplexed LED-matrix row that used to forfeit to dense: with refinement
+ * the pivoted path converges in 31 Newton passes to the same 9.2 mA operating point. O(nonzeros).
+ */
+function refinePivoted(
+  A: DenseMatrix,
+  b: DenseVector,
+  f: PivotedFactor,
+  x: DenseVector,
+): DenseVector | null {
+  const n = A.size
+  const r = new DenseVector(n)
+  for (let i = 0; i < n; i++) {
+    const base = i * n
+    let dot = 0
+    const end = f.aPtr[i + 1] as number
+    for (let t = f.aPtr[i] as number; t < end; t++) {
+      const j = f.aCol[t] as number
+      dot += (A.data[base + j] as number) * (x.data[j] as number)
+    }
+    r.data[i] = (b.data[i] as number) - dot
+  }
+  const d = solvePivoted(f, r)
+  if (d === null) return null
+  for (let i = 0; i < n; i++) x.data[i] = (x.data[i] as number) + (d.data[i] as number)
+  return x
+}
+
+/**
+ * The relative residual ‖A·x − b‖∞ check (same scale as dense-linear's), over the CSR pattern a pivoted
+ * factor recorded — O(nonzeros), reading A's CURRENT values, so a reused factor whose matrix changed is
+ * caught. Entries that appeared in A after the factor was built are not visited; a reused factor is only
+ * ever offered under the caller's constant-matrix hint, and a fresh factor's pattern is A's exact pattern.
+ */
+function pivotedResidualWithinTolerance(
+  A: DenseMatrix,
+  b: DenseVector,
+  x: DenseVector,
+  f: PivotedFactor,
+): boolean {
+  const n = A.size
+  let maxResidual = 0
+  let aNorm = 0
+  let xNorm = 0
+  let bNorm = 0
+  for (let i = 0; i < n; i++) {
+    const base = i * n
+    let dot = 0
+    let rowAbsSum = 0
+    const end = f.aPtr[i + 1] as number
+    for (let t = f.aPtr[i] as number; t < end; t++) {
+      const j = f.aCol[t] as number
+      const aij = A.data[base + j] as number
+      dot += aij * (x.data[j] as number)
+      rowAbsSum += Math.abs(aij)
+    }
+    maxResidual = Math.max(maxResidual, Math.abs(dot - (b.data[i] as number)))
+    aNorm = Math.max(aNorm, rowAbsSum)
+    xNorm = Math.max(xNorm, Math.abs(x.data[i] as number))
+    bNorm = Math.max(bNorm, Math.abs(b.data[i] as number))
+  }
+  const scale = Math.max(aNorm * xNorm + bNorm, 1)
+  return maxResidual <= RESIDUAL_TOLERANCE * scale
 }
 
 /**
@@ -480,12 +821,40 @@ export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
  * the singular / floating-node / inconsistent cases and its throw-on-inconsistent contract. Use ONE
  * session per solveDC / solveTransient: the matrix STRUCTURE (and thus size) is constant within each.
  */
+/**
+ * How far a sparse answer may sit from the dense race partner and still be remembered as this
+ * structure's fast path. Absolute units on an MNA unknown (volts / amps); 1e-9 is well below any
+ * device tolerance the Newton loop cares about, and well above float noise on a well-conditioned solve.
+ */
+const SPARSE_DENSE_AGREE = 1e-9
+
+function sparseAgreesWithDense(xSparse: DenseVector, xDense: DenseVector): boolean {
+  const n = xSparse.data.length
+  for (let i = 0; i < n; i++) {
+    if (Math.abs((xSparse.data[i] as number) - (xDense.data[i] as number)) > SPARSE_DENSE_AGREE)
+      return false
+  }
+  return true
+}
+
 export class SparseSession {
   private order: SparseOrder | null = null
   private gather: GatherMap | null = null
   private factor: SparseFactor | null = null
+  private pivotedFactor: PivotedFactor | null = null
+  /**
+   * Which sparse factor this structure takes. 'no-pivot' first — the original factor, so every circuit
+   * it already handled keeps byte-identical arithmetic — and 'pivoted' once the no-pivot factor has bailed
+   * on this structure (a zero diagonal it could not defer past: real transistor netlists, wire-heavy
+   * blocks). Once pivoted, the session stays pivoted rather than re-paying a no-pivot attempt that is
+   * known to fail.
+   */
+  private factorKind: 'no-pivot' | 'pivoted' = 'no-pivot'
+  /** The plain minimum-degree order the pivoted factor uses — computed once, the first time it is needed. */
+  private pivotOrder: number[] | null = null
   private verdict: 'sparse' | 'dense' | undefined
   private orderSize = -1
+  private consecutiveMisses = 0
 
   /**
    * Solve A·x = b, reusing this session's order (and, when `constantMatrix` is true, its numeric factor).
@@ -508,15 +877,32 @@ export class SparseSession {
       this.orderSize = n
       this.verdict = undefined
       this.factor = null
+      this.pivotedFactor = null
+      this.factorKind = 'no-pivot'
+      this.pivotOrder = null
+      this.consecutiveMisses = 0
     }
 
     if (this.verdict === 'dense') return denseLusolve(A, b)
 
     if (this.verdict === 'sparse') {
       const x = this.attemptSparse(A, b, constantMatrix)
-      if (x !== null) return x
-      this.verdict = 'dense' // the reused order stopped factoring this structure — stop paying for it
-      this.factor = null
+      if (x !== null) {
+        this.consecutiveMisses = 0
+        return x
+      }
+      // One miss is not a verdict. A Newton iterate that wanders through a near-singular linearisation
+      // (a saturated transistor's drain held only by an off device's 1 pS) can leave a column with no
+      // usable pivot for that ONE solve; dense — which owns floating / singular systems — answers it, and
+      // the next iterate usually factors again. Measured on the hex → 7-segment decoder: the old
+      // first-miss downgrade sent 37 of 40 Newton passes to dense at ~4× the per-pass cost. Only a run of
+      // misses means the structure genuinely stopped factoring, and then it stops paying for sparse.
+      this.consecutiveMisses++
+      if (this.consecutiveMisses >= SPARSE_MISS_LIMIT) {
+        this.verdict = 'dense'
+        this.factor = null
+        this.pivotedFactor = null
+      }
       return denseLusolve(A, b)
     }
 
@@ -528,22 +914,76 @@ export class SparseSession {
     const denseStart = performance.now()
     const xDense = denseLusolve(A, b)
     const denseMs = performance.now() - denseStart
-    if (xSparse !== null && sparseMs < denseMs) {
+    // Prefer sparse only when it is faster AND agrees with the dense answer already computed for
+    // the race. An ill-conditioned MNA system can have many x with a tiny residual; if refinement
+    // still leaves sparse a few ulps from dense on the first linearisation, remembering sparse as
+    // the structure's verdict would force every later Newton pass onto a wandering path.
+    if (xSparse !== null && sparseMs < denseMs && sparseAgreesWithDense(xSparse, xDense)) {
       this.verdict = 'sparse'
       return xSparse
     }
     this.verdict = 'dense'
     this.factor = null
+    this.pivotedFactor = null
     return xDense
+  }
+
+  /** Test / diagnostics: which path this session settled on ('dense', 'no-pivot' or 'pivoted'). */
+  get path(): 'dense' | 'no-pivot' | 'pivoted' | undefined {
+    if (this.verdict === undefined) return undefined
+    return this.verdict === 'dense' ? 'dense' : this.factorKind
   }
 
   /**
    * A residual-verified sparse solution, or null → fall back to dense. Reuses the stored factor when the
    * caller guarantees the matrix is unchanged (a linear transient step); otherwise factors afresh from a
-   * full scan of the current A (robust to a nonlinear device's pattern shifting). The residual is the
-   * O(nonzeros) gather-based check either way.
+   * full scan of the current A (robust to a nonlinear device's pattern shifting). Tries the no-pivot
+   * factor while it keeps working for this structure, then the pivoted one. The residual is an
+   * O(nonzeros) check either way.
    */
   private attemptSparse(
+    A: DenseMatrix,
+    b: DenseVector,
+    constantMatrix: boolean,
+  ): DenseVector | null {
+    if (this.factorKind === 'no-pivot') {
+      const x = this.attemptNoPivot(A, b, constantMatrix)
+      if (x !== null) return x
+      this.factorKind = 'pivoted'
+      this.factor = null
+    }
+    return this.attemptPivoted(A, b, constantMatrix)
+  }
+
+  /**
+   * The pivoted factor (fresh, or reused under the constant-matrix hint), residual-verified.
+   * Every solve gets one iterative-refinement step (see refinePivoted) so an ill-conditioned
+   * Newton linearisation does not hand NR a residual-small but wrong answer.
+   */
+  private attemptPivoted(
+    A: DenseMatrix,
+    b: DenseVector,
+    constantMatrix: boolean,
+  ): DenseVector | null {
+    if (constantMatrix && this.pivotedFactor !== null) {
+      const reused = solvePivoted(this.pivotedFactor, b)
+      const refined = reused === null ? null : refinePivoted(A, b, this.pivotedFactor, reused)
+      if (refined !== null && pivotedResidualWithinTolerance(A, b, refined, this.pivotedFactor))
+        return refined
+      this.pivotedFactor = null // the stored factor no longer solves this matrix (A changed) — refactor
+    }
+    if (this.pivotOrder === null) this.pivotOrder = computeOrder(A, false).order
+    const f = factorizePivoted(A, this.pivotOrder)
+    if (f === null) return null
+    const raw = solvePivoted(f, b)
+    const x = raw === null ? null : refinePivoted(A, b, f, raw)
+    if (x === null || !pivotedResidualWithinTolerance(A, b, x, f)) return null
+    this.pivotedFactor = constantMatrix ? f : null
+    return x
+  }
+
+  /** The original no-pivot factor (fresh, or reused under the constant-matrix hint), residual-verified. */
+  private attemptNoPivot(
     A: DenseMatrix,
     b: DenseVector,
     constantMatrix: boolean,
