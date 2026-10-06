@@ -361,6 +361,14 @@ export type PartInspectorProps = {
    */
   onEditOwnedFootprint?: () => void
   /**
+   * Re-derive a user-owned footprint from this part's board placement (placement-footprint.ts):
+   * the placed copper / body inverted into a package that re-places on the same spot. Absent ⇒ no
+   * button (the part is not on the board, or sits on a provisional land, which stays labeled).
+   */
+  onFootprintFromPlacement?: () => void
+  /** The last re-derive's outcome or named refusal, shown under the button. */
+  placementFootprintNote?: string | undefined
+  /**
    * Change a material ref. Distinct from onEnum so the App can react physically —
    * e.g. an LED's n_side re-derives its color + forward voltage from the chosen
    * semiconductor's bandgap. The curated color picker stays on onEnum.
@@ -476,6 +484,8 @@ export function PartInspector({
   onEnum,
   onFootprint,
   onEditOwnedFootprint,
+  onFootprintFromPlacement,
+  placementFootprintNote,
   onMaterial,
   onDeriveResistance,
   projectAmbientC,
@@ -619,6 +629,20 @@ export function PartInspector({
               >
                 Edit footprint
               </button>
+            ) : null}
+            {onFootprintFromPlacement !== undefined && fp.provisional !== true ? (
+              <button
+                type="button"
+                className="nodrag"
+                style={{ ...deriveButton, marginTop: 0, marginBottom: 4 }}
+                title="Save the land as it sits on the board as a user-owned footprint. A built-in package is copied under a new id (never shadowed); the part is re-pointed only when the land fits it, and a role-sensitive pinout is never invented."
+                onClick={onFootprintFromPlacement}
+              >
+                Footprint from placement
+              </button>
+            ) : null}
+            {placementFootprintNote !== undefined ? (
+              <div style={sourceNote}>{placementFootprintNote}</div>
             ) : null}
             <FootprintView footprint={fp} pxPerMm={26} />
           </>

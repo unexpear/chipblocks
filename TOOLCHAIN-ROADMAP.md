@@ -215,12 +215,33 @@ that can be *authored* OR *derived*, always present, always matching.
    `definition: 'block'` alone (no pin data) stays skipped. Keep-matching: `applyChipFootprintEdit`
    writes a user-owned id back onto the chip/block part when it fits; the chip workspace surfaces
    authored vs derived for the design and for standard-cell abstracts. Still open: a full Gerber
-   viewer (still ≠ our dialect). Nothing re-derives a footprint *from* a placement. `TERMINAL_PADS`
+   viewer (still ≠ our dialect). `TERMINAL_PADS`
    remains hand-authored for built-in device kinds that need a manufacturer pinout — that is
    intentional, not a gap to fill with guesses.
+   Place → footprint re-derive (2026-10-05 slice): `placement-footprint.ts` inverts the placement
+   transform (`unplacePoint`, the exact inverse of `placePoint` at 0/90/180/270°; a quarter turn
+   swaps pad w/h back) so a placement's board-space copper — and body / silk lines when present —
+   becomes a user-owned footprint that re-places onto the same spot. `commitPlacementFootprint`
+   registers it, writes the id back through the same gates as the part ↔ board loop
+   (`applyUserOwnedFootprintEdit` / `applyChipFootprintEdit`), and returns a pin for the hand spot
+   so a bounds change cannot move the part. A placement on a user footprint re-shapes that id; a
+   built-in placement is copied under a fresh id (`suggestPlacementFootprintId`,
+   `<source>_<designator>`) — an unchanged copy keeps the cited provenance (and 3-D body), a
+   re-shaped land is labeled `derived` / low confidence, never a manufacturer package. Named
+   refusals, nothing registered: `bad-placement`, `no-pads`, `ambiguous-pads` (empty / repeated
+   ids), `overlapping-pads` (shape-aware: discs as circles, other shapes as their rectangle),
+   `invalid-geometry`, `builtin-shadow`, `provisional` (a provisional land stays labeled; its id is
+   never a target), `id-taken`, `role-sensitive` (built-in role-sensitive kinds always; user / chip
+   role-sensitive pins unless every pin lands by `pin.pad` or unique pad-name). A commit that fails
+   the fit check rolls the library back: `does-not-fit`, `terminal-unmapped`, `pinout-changed` (a
+   terminal would solder to a different pad — e.g. a TO-92 copy loses its per-footprint pinout, so
+   it is refused rather than re-pinned), `breaks-other-parts` (a shared user id that would stop
+   fitting another part). The part inspector has a "Footprint from placement" action. Still open:
+   the board has no per-pad editing yet, so the in-app action re-derives the land as placed (a
+   built-in fork or a courtyard/label refresh); hand-nudged pad geometry reaches it through the API.
 
 Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
 the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop, board/fabrication
 parity (paste, mask, silk vs fab), richer terminal→pad maps, and chip-level author-or-derive above
-are the current footprint-parity slices. Still open beyond this slice: place→re-derive a board
-footprint from a placement, and Gerber viewer generality.
+and place→footprint re-derive are the current footprint-parity slices. Still open beyond this
+slice: board-side per-pad editing that feeds the re-derive, and Gerber viewer generality.

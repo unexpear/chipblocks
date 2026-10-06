@@ -206,11 +206,13 @@ import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
 import {
+  type BoardPart,
   type BoardPoint,
   type BoardProfile,
   type BoardSide,
   computeRatsnest,
   deriveBoard,
+  footprintByPlacement,
   netThroughCurrents,
   offBoardPins,
   outlineRing,
@@ -262,6 +264,11 @@ import {
   solveCanvasDispatch,
   solveTransientDispatch,
 } from './pipeline/solve-canvas.ts'
+import {
+  commitPlacementFootprint,
+  placedLandOf,
+  suggestPlacementFootprintId,
+} from './placement-footprint.ts'
 import { PlanPanel } from './plan-panel.tsx'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { projectNameFromPath, recordRecentProject } from './recent-projects.ts'
@@ -2547,6 +2554,25 @@ async function persistAuthoredPart(part: UserPart): Promise<void> {
   })
 }
 
+/** The board's view of a canvas node — the same shape deriveBoard and placement re-derive read. A
+ *  circuit block with honest ports carries chip pins (chip-level author-or-derive). */
+function boardPartOfNode(n: { id: string; data: unknown }): BoardPart {
+  const data = n.data as DeviceNodeData & {
+    block?: { ports: { id: string; label: string; name?: string }[] }
+  }
+  const block = data.block
+  const chipPins =
+    data.definition === 'block' && block !== undefined && block.ports.length > 0
+      ? chipPinsFromBlock(block)
+      : undefined
+  return {
+    id: n.id,
+    definition: data.definition,
+    ...(data.footprintId ? { footprintId: data.footprintId } : {}),
+    ...(chipPins !== undefined ? { chipPins } : {}),
+  }
+}
+
 /** Persist a freshly-drawn footprint, so a package you drew is still there next time you open the app. */
 async function persistAuthoredFootprint(footprint: Footprint): Promise<void> {
   await updateUserLibrary(footprint.id, (library) => ({
@@ -2819,6 +2845,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [ownedFootprintEdit, setOwnedFootprintEdit] = useState<{
     partId: string
     initial: Footprint
+  } | null>(null)
+  // The last place → footprint re-derive (placement-footprint.ts): saved id or named refusal.
+  const [placementFootprintNote, setPlacementFootprintNote] = useState<{
+    partId: string
+    text: string
   } | null>(null)
   const [sheetSettings, setSheetSettings] = useState<SheetSettings>(() => initial.boardFab.sheet)
   const [showSheet, setShowSheet] = useState(true)
@@ -4093,25 +4124,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     // deriveBoard resolves ids from the footprint registry; it does not take this array.
     // Reading it here is what makes a user-footprint edit recompute the board.
     void authoredFootprints
-    const board = deriveBoard(
-      nodes.map((n) => {
-        const data = n.data as DeviceNodeData & {
-          block?: { ports: { id: string; label: string; name?: string }[] }
-        }
-        const block = data.block
-        const chipPins =
-          data.definition === 'block' && block !== undefined && block.ports.length > 0
-            ? chipPinsFromBlock(block)
-            : undefined
-        return {
-          id: n.id,
-          definition: data.definition,
-          ...(data.footprintId ? { footprintId: data.footprintId } : {}),
-          ...(chipPins !== undefined ? { chipPins } : {}),
-        }
-      }),
-      pcbPlacements,
-    )
+    const board = deriveBoard(nodes.map(boardPartOfNode), pcbPlacements)
     const withScore =
       pcbVScoredSides.length > 0 ? { ...board, vScoredSides: pcbVScoredSides } : board
     // A profile overrides the auto-fit edge AND the bbox outline (kept in sync — the invariant every
@@ -11181,6 +11194,65 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                       setNewFootprintOpen(false)
                       setOwnedFootprintEdit({ partId: selectedPart.id, initial: fp })
                     }}
+                    {...(selectedPart &&
+                    pcbBoard.placements.some((p) => p.partId === selectedPart.id)
+                      ? {
+                          onFootprintFromPlacement: () => {
+                            const partId = selectedPart.id
+                            const note = (text: string) =>
+                              setPlacementFootprintNote({ partId, text })
+                            const placement = pcbBoardRef.current.placements.find(
+                              (p) => p.partId === partId,
+                            )
+                            const land =
+                              placement !== undefined ? placedLandOf(placement) : undefined
+                            const parts = nodesRef.current.map(boardPartOfNode)
+                            const part = parts.find((p) => p.id === partId)
+                            if (
+                              placement === undefined ||
+                              land === undefined ||
+                              part === undefined
+                            ) {
+                              note('Not on the board — nothing to re-derive from.')
+                              return
+                            }
+                            const fp = footprintByPlacement(placement)
+                            const result = commitPlacementFootprint({
+                              part,
+                              placement,
+                              land,
+                              otherParts: parts,
+                              // A built-in is never shadowed: its land is copied under a fresh id.
+                              ...(isUserFootprint(placement.footprintId) || fp?.provisional === true
+                                ? {}
+                                : { targetId: suggestPlacementFootprintId(placement) }),
+                            })
+                            if (!result.ok) {
+                              note(`Not re-derived (${result.reason}): ${result.detail}`)
+                              return
+                            }
+                            if (result.unchanged) {
+                              note(`${result.footprint.id} already matches the placement.`)
+                              return
+                            }
+                            void persistAuthoredFootprint(result.footprint)
+                            checkpointAction(`placement-footprint:${partId}`)
+                            // Pin the hand spot so a bounds change cannot move the part off its land.
+                            setPcbPlacements((cur) => new Map(cur).set(partId, result.pin))
+                            const nextId = result.part.footprintId
+                            if (nextId !== undefined && nextId !== selectedPart.footprintId) {
+                              onEditFootprint(partId, nextId)
+                            }
+                            note(
+                              `${result.mode === 'created' ? 'Saved' : 'Updated'} ${result.footprint.id} from the placement${result.sameGeometry ? ' (same copper as before)' : ''}.`,
+                            )
+                          },
+                          placementFootprintNote:
+                            placementFootprintNote?.partId === selectedPart.id
+                              ? placementFootprintNote.text
+                              : undefined,
+                        }
+                      : {})}
                     onMaterial={(key, value) => {
                       if (selectedPart) onEditEnum(selectedPart.id, key, value)
                     }}

@@ -159,6 +159,40 @@ export function applyUserOwnedFootprintEdit<T extends { definition: string; foot
 }
 
 /**
+ * Is this part's pinout role-sensitive — a built-in kind whose pins are not an honest total order
+ * (transformer, SPDT, op-amp, relay, bare block), or a user part that is / behaves as one? Placement
+ * re-derive and provisional lands both refuse to number such pins by declaration order.
+ */
+export function isRoleSensitivePart(definition: string): boolean {
+  if (ROLE_SENSITIVE_DEFINITIONS.has(definition)) return true
+  const userPart = resolveUserPart(definition)
+  if (userPart === undefined) return false
+  const behavesAs = userPart.behavesAs?.definition
+  return (
+    ROLE_SENSITIVE_DEFINITIONS.has(userPart.id) ||
+    (behavesAs !== undefined && ROLE_SENSITIVE_DEFINITIONS.has(behavesAs))
+  )
+}
+
+/**
+ * Every terminal (canvas handle id) a part has a pad map for: the hand-authored pinout's keys for a
+ * built-in kind, the declared pins for a user part. undefined when the part has no pinout at all.
+ * Placement re-derive uses this to prove no terminal loses its pad.
+ */
+export function terminalHandlesFor(definition: string): string[] | undefined {
+  const pinout = pinoutFor(definition)
+  if (pinout !== undefined) return Object.keys(pinout)
+  const userPart = resolveUserPart(definition)
+  return userPart === undefined ? undefined : userPart.pins.map((pin) => pin.id)
+}
+
+/** How each user-part pin lands on `footprint` (explicit / name / declaration-order) — undefined for
+ *  non-user parts. Lets a role-sensitive check refuse a map that leans on declaration order. */
+export function userPartPadVia(definition: string, footprint: Footprint): PadMapResult | undefined {
+  const userPart = resolveUserPart(definition)
+  return userPart === undefined ? undefined : resolvePadMap(userPart.pins, footprint)
+}
+/**
  * The footprint a part lands on: the chosen one if it is a valid option for this part, else the part default.
  * A symmetric two-terminal part or a user part with no real package gets a provisional land.
  * Role-sensitive kinds stay undefined.
