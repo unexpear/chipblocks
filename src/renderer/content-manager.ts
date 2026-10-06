@@ -17,6 +17,7 @@
  * - Packs that fail deserializeContentPack (bad JSON, wrong format, future version, bad id)
  * - Packs whose license fails licenseGate (GPL/AGPL/LGPL/unknown)
  * - Marketplace / unsigned arbitrary code execution framing — this is local content registration
+ * - Invalid publisher signatures (ed25519 over pack body); undeclared ≠ verified
  *
  * Not Synopsys parity; not KiCad PCM feature-complete. Smallest honest slice for Track 2 item 6.
  */
@@ -28,6 +29,12 @@ import {
   trustNoteForVerdict,
   verifyPackIntegrity,
 } from './content-pack-integrity.ts'
+import {
+  type SignatureVerdict,
+  type TrustedPublishers,
+  trustNoteForSignature,
+  verifyPackSignature,
+} from './content-pack-signature.ts'
 
 export const CONTENT_INDEX_FORMAT = 'chipblocks-content-index'
 export const CONTENT_INDEX_VERSION = 1
@@ -58,6 +65,13 @@ export type InstalledPackRecord = {
   contentHash?: string
   /** Did install-time declared integrity match? 'match' | 'undeclared' | omitted on legacy rows. */
   integrityStatus?: 'match' | 'undeclared'
+  /**
+   * Publisher-signature status at install:
+   * - none: undeclared (≠ verified)
+   * - valid-untrusted: ed25519 ok for self-declared key (not pinned)
+   * - valid-trusted: ed25519 ok against trusted-publishers pin
+   */
+  signatureStatus?: 'none' | 'valid-untrusted' | 'valid-trusted'
 }
 
 export type ContentIndex = {
@@ -174,6 +188,13 @@ function validateRecord(raw: unknown): InstalledPackRecord | null {
   if (r.integrityStatus === 'match' || r.integrityStatus === 'undeclared') {
     record.integrityStatus = r.integrityStatus
   }
+  if (
+    r.signatureStatus === 'none' ||
+    r.signatureStatus === 'valid-untrusted' ||
+    r.signatureStatus === 'valid-trusted'
+  ) {
+    record.signatureStatus = r.signatureStatus
+  }
   if (typeof r.description === 'string' && r.description.trim() !== '') {
     record.description = r.description.trim()
   }
@@ -221,6 +242,7 @@ export function recordFromPack(
     trustNote: string
     contentHash: string
     integrityStatus: 'match' | 'undeclared'
+    signatureStatus?: 'none' | 'valid-untrusted' | 'valid-trusted'
   },
 ): InstalledPackRecord {
   const record: InstalledPackRecord = {
@@ -240,6 +262,7 @@ export function recordFromPack(
   if (trust !== undefined) {
     record.contentHash = trust.contentHash
     record.integrityStatus = trust.integrityStatus
+    if (trust.signatureStatus !== undefined) record.signatureStatus = trust.signatureStatus
   }
   return record
 }
@@ -258,6 +281,7 @@ export function installLocalPack(
     trustNote: string
     contentHash: string
     integrityStatus: 'match' | 'undeclared'
+    signatureStatus?: 'none' | 'valid-untrusted' | 'valid-trusted'
   },
 ): InstallResult {
   const parsed = deserializeContentPack(packText)
@@ -280,15 +304,29 @@ export async function installLocalPackVerified(
   index: ContentIndex,
   packText: string,
   installedAt: number = Date.now(),
+  trustedPublishers?: TrustedPublishers,
 ): Promise<InstallResult> {
   const verdict: IntegrityVerdict = await verifyPackIntegrity(packText)
   if (verdict.kind === 'mismatch' || verdict.kind === 'unsupported') {
     return { ok: false, reason: verdict.reason }
   }
+  const sig: SignatureVerdict = await verifyPackSignature(packText, trustedPublishers)
+  if (sig.kind === 'invalid') {
+    return { ok: false, reason: sig.reason }
+  }
+  const signatureStatus: 'none' | 'valid-untrusted' | 'valid-trusted' =
+    sig.kind === 'undeclared'
+      ? 'none'
+      : sig.kind === 'valid-trusted'
+        ? 'valid-trusted'
+        : 'valid-untrusted'
+  const integrityNote = trustNoteForVerdict(verdict)
+  const signatureNote = trustNoteForSignature(sig)
   return installLocalPack(index, packText, installedAt, {
-    trustNote: trustNoteForVerdict(verdict),
+    trustNote: `${integrityNote} ${signatureNote}`,
     contentHash: verdict.hash,
     integrityStatus: verdict.kind === 'match' ? 'match' : 'undeclared',
+    signatureStatus,
   })
 }
 

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Pack content-hash integrity — the smallest honest trust step beyond format + license.
  *
  * What this DOES:
@@ -8,8 +8,9 @@
  * - Clear trust notes: verified hash ≠ publisher signature ≠ remote trust
  *
  * What this REFUSES / does not claim:
- * - Cryptographic publisher signatures (ADR-010 still open) — a `signature` field is ignored
- *   as proof and called out in the trust note if present
+ * - Publisher identity by itself — see content-pack-signature.ts for ed25519 verify;
+ *   this module only handles content hashes. A `signature` field is stripped from the
+ *   hash body and is NOT treated as a content-hash substitute
  * - Silent trust of remote/arbitrary code (remote install stays refused in content-manager)
  * - Any "secure" / marketplace attestation wording
  */
@@ -114,12 +115,14 @@ export const TRUST_NOTE_UNDECLARED =
   'Installed from a local file you chose. Format and license were validated; no content-hash declaration was present. A SHA-256 of the installed file is recorded for tamper-evidence on reload. Not a publisher signature (ADR-010). Treat the pack as trusted as the file you picked.'
 
 export const TRUST_NOTE_UNDECLARED_WITH_SIGNATURE_FIELD =
-  'Installed from a local file you chose. Format and license were validated. A signature field was present but is NOT verified in this build (ADR-010 pending) — it is ignored as proof. A SHA-256 of the installed file is recorded for tamper-evidence on reload. Treat the pack as trusted as the file you picked.'
+  'Installed from a local file you chose. Format and license were validated; no content-hash declaration was present. A signature field is present — publisher-signature verification is handled separately (content-pack-signature). A SHA-256 of the installed file is recorded for tamper-evidence on reload. Treat the pack as trusted as the file you picked.'
 
 export function trustNoteForVerdict(verdict: IntegrityVerdict): string {
   if (verdict.kind === 'match') return TRUST_NOTE_HASH_MATCH
+  // Signature presence is handled by content-pack-signature trust notes; keep the hash note
+  // focused on file integrity (signatureFieldPresent is still exposed on the verdict for callers).
   if (verdict.kind === 'undeclared' && verdict.signatureFieldPresent) {
-    return TRUST_NOTE_UNDECLARED_WITH_SIGNATURE_FIELD
+    return TRUST_NOTE_UNDECLARED
   }
   return TRUST_NOTE_UNDECLARED
 }

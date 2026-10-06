@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Pack content-hash integrity — optional declared SHA-256, recorded on-disk hash, honest trust notes.
  * Never claims publisher-signature trust; mismatch refuses install; undeclared is allowed with clear UX.
  */
@@ -91,7 +91,7 @@ describe('content-pack integrity', () => {
     expect(installed.reason).toMatch(/does not match/i)
   })
 
-  test('signature field is not treated as proof; trust note says so', async () => {
+  test('malformed signature field is not treated as content-hash proof; install refuses via signature gate', async () => {
     const text = JSON.stringify(
       basePackObject({ signature: { alg: 'ed25519', sig: 'deadbeef' } }),
       null,
@@ -102,13 +102,12 @@ describe('content-pack integrity', () => {
     if (verdict.kind !== 'undeclared') return
     expect(verdict.signatureFieldPresent).toBe(true)
     const note = trustNoteForVerdict(verdict)
-    expect(note).toMatch(/NOT verified/i)
     expect(note).not.toMatch(/\bsecure\b/i)
-
+    // Integrity alone would allow install; the signature gate refuses a malformed sig.
     const installed = await installLocalPackVerified(emptyContentIndex(), text, 4)
-    expect(installed.ok).toBe(true)
-    if (!installed.ok) return
-    expect(installed.record.trustNote).toMatch(/NOT verified/i)
+    expect(installed.ok).toBe(false)
+    if (installed.ok) return
+    expect(installed.reason).toMatch(/signature|publicKey|ed25519/i)
   })
 
   test('assertStoredContentHash catches tamper; missing hash loads with legacy flag (not silent trust)', async () => {
