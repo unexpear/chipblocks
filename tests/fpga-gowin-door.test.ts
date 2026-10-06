@@ -554,7 +554,9 @@ describe('a missing chip description says which part of it is missing', () => {
     // The real GW1N-1 description with the chip it describes changed. Loading it would decode this file's bits
     // against another part's geometry, which produces a design rather than an error — the worst kind of wrong.
     // Mutate via JSON (not a compact-key string replace): the fixture is pretty-printed with spaces after `:`.
-    const wrongParsed = JSON.parse(readFileSync(at('gowin-gw1n1-chipdb.json'), 'utf8') as string) as {
+    const wrongParsed = JSON.parse(
+      readFileSync(at('gowin-gw1n1-chipdb.json'), 'utf8') as string,
+    ) as {
       device: string
     }
     expect(wrongParsed.device).toBe('GW1N-1')
