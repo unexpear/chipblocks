@@ -29,6 +29,13 @@ import {
 import { hitCopper, hitPad, hitPlacedPad } from './pcb-pick.ts'
 import { ALL_COPPER_LAYERS, type CopperLayer, type CopperTrace, type Via } from './pcb-route.ts'
 import { type Bounds, clientToView, fitView, panByPx, type View, zoomAt } from './pcb-viewport.ts'
+import { placedLandOf } from './placement-footprint.ts'
+import {
+  type BoardPadGeom,
+  type PadDragHandle,
+  type PlacedPadEdit,
+  padEditFromDrag,
+} from './placement-pad-edit.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
@@ -38,7 +45,8 @@ import { SILK_TEXT, strokeText } from './stroke-font.ts'
  *
  * Three view MODES:
  *  - 'flat'   the full top-down layout, all layers at once — the editable board (drag a part, R to
- *             rotate, click to select; the airwires + outline follow live).
+ *             rotate, click to select; drag a picked pad / its handles to edit copper; the airwires +
+ *             outline follow live).
  *  - 'layers' the LAMINATION as a stack of paper: one layer at a time, page up/down through the
  *             stack (F.Silkscreen → F.Fab → F.Paste → F.Mask → F.Cu → FR4 core → B.Cu). View-only.
  *
@@ -200,6 +208,8 @@ export function PcbView({
   onOutlineVertexUp,
   pickedPad = null,
   onPadPick,
+  onPadEdit,
+  isPadEditable,
 }: {
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
@@ -262,9 +272,16 @@ export function PcbView({
   onOutlineMove?: (mm: { x: number; y: number }) => void
   onOutlineVertexUp?: () => void
   /** BOARD-SIDE PAD EDIT: the pad picked for editing (outlined on the board), and the pick callback —
-   *  a click on a part that lands on one of its pads reports that pad (placement-pad-edit.ts). */
+   *  a click on a part that lands on one of its pads reports that pad (placement-pad-edit.ts). When
+   *  `onPadEdit` is set and `isPadEditable` agrees, the pad can be dragged (move) and shows
+   *  edge/corner handles (resize); the edit commits through the same placement-pad-edit model as the
+   *  inspector's typed fields. */
   pickedPad?: { partId: string; padId: string } | null
   onPadPick?: (partId: string, padId: string) => void
+  onPadEdit?: (partId: string, edit: PlacedPadEdit) => void
+  /** True when this part's pads may be board-edited (user-owned land, gate clear). Absent ⇒ treat as
+   *  editable whenever onPadEdit is set. */
+  isPadEditable?: (partId: string) => boolean
 }) {
   // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only, and
   // the route/via tools take over the pointer when on.
@@ -286,6 +303,21 @@ export function PcbView({
      *  click (select, no move) never floods the undo stack. */
     moved: boolean
   } | null>(null)
+  /** Board-side pad drag: move the picked pad or resize via an edge/corner handle. Preview is local;
+   *  `onPadEdit` commits once on release through placement-pad-edit. */
+  const padDrag = useRef<{
+    partId: string
+    handle: PadDragHandle
+    start: BoardPadGeom
+    originX: number
+    originY: number
+    /** True once the pointer has actually moved — a plain click must not commit a no-op edit. */
+    moved: boolean
+    circle: boolean
+    /** Latest preview geom (board mm) — also mirrored in React state for the overlay. */
+    preview: BoardPadGeom
+  } | null>(null)
+  const [padPreview, setPadPreview] = useState<BoardPadGeom | null>(null)
   // VIEWPORT (viewBox pan/zoom) — the board draws in content-px (board-mm × pxPerMm) with a FIXED origin
   // (model 0,0 → 0,0), so `view` (the visible content-px window) is what pans/zooms. Because sx/sy never
   // depend on the board's own bbox, a part or outline-vertex drag never reflows the frame under the cursor
@@ -371,16 +403,120 @@ export function PcbView({
       svgRef.current.releasePointerCapture(e.pointerId)
     }
   }
+  const boardPadGeom = (partId: string, padId: string): BoardPadGeom | null => {
+    const pl = board.placements.find((p) => p.partId === partId)
+    if (pl === undefined) return null
+    const land = placedLandOf(pl)
+    const pad = land?.pads.find((p) => p.id === padId)
+    if (pad === undefined) return null
+    return {
+      id: pad.id,
+      x: pad.center.x,
+      y: pad.center.y,
+      w: pad.size.w,
+      h: pad.size.h,
+    }
+  }
+  const grabPadHandle =
+    (partId: string, handle: PadDragHandle, start: BoardPadGeom, circle: boolean) =>
+    (e: ReactPointerEvent) => {
+      if (e.button !== 0 || onPadEdit === undefined) return
+      if (isPadEditable !== undefined && !isPadEditable(partId)) return
+      e.stopPropagation()
+      e.preventDefault()
+      setSelected(partId)
+      onPadPick?.(partId, start.id)
+      const m = eventToMm(e)
+      padDrag.current = {
+        partId,
+        handle,
+        start,
+        originX: m.x,
+        originY: m.y,
+        moved: false,
+        circle,
+        preview: start,
+      }
+      setPadPreview(start)
+      svgRef.current?.setPointerCapture(e.pointerId)
+      svgRef.current?.focus({ preventScroll: true })
+    }
+  const movePadDrag = (e: ReactPointerEvent) => {
+    const d = padDrag.current
+    if (d === null) return
+    if (e.buttons === 0) {
+      endPadDrag(e)
+      return
+    }
+    const m = eventToMm(e)
+    const dx = m.x - d.originX
+    const dy = m.y - d.originY
+    if (!d.moved && dx === 0 && dy === 0) return
+    d.moved = true
+    const edit = padEditFromDrag(d.start, d.handle, dx, dy, { circle: d.circle })
+    const next: BoardPadGeom = {
+      id: d.start.id,
+      x: edit.x ?? d.start.x,
+      y: edit.y ?? d.start.y,
+      w: edit.w ?? d.start.w,
+      h: edit.h ?? d.start.h,
+    }
+    d.preview = next
+    setPadPreview(next)
+  }
+  const endPadDrag = (e: ReactPointerEvent) => {
+    const d = padDrag.current
+    if (d === null) return
+    padDrag.current = null
+    if (svgRef.current?.hasPointerCapture(e.pointerId)) {
+      svgRef.current.releasePointerCapture(e.pointerId)
+    }
+    setPadPreview(null)
+    if (!d.moved || onPadEdit === undefined) return
+    const p = d.preview
+    onPadEdit(
+      d.partId,
+      d.handle === 'move'
+        ? { padId: p.id, x: p.x, y: p.y }
+        : { padId: p.id, x: p.x, y: p.y, w: p.w, h: p.h },
+    )
+  }
   const grabPart = (partId: string, originX: number, originY: number) => (e: ReactPointerEvent) => {
     if (e.button !== 0) return
     e.stopPropagation() // this part owns the gesture — don't also start a background pan
     setSelected(partId)
     const m = eventToMm(e)
-    if (onPadPick !== undefined) {
-      const pl = board.placements.find((p) => p.partId === partId)
-      const fp = pl !== undefined ? footprintByPlacement(pl) : undefined
-      const padId = pl !== undefined && fp !== undefined ? hitPlacedPad(pl, fp, m) : null
-      if (padId !== null) onPadPick(partId, padId)
+    const pl = board.placements.find((p) => p.partId === partId)
+    const fp = pl !== undefined ? footprintByPlacement(pl) : undefined
+    const padId = pl !== undefined && fp !== undefined ? hitPlacedPad(pl, fp, m) : null
+    if (padId !== null) onPadPick?.(partId, padId)
+    // Editable pad body: drag moves the pad (not the part). Courtyard / empty copper still moves the part.
+    // Built-in / provisional / role-sensitive lands keep ordinary part-drag on the pad copper.
+    const padEditable =
+      onPadEdit !== undefined &&
+      padId !== null &&
+      (isPadEditable === undefined || isPadEditable(partId))
+    if (padEditable) {
+      const geom = boardPadGeom(partId, padId)
+      if (geom !== null) {
+        const landPad =
+          pl !== undefined ? placedLandOf(pl)?.pads.find((p) => p.id === padId) : undefined
+        padDrag.current = {
+          partId,
+          handle: 'move',
+          start: geom,
+          originX: m.x,
+          originY: m.y,
+          moved: false,
+          circle: landPad?.shape === 'circle',
+          preview: geom,
+        }
+        setPadPreview(geom)
+        svgRef.current?.setPointerCapture(e.pointerId)
+        e.preventDefault()
+        svgRef.current?.focus({ preventScroll: true })
+        return
+      }
     }
     if (onMove === undefined) return
     drag.current = { partId, offsetX: originX - m.x, offsetY: originY - m.y, moved: false }
@@ -425,7 +561,7 @@ export function PcbView({
   // PAN — a pointerdown that reaches the svg (i.e. not a part or handle, which stopPropagation) drags the
   // view; the wheel zooms centred on the cursor; double-click re-fits.
   const startPan = (e: ReactPointerEvent) => {
-    if (e.button !== 0 || drag.current !== null) return
+    if (e.button !== 0 || drag.current !== null || padDrag.current !== null) return
     userView.current = true
     pan.current = { px: e.clientX, py: e.clientY, view }
     svgRef.current?.setPointerCapture(e.pointerId)
@@ -571,6 +707,10 @@ export function PcbView({
           movePan(e)
           return
         }
+        if (padDrag.current !== null) {
+          movePadDrag(e)
+          return
+        }
         if (interactive) movePart(e)
         if (routeActive) onRouteMove?.(eventToMm(e))
         if (measureActive) onMeasureMove?.(eventToMm(e))
@@ -587,11 +727,13 @@ export function PcbView({
       onPointerUp={(e) => {
         endPan(e)
         endDrag(e)
+        endPadDrag(e)
         if (outlineActive) endOutlineDrag(e)
       }}
       onPointerCancel={(e) => {
         endPan(e)
         endDrag(e)
+        endPadDrag(e)
         if (outlineActive) endOutlineDrag(e)
       }}
       onKeyDown={
@@ -780,6 +922,10 @@ export function PcbView({
               )}
               {pads.map((p) => padShape(p, pxPerMm, `${pl.partId}-p${p.id}`))}
               {mode === 'flat' &&
+                !(
+                  onPadEdit !== undefined &&
+                  (isPadEditable === undefined || isPadEditable(pl.partId))
+                ) &&
                 pickedPad?.partId === pl.partId &&
                 (() => {
                   const p = fp.pads.find((q) => q.id === pickedPad.padId)
@@ -1095,6 +1241,70 @@ export function PcbView({
           )}
         </g>
       )}
+
+      {/* BOARD-SIDE PAD EDIT: edge/corner handles on the picked pad (board-mm AABB) + live drag preview.
+          Only when onPadEdit is set (editable land). Handles sit in board space so a quarter-turned part
+          still resizes along board axes — matching PlacedPadEdit / the inspector fields. */}
+      {mode === 'flat' &&
+        onPadEdit !== undefined &&
+        pickedPad !== null &&
+        (isPadEditable === undefined || isPadEditable(pickedPad.partId)) &&
+        (() => {
+          const geom = padPreview ?? boardPadGeom(pickedPad.partId, pickedPad.padId)
+          if (geom === null) return null
+          const pl = board.placements.find((p) => p.partId === pickedPad.partId)
+          const landPad =
+            pl !== undefined
+              ? placedLandOf(pl)?.pads.find((p) => p.id === pickedPad.padId)
+              : undefined
+          const circle = landPad?.shape === 'circle'
+          const hs = 4 // handle half-size in content px
+          const left = geom.x - geom.w / 2
+          const right = geom.x + geom.w / 2
+          const top = geom.y - geom.h / 2
+          const bottom = geom.y + geom.h / 2
+          const handles: { id: PadDragHandle; x: number; y: number; cursor: string }[] = [
+            { id: 'nw', x: left, y: top, cursor: 'nwse-resize' },
+            { id: 'n', x: geom.x, y: top, cursor: 'ns-resize' },
+            { id: 'ne', x: right, y: top, cursor: 'nesw-resize' },
+            { id: 'e', x: right, y: geom.y, cursor: 'ew-resize' },
+            { id: 'se', x: right, y: bottom, cursor: 'nwse-resize' },
+            { id: 's', x: geom.x, y: bottom, cursor: 'ns-resize' },
+            { id: 'sw', x: left, y: bottom, cursor: 'nesw-resize' },
+            { id: 'w', x: left, y: geom.y, cursor: 'ew-resize' },
+          ]
+          return (
+            <g data-pad-edit-overlay={`${pickedPad.partId}/${pickedPad.padId}`}>
+              <rect
+                x={sx(left)}
+                y={sy(top)}
+                width={geom.w * pxPerMm}
+                height={geom.h * pxPerMm}
+                fill={padPreview !== null ? `${SELECT}33` : 'none'}
+                stroke={SELECT}
+                strokeWidth={1.4}
+                strokeDasharray={padPreview !== null ? '4 3' : undefined}
+                pointerEvents="none"
+                data-pad-preview={padPreview !== null ? 'true' : undefined}
+              />
+              {handles.map((h) => (
+                <rect
+                  key={`pad-handle-${h.id}`}
+                  x={sx(h.x) - hs}
+                  y={sy(h.y) - hs}
+                  width={hs * 2}
+                  height={hs * 2}
+                  fill={SELECT}
+                  stroke="#0b1220"
+                  strokeWidth={1}
+                  style={{ cursor: h.cursor }}
+                  data-pad-handle={h.id}
+                  onPointerDown={grabPadHandle(pickedPad.partId, h.id, geom, circle === true)}
+                />
+              ))}
+            </g>
+          )
+        })()}
 
       {/* OUTLINE tool: a draggable handle on every board-edge corner. Dragging one reshapes the board
           profile (the Gerber edge-cut + the edge-clearance / component-to-edge DRC follow it). Unlike the

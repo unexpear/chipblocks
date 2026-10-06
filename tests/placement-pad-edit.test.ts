@@ -2,7 +2,8 @@
  * Board-side per-pad editing: one placed pad's board centre / size (or a quarter turn) is written into
  * the placement's user-owned footprint through the place → footprint re-derive, and the board then
  * shows exactly that copper. Built-in, provisional, and role-sensitive lands refuse with a named
- * reason and register nothing.
+ * reason and register nothing. A board drag delta becomes a PlacedPadEdit via padEditFromDrag
+ * (move / edge / corner) and commits through the same path.
  */
 import { afterEach, describe, expect, test } from 'vitest'
 import { BUILTIN_FOOTPRINTS, type Footprint } from '../src/renderer/footprint.ts'
@@ -17,6 +18,7 @@ import { type PlacedLand, placedLandOf } from '../src/renderer/placement-footpri
 import {
   commitPlacementPadEdit,
   editPlacedLand,
+  padEditFromDrag,
   placementPadEditGate,
 } from '../src/renderer/placement-pad-edit.ts'
 import {
@@ -170,6 +172,128 @@ describe('edit a pad on the board', () => {
     expect(hitPlacedPad(placement, fp, { x: two.x, y: two.y + two.h / 2 - 0.01 })).toBe('2')
     expect(hitPlacedPad(placement, fp, padOf(l, '1'))).toBe('1')
     expect(hitPlacedPad(placement, fp, { x: 10, y: 10 })).toBeNull()
+  })
+})
+
+describe('pad drag delta → edit → commit', () => {
+  test('a move drag shifts the pad centre by the board-mm delta', () => {
+    registerUserFootprint(land('USER_LAND'))
+    const part: BoardPart = { id: 'R1', definition: 'resistor', footprintId: 'USER_LAND' }
+    const { placement, land: before } = placed(part, { x: 4, y: 2, rotation: 0 })
+    const start = { id: '2', ...padOf(before, '2') }
+    const edit = padEditFromDrag(start, 'move', 0.4, -0.25)
+    expect(edit).toEqual({ padId: '2', x: start.x + 0.4, y: start.y - 0.25 })
+    const result = commitPlacementPadEdit({ part, placement, edit })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(padOf(placed(result.part, result.pin).land, '2')).toEqual({
+      x: Number((start.x + 0.4).toFixed(6)),
+      y: Number((start.y - 0.25).toFixed(6)),
+      w: start.w,
+      h: start.h,
+    })
+    expect(padOf(placed(result.part, result.pin).land, '1')).toEqual(padOf(before, '1'))
+  })
+
+  test('an east-edge resize grows width and shifts the centre; west keeps the right edge', () => {
+    registerUserFootprint(land('USER_LAND'))
+    const part: BoardPart = { id: 'R1', definition: 'resistor', footprintId: 'USER_LAND' }
+    const { placement, land: before } = placed(part)
+    const start = { id: '1', ...padOf(before, '1') }
+    const east = padEditFromDrag(start, 'e', 0.3, 0)
+    expect(east.padId).toBe('1')
+    expect(east.x).toBeCloseTo(start.x + 0.15, 6)
+    expect(east.y).toBe(start.y)
+    expect(east.w).toBeCloseTo(start.w + 0.3, 6)
+    expect(east.h).toBe(start.h)
+    const eastOk = commitPlacementPadEdit({ part, placement, edit: east })
+    expect(eastOk.ok).toBe(true)
+    if (!eastOk.ok) return
+    expect(padOf(placed(eastOk.part, eastOk.pin).land, '1')).toEqual({
+      x: Number((start.x + 0.15).toFixed(6)),
+      y: start.y,
+      w: Number((start.w + 0.3).toFixed(6)),
+      h: start.h,
+    })
+    // Fresh land — west pull moves the left edge, right edge stays.
+    setUserFootprints([])
+    registerUserFootprint(land('USER_LAND'))
+    const again = placed(part)
+    const s2 = { id: '1', ...padOf(again.land, '1') }
+    const right = s2.x + s2.w / 2
+    const west = padEditFromDrag(s2, 'w', 0.2, 0)
+    const westOk = commitPlacementPadEdit({
+      part,
+      placement: again.placement,
+      edit: west,
+    })
+    expect(westOk.ok).toBe(true)
+    if (!westOk.ok) return
+    const after = padOf(placed(westOk.part, westOk.pin).land, '1')
+    expect(after.w).toBe(Number((s2.w - 0.2).toFixed(6)))
+    expect(Number((after.x + after.w / 2).toFixed(6))).toBe(Number(right.toFixed(6)))
+  })
+
+  test('a corner resize changes both extents; a circle drag keeps one diameter', () => {
+    registerUserFootprint(land('USER_LAND'))
+    const part: BoardPart = { id: 'R1', definition: 'resistor', footprintId: 'USER_LAND' }
+    const { placement, land: before } = placed(part)
+    const start = { id: '2', ...padOf(before, '2') }
+    const corner = padEditFromDrag(start, 'se', 0.2, 0.1)
+    expect(corner.w).toBeCloseTo(start.w + 0.2, 6)
+    expect(corner.h).toBeCloseTo(start.h + 0.1, 6)
+    expect(corner.x).toBeCloseTo(start.x + 0.1, 6)
+    expect(corner.y).toBeCloseTo(start.y + 0.05, 6)
+    expect(commitPlacementPadEdit({ part, placement, edit: corner }).ok).toBe(true)
+
+    registerUserFootprint(land('DISCS', 'circle'))
+    const disc: BoardPart = { id: 'R2', definition: 'resistor', footprintId: 'DISCS' }
+    const dp = placed(disc)
+    const c0 = { id: '1', ...padOf(dp.land, '1') }
+    const circleEdit = padEditFromDrag(c0, 'e', 0.4, 0.7, { circle: true })
+    expect(circleEdit.w).toBe(circleEdit.h)
+    expect(circleEdit.w).toBeCloseTo(c0.w + 0.4, 6)
+    expect(
+      commitPlacementPadEdit({ part: disc, placement: dp.placement, edit: circleEdit }),
+    ).toMatchObject({ ok: true })
+  })
+
+  test('a drag-built edit still refuses built-in / provisional / bad size', () => {
+    const builtin: BoardPart = { id: 'resistor_1', definition: 'resistor' }
+    const bp = placed(builtin)
+    const bPad = { id: '1', ...padOf(bp.land, '1') }
+    expect(
+      commitPlacementPadEdit({
+        part: builtin,
+        placement: bp.placement,
+        edit: padEditFromDrag(bPad, 'move', 0.1, 0),
+      }),
+    ).toMatchObject({ ok: false, reason: 'builtin-shadow' })
+
+    const fuse: BoardPart = { id: 'F1', definition: 'fuse' }
+    const fp = placed(fuse)
+    const fPad = { id: '1', ...padOf(fp.land, '1') }
+    expect(
+      commitPlacementPadEdit({
+        part: fuse,
+        placement: fp.placement,
+        edit: padEditFromDrag(fPad, 'e', 0.5, 0),
+      }),
+    ).toMatchObject({ ok: false, reason: 'provisional' })
+
+    registerUserFootprint(land('USER_LAND'))
+    const part: BoardPart = { id: 'R1', definition: 'resistor', footprintId: 'USER_LAND' }
+    const { placement, land: l } = placed(part)
+    const start = { id: '1', ...padOf(l, '1') }
+    // Collapse the pad past zero — editPlacedLand refuses bad-pad-edit.
+    expect(
+      commitPlacementPadEdit({
+        part,
+        placement,
+        edit: padEditFromDrag(start, 'e', -(start.w + 0.1), 0),
+      }),
+    ).toMatchObject({ ok: false, reason: 'bad-pad-edit' })
+    expect(resolveFootprint('USER_LAND')?.pads).toEqual(land('USER_LAND').pads)
   })
 })
 

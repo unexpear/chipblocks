@@ -27,6 +27,11 @@ import { isUserFootprint } from './user-footprints.ts'
  * shared id that would stop fitting another part). Pad ids are never renamed here, so the pin → pad
  * map a part already has is carried, not re-invented. A pad has no free angle in this model: a turn is
  * a quarter turn (copper w/h swap), nothing else.
+ *
+ * Drag on the flat board (pcb-view) turns a board-mm delta into a `PlacedPadEdit` via
+ * `padEditFromDrag` — move the picked pad, or pull an edge/corner handle to resize — then feeds the
+ * same `commitPlacementPadEdit` path the inspector's typed fields use. Built-in / provisional /
+ * role-sensitive still refuse; the typed X/Y/W/H fields keep working.
  */
 
 /** One pad's new geometry in BOARD mm. Absent fields keep their current value. */
@@ -105,6 +110,63 @@ export function placementPadEditGate(
   // that already refuses) refuse here before a pad moves.
   const dry = deriveFootprintFromPlacement({ part, placement, land })
   return dry.ok ? undefined : dry
+}
+
+/** Board-mm geometry of one placed pad (centre + extent along board axes), as the inspector shows. */
+export type BoardPadGeom = {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * What a board-side pad drag is pulling: the pad body (move) or an edge/corner of its board AABB
+ * (resize). Edges/corners keep the opposite side fixed; centres shift with the moving edge.
+ */
+export type PadDragHandle = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
+/**
+ * Turn a board-mm drag delta into a `PlacedPadEdit`. Pure — does not commit. `start` is the pad's
+ * board geometry at pointer-down; `dx`/`dy` are how far the pointer has moved in board mm. A circle
+ * pad stays a single diameter (the edge you pulled, or the larger extent for a corner). Non-positive
+ * sizes are still returned so `editPlacedLand` / `commitPlacementPadEdit` can refuse `bad-pad-edit`.
+ */
+export function padEditFromDrag(
+  start: BoardPadGeom,
+  handle: PadDragHandle,
+  dx: number,
+  dy: number,
+  opts?: { circle?: boolean },
+): PlacedPadEdit {
+  if (handle === 'move') {
+    return { padId: start.id, x: start.x + dx, y: start.y + dy }
+  }
+  let left = start.x - start.w / 2
+  let right = start.x + start.w / 2
+  let top = start.y - start.h / 2
+  let bottom = start.y + start.h / 2
+  if (handle.includes('e')) right += dx
+  if (handle.includes('w')) left += dx
+  if (handle.includes('s')) bottom += dy
+  if (handle.includes('n')) top += dy
+  let w = right - left
+  let h = bottom - top
+  const x = (left + right) / 2
+  const y = (top + bottom) / 2
+  if (opts?.circle === true) {
+    // One diameter: edge pulls that axis; a corner takes the larger extent. Keep the computed centre.
+    const diameter =
+      handle === 'n' || handle === 's'
+        ? Math.abs(h)
+        : handle === 'e' || handle === 'w'
+          ? Math.abs(w)
+          : Math.max(Math.abs(w), Math.abs(h))
+    w = diameter
+    h = diameter
+  }
+  return { padId: start.id, x, y, w, h }
 }
 
 /**

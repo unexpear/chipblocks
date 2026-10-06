@@ -5,6 +5,7 @@ import type { Measurement, MeasureUnit } from './pcb-measure.ts'
 import type { BoardRouting } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
 import { PcbView } from './pcb-view.tsx'
+import type { PlacedPadEdit } from './placement-pad-edit.ts'
 import { THEME } from './theme.ts'
 
 /**
@@ -163,10 +164,13 @@ export function BoardView({
     onMove: (mm: { x: number; y: number }) => void
     onVertexUp: () => void
   }
-  /** Board-side pad editing (flat view): the picked pad and the pick callback, threaded to PcbView. */
+  /** Board-side pad editing (flat view): the picked pad, pick callback, and optional edit commit
+   *  (drag move / resize handles) — threaded to PcbView. */
   padEdit?: {
     picked: { partId: string; padId: string } | null
     onPick: (partId: string, padId: string) => void
+    onEdit?: (partId: string, edit: PlacedPadEdit) => void
+    isPadEditable?: (partId: string) => boolean
   }
 }) {
   if (mode === 'exploded') {
@@ -232,7 +236,14 @@ export function BoardView({
             onOutlineVertexUp: outline.onVertexUp,
           }
         : {})}
-      {...(padEdit ? { pickedPad: padEdit.picked, onPadPick: padEdit.onPick } : {})}
+      {...(padEdit
+        ? {
+            pickedPad: padEdit.picked,
+            onPadPick: padEdit.onPick,
+            ...(padEdit.onEdit ? { onPadEdit: padEdit.onEdit } : {}),
+            ...(padEdit.isPadEditable ? { isPadEditable: padEdit.isPadEditable } : {}),
+          }
+        : {})}
     />
   )
 }
