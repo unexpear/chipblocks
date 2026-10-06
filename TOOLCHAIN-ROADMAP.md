@@ -43,7 +43,7 @@ already have; ticks the PRD's defining metric (an outside user exports a manufac
 
 5. **User-made parts** — in-app Symbol + Footprint authoring is shipped; continue tightening the shared
    library and edit/reload flows.
-6. **Plugin / Content Manager** - **local-pack install UI shipped (2026-10-06 slice)**: Tools -> Plugin & Content Manager browses the cited FINAL-STATE-VISION catalog, installs a user-picked local pack after format + permissive-license validation into `~/.chipblocks/libraries/<id>/`, enable/disable/uninstall. Refuses remote URL installs and GPL/unknown licenses. Not a marketplace; signatures (ADR-010) still open.
+6. **Plugin / Content Manager** — **local-pack install + footprints + content-hash trust (2026-10-06)**: Tools → Plugin & Content Manager browses the cited catalog, installs a user-picked local pack after format + permissive-license validation + optional declared SHA-256 check into `~/.chipblocks/libraries/<id>/`, enable/disable/uninstall; enabled packs register parts + footprints (no built-in/provisional shadow). Records on-disk content hash for reload tamper-evidence. Refuses remote installs, GPL/unknown licenses, and declared-hash mismatch. Not a marketplace; **publisher signatures still open (ADR-010)** — hash ≠ signature ≠ "secure".
 
 ## Track 3 — polish
 
@@ -51,7 +51,7 @@ already have; ticks the PRD's defining metric (an outside user exports a manufac
 
 ## Track 4 — the solver scaling (the chip-depth road; the "thing from before")
 
-**Status (2026-10-05 slice, working tree):** the two measured walls for large transistor DC are addressed
+**Status (2026-10-06 slice, working tree):** the measured walls for large transistor DC are addressed
 in-tree — not commercial-ngspice parity, and not a claim of chip-scale transient. Honest limits below.
 
 1. **Linear solve (pivoted sparse).** The old no-pivot sparse factor bailed on the zero diagonals that
@@ -67,9 +67,16 @@ in-tree — not commercial-ngspice parity, and not a claim of chip-scale transie
    CMOS-only 200-pass cap) and routes a MOSFET+linear netlist to gmin stepping (else source stepping,
    unchanged). Correctness oracle: `digitalSeed` on every gate pin. Final level is the real circuit (no
    shunt); a stalled ramp returns the failed solve's honest status + how far the continuation got.
+3. **Warm-start (logic seed + pseudo-transient).** `digitalSeed` is passed as `initialNodes` on the
+   canvas transistor-fidelity path (`solve-canvas.ts`). Early gmin levels deliberately ignore that seed
+   (a final-OP start fights a large shunt — measured). After gmin stalls on CMOS, `solveDCByPseudoTransient`
+   coasts with artificial ground caps (backward-Euler companion on `solveDC`) and finishes with a real
+   ungapped solve — never a capacitively-held snapshot as the answer. Source stepping remains the
+   non-CMOS / rail-referenced-BJT path. Tests: `tests/dc-pseudo-transient.test.ts`, `tests/logic-seed.test.ts`.
 
-Still open (not this slice): pseudo-transient as another continuation; ngspice parity; wiring a logic
-seed into the transistor solve as a warm start; anything beyond DC operating point at this scale.
+Still open (not this slice): ngspice parity; anything beyond DC operating point at this scale;
+adaptive pseudo-C sizing; claiming a wall-clock win on every CMOS input (the seed is correct and
+wired; speed is not guaranteed).
 
 Already validated alongside: `digitalSeed` in `src/renderer/logic-sim.ts` (correct mapping vs converged OP).
 
@@ -272,15 +279,24 @@ Smallest honest Track 2 item 6: a **Plugin & Content Manager** UI (Tools menu) t
 cited community-library catalog (FINAL-STATE-VISION.md) and installs **local** content packs
 into `~/.chipblocks/libraries/<id>/pack.json` after validating `chipblocks-content-pack` format
 + the open-hardware permissive license whitelist (OPEN-HARDWARE-ECOSYSTEM.md / ADR-010 candidate).
-Enabled packs register their parts at community origin (`user-parts.ts` community registry -
-does not write into `user-parts.json`).
+Enabled packs register their parts at community origin (`user-parts.ts` community registry —
+does not write into `user-parts.json`) and their footprints into the community footprint path
+(`user-footprints.ts` — does not shadow built-ins or `provisional_<N>pad` ids; disable/uninstall
+clears that pack's contribution).
 
-**Does:** browse catalog, install from local JSON, enable/disable, uninstall, persist index.
+**Does:** browse catalog, install from local JSON, enable/disable, uninstall, persist index,
+register pack parts + footprints when enabled; optional declared SHA-256 content-hash check;
+record on-disk content hash for reload tamper-evidence.
 
 **Refuses:** remote/network installs claiming success without validation; GPL/AGPL/LGPL/unknown
-licenses; malformed / future-version packs; marketplace / unsigned arbitrary-code framing.
+licenses; malformed / future-version packs; marketplace / unsigned arbitrary-code framing;
+pack footprints that collide with built-in or provisional ids (skipped, not silently shadowed);
+declared content-hash mismatch (install refused with a reason).
 
-**Still open:** published GitHub pack fetch with signature verification (ADR-010), full catalog
-YAML overlay / block-groups loading, footprint registration from packs, palette sections per
-library.
+**Trust limits (honest):** optional declared SHA-256 + recorded on-disk hash are **file integrity
+only**. A pack `signature` field is ignored as proof and called out in the trust note. No publisher
+identity, no remote attestation, no claim the pack is "secure." ADR-010 (signatures / stronger
+trust) remains open.
 
+**Still open:** published GitHub pack fetch with real signature verification (ADR-010), full catalog
+YAML overlay / block-groups loading, palette sections per library.
