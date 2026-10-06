@@ -24,6 +24,15 @@ import {
   licenseGate,
   serializeContentPack,
 } from '../src/renderer/content-pack.ts'
+import { BUILTIN_FOOTPRINTS, type Footprint } from '../src/renderer/footprint.ts'
+import {
+  clearAllCommunityFootprints,
+  clearCommunityPackFootprints,
+  getCommunityPackIdForFootprint,
+  resolveFootprint,
+  setCommunityPackFootprints,
+  setUserFootprints,
+} from '../src/renderer/user-footprints.ts'
 import type { UserPart } from '../src/renderer/user-parts.ts'
 import {
   clearAllCommunityParts,
@@ -42,6 +51,29 @@ const samplePart = (id: string): UserPart => ({
   ],
 })
 
+const sampleFootprint = (id: string): Footprint => ({
+  id,
+  name: id,
+  description: 'pack test footprint',
+  pads: [0, 1, 2, 3].map((i) => ({
+    id: String(i + 1),
+    center: { x: i % 2 === 0 ? -1 : 1, y: i < 2 ? -1 : 1 },
+    size: { w: 0.6, h: 0.3 },
+    shape: 'rect' as const,
+    type: 'smd' as const,
+  })),
+  silkscreen: [],
+  fabrication: [],
+  labels: { reference: { x: 0, y: -2 }, value: { x: 0, y: 2 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -2, y: -2, w: 4, h: 4 },
+  provenance: {
+    source_type: 'datasheet',
+    title: 'Test pack datasheet',
+    citation: 'package drawing',
+    confidence: 'high',
+  },
+})
+
 const samplePackJson = (over: Record<string, unknown> = {}) =>
   JSON.stringify({
     format: CONTENT_PACK_FORMAT,
@@ -57,6 +89,8 @@ const samplePackJson = (over: Record<string, unknown> = {}) =>
 
 afterEach(() => {
   clearAllCommunityParts()
+  clearAllCommunityFootprints()
+  setUserFootprints([])
 })
 
 describe('content pack format + license gate', () => {
@@ -164,5 +198,42 @@ describe('community registry (enabled pack parts)', () => {
     expect(getCommunityPackIdForPart('community_xor')).toBe('demo_pack')
     clearAllCommunityParts()
     expect(resolveUserPart('community_xor')).toBeUndefined()
+  })
+})
+
+describe('community registry (enabled pack footprints)', () => {
+  test('setCommunityPackFootprints registers for resolve; clear removes', () => {
+    const fp = sampleFootprint('pack_qfn4')
+    expect(setCommunityPackFootprints('demo_pack', [fp])).toBe(1)
+    expect(resolveFootprint('pack_qfn4')?.name).toBe('pack_qfn4')
+    expect(getCommunityPackIdForFootprint('pack_qfn4')).toBe('demo_pack')
+    clearCommunityPackFootprints('demo_pack')
+    expect(resolveFootprint('pack_qfn4')).toBeUndefined()
+  })
+
+  test('refuses to shadow a built-in footprint id', () => {
+    const builtinId = Object.keys(BUILTIN_FOOTPRINTS)[0] as string
+    const kept = setCommunityPackFootprints('demo_pack', [sampleFootprint(builtinId)])
+    expect(kept).toBe(0)
+    expect(resolveFootprint(builtinId)).toBe(BUILTIN_FOOTPRINTS[builtinId])
+    expect(getCommunityPackIdForFootprint(builtinId)).toBeUndefined()
+  })
+
+  test('refuses provisional_<N>pad ids', () => {
+    expect(setCommunityPackFootprints('demo_pack', [sampleFootprint('provisional_8pad')])).toBe(0)
+    expect(getCommunityPackIdForFootprint('provisional_8pad')).toBeUndefined()
+  })
+
+  test('installLocalPack counts footprints; pack JSON round-trips them', () => {
+    const text = samplePackJson({
+      footprints: [sampleFootprint('demo_land')],
+    })
+    const installed = installLocalPack(emptyContentIndex(), text, 42)
+    expect(installed.ok).toBe(true)
+    if (!installed.ok) return
+    expect(installed.record.footprintCount).toBe(1)
+    expect(installed.pack.footprints[0]?.id).toBe('demo_land')
+    expect(setCommunityPackFootprints(installed.record.id, installed.pack.footprints)).toBe(1)
+    expect(resolveFootprint('demo_land')?.pads).toHaveLength(4)
   })
 })

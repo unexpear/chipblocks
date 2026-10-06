@@ -8,7 +8,8 @@
  * What this DOES:
  * - Browse the cited catalog (content-catalog.ts) alongside installed packs
  * - Install from a LOCAL pack file the user picked (validate format + license first)
- * - Enable / disable an installed pack (disabled packs stay on disk but leave the session registry)
+ * - Enable / disable an installed pack (disabled packs stay on disk but leave the session registry;
+ *   parts + footprints are registered/cleared together)
  * - Uninstall (drop index entry; main deletes the pack directory)
  *
  * What this REFUSES (honestly, with a reason — never "success" without validation):
@@ -22,6 +23,11 @@
 
 import { CITED_CONTENT_CATALOG, type ContentCatalogEntry } from './content-catalog.ts'
 import { type ContentPack, deserializeContentPack, licenseGate } from './content-pack.ts'
+import {
+  type IntegrityVerdict,
+  trustNoteForVerdict,
+  verifyPackIntegrity,
+} from './content-pack-integrity.ts'
 
 export const CONTENT_INDEX_FORMAT = 'chipblocks-content-index'
 export const CONTENT_INDEX_VERSION = 1
@@ -41,10 +47,17 @@ export type InstalledPackRecord = {
   partCount: number
   footprintCount: number
   /**
-   * Trust note shown in the UI: the user picked this file; ChipBlocks validated format + license
-   * but does not yet verify signatures (ADR-010 pending).
+   * Trust note shown in the UI — always honest about what was and was not checked
+   * (format + license + optional content hash; never a silent "secure" claim).
    */
   trustNote: string
+  /**
+   * SHA-256 (hex) of the exact pack.json text written at install — tamper-evidence on reload.
+   * Absent only on legacy index rows from before this field existed.
+   */
+  contentHash?: string
+  /** Did install-time declared integrity match? 'match' | 'undeclared' | omitted on legacy rows. */
+  integrityStatus?: 'match' | 'undeclared'
 }
 
 export type ContentIndex = {
@@ -71,8 +84,9 @@ export type ManagerRow =
       installed: false
     }
 
+/** @deprecated Prefer trustNoteForVerdict — kept as the undeclared-hash fallback string. */
 export const LOCAL_PACK_TRUST_NOTE =
-  'Installed from a local file you chose. Format and license were validated; cryptographic signatures are not verified yet (ADR-010 pending). Treat the pack as trusted as the file you picked.'
+  'Installed from a local file you chose. Format and license were validated; no content-hash declaration was present. A SHA-256 of the installed file is recorded for tamper-evidence on reload. Not a publisher signature (ADR-010). Treat the pack as trusted as the file you picked.'
 
 export function emptyContentIndex(): ContentIndex {
   return { format: CONTENT_INDEX_FORMAT, version: CONTENT_INDEX_VERSION, packs: [] }
@@ -154,6 +168,12 @@ function validateRecord(raw: unknown): InstalledPackRecord | null {
     footprintCount,
     trustNote,
   }
+  if (typeof r.contentHash === 'string' && /^[a-f0-9]{64}$/i.test(r.contentHash.trim())) {
+    record.contentHash = r.contentHash.trim().toLowerCase()
+  }
+  if (r.integrityStatus === 'match' || r.integrityStatus === 'undeclared') {
+    record.integrityStatus = r.integrityStatus
+  }
   if (typeof r.description === 'string' && r.description.trim() !== '') {
     record.description = r.description.trim()
   }
@@ -197,6 +217,11 @@ export function recordFromPack(
   pack: ContentPack,
   installedAt: number,
   enabled = true,
+  trust?: {
+    trustNote: string
+    contentHash: string
+    integrityStatus: 'match' | 'undeclared'
+  },
 ): InstalledPackRecord {
   const record: InstalledPackRecord = {
     id: pack.id,
@@ -208,25 +233,36 @@ export function recordFromPack(
     source: 'local-pack',
     partCount: pack.parts.length,
     footprintCount: pack.footprints.length,
-    trustNote: LOCAL_PACK_TRUST_NOTE,
+    trustNote: trust?.trustNote ?? LOCAL_PACK_TRUST_NOTE,
   }
   if (pack.description !== undefined) record.description = pack.description
   if (pack.homepage !== undefined) record.homepage = pack.homepage
+  if (trust !== undefined) {
+    record.contentHash = trust.contentHash
+    record.integrityStatus = trust.integrityStatus
+  }
   return record
 }
 
 /**
  * Validate pack text and fold it into the index (replace same id). Does not touch disk — the
  * caller writes pack.json + index.json only after ok: true.
+ * Prefer `installLocalPackVerified` so content-hash integrity is checked; this sync path is for
+ * format/license unit tests and callers that already verified.
  */
 export function installLocalPack(
   index: ContentIndex,
   packText: string,
   installedAt: number = Date.now(),
+  trust?: {
+    trustNote: string
+    contentHash: string
+    integrityStatus: 'match' | 'undeclared'
+  },
 ): InstallResult {
   const parsed = deserializeContentPack(packText)
   if (!parsed.ok) return parsed
-  const record = recordFromPack(parsed.pack, installedAt, true)
+  const record = recordFromPack(parsed.pack, installedAt, true, trust)
   const packs = [...index.packs.filter((p) => p.id !== record.id), record]
   return {
     ok: true,
@@ -234,6 +270,26 @@ export function installLocalPack(
     pack: parsed.pack,
     index: { ...index, packs },
   }
+}
+
+/**
+ * Install after an honest integrity check. Refuses on declared-hash mismatch; records SHA-256 of
+ * the exact pack text for reload tamper-evidence; never claims publisher-signature trust.
+ */
+export async function installLocalPackVerified(
+  index: ContentIndex,
+  packText: string,
+  installedAt: number = Date.now(),
+): Promise<InstallResult> {
+  const verdict: IntegrityVerdict = await verifyPackIntegrity(packText)
+  if (verdict.kind === 'mismatch' || verdict.kind === 'unsupported') {
+    return { ok: false, reason: verdict.reason }
+  }
+  return installLocalPack(index, packText, installedAt, {
+    trustNote: trustNoteForVerdict(verdict),
+    contentHash: verdict.hash,
+    integrityStatus: verdict.kind === 'match' ? 'match' : 'undeclared',
+  })
 }
 
 export function setPackEnabled(

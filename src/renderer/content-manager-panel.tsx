@@ -97,8 +97,10 @@ export function ContentManagerPanel({
         <p style={{ margin: '0 0 10px', color: dimColor, lineHeight: 1.45 }}>
           Browse planned community libraries (cited from FINAL-STATE-VISION.md) and manage packs you
           install from a <strong>local</strong> file. Not a marketplace — ChipBlocks does not
-          download arbitrary unsigned code. Install validates format + permissive license;
-          signatures are not verified yet (ADR-010 pending).
+          download arbitrary remote code. Install validates format + permissive license, checks an
+          optional declared SHA-256 content hash, and records a file hash for reload
+          tamper-evidence. Publisher signatures are not verified (ADR-010) — missing or invalid
+          integrity is shown, never silently trusted.
         </p>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -195,11 +197,16 @@ function InstalledCard({
       <div style={{ color: dim, marginTop: 4, fontSize: 11 }}>
         {record.partCount} part{record.partCount === 1 ? '' : 's'}
         {record.footprintCount > 0
-          ? ` · ${record.footprintCount} footprint${record.footprintCount === 1 ? '' : 's'} (stored; part registration is live)`
+          ? ` · ${record.footprintCount} footprint${record.footprintCount === 1 ? '' : 's'}`
           : ''}{' '}
         · source: local pack
       </div>
       <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
+        {record.integrityStatus === 'match'
+          ? 'Integrity: declared content hash matched. '
+          : record.integrityStatus === 'undeclared'
+            ? 'Integrity: no declared content hash. '
+            : ''}
         {record.trustNote}
       </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>

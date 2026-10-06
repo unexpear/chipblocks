@@ -4,13 +4,15 @@ import {
   deserializeContentIndex,
   emptyContentIndex,
   enabledPackIds,
-  installLocalPack,
+  installLocalPackVerified,
   serializeContentIndex,
   setPackEnabled,
   uninstallPack,
 } from './content-manager.ts'
 import { ContentManagerPanel } from './content-manager-panel.tsx'
 import { type ContentPack, deserializeContentPack, serializeContentPack } from './content-pack.ts'
+import { assertStoredContentHash, sha256Hex } from './content-pack-integrity.ts'
+import { clearCommunityPackFootprints, setCommunityPackFootprints } from './user-footprints.ts'
 import { clearCommunityPackParts, setCommunityPackParts } from './user-parts.ts'
 
 /**
@@ -27,25 +29,45 @@ async function persistIndex(bridge: Bridge, index: ContentIndex): Promise<boolea
   return result.ok
 }
 
-async function applyEnabledPacks(bridge: Bridge, index: ContentIndex): Promise<void> {
+async function applyEnabledPacks(
+  bridge: Bridge,
+  index: ContentIndex,
+  onTrustIssue?: (message: string) => void,
+): Promise<void> {
   const enabled = new Set(enabledPackIds(index))
   for (const rec of index.packs) {
     if (!enabled.has(rec.id)) {
       clearCommunityPackParts(rec.id)
+      clearCommunityPackFootprints(rec.id)
       continue
     }
     if (bridge.readContentPack === undefined) continue
     const text = await bridge.readContentPack(rec.id)
     if (text === null) {
       clearCommunityPackParts(rec.id)
+      clearCommunityPackFootprints(rec.id)
       continue
+    }
+    const hashCheck = await assertStoredContentHash(text, rec.contentHash)
+    if (!hashCheck.ok) {
+      clearCommunityPackParts(rec.id)
+      clearCommunityPackFootprints(rec.id)
+      onTrustIssue?.(`Pack "${rec.id}": ${hashCheck.reason}`)
+      continue
+    }
+    if (hashCheck.legacyMissingHash) {
+      onTrustIssue?.(
+        `Pack "${rec.id}": no content hash was recorded at install — loaded anyway; re-install from the local file to enable tamper-evidence. Not silently treated as verified.`,
+      )
     }
     const parsed = deserializeContentPack(text)
     if (!parsed.ok) {
       clearCommunityPackParts(rec.id)
+      clearCommunityPackFootprints(rec.id)
       continue
     }
     setCommunityPackParts(rec.id, parsed.pack.parts)
+    setCommunityPackFootprints(rec.id, parsed.pack.footprints)
   }
 }
 
@@ -82,7 +104,7 @@ export function useContentManager(light: boolean): {
           return
         }
         setIndex(result.index)
-        await applyEnabledPacks(bridge, result.index)
+        await applyEnabledPacks(bridge, result.index, setStatusMessage)
       })
     }
 
@@ -115,28 +137,40 @@ export function useContentManager(light: boolean): {
         setStatusMessage('No pack file text returned.')
         return
       }
-      const installed = installLocalPack(index, picked.text)
+      const installed = await installLocalPackVerified(index, picked.text)
       if (!installed.ok) {
         setStatusMessage(installed.reason)
         return
       }
       const pack: ContentPack = installed.pack
-      const written = await writePack(pack.id, serializeContentPack(pack))
+      // Hash the bytes we actually write — serialize may differ from the picked file (dropped
+      // malformed entries, stable field order). Reload tamper-checks this on-disk text.
+      const onDiskText = serializeContentPack(pack)
+      const diskHash = await sha256Hex(onDiskText)
+      const record = { ...installed.record, contentHash: diskHash }
+      const nextIndex = {
+        ...installed.index,
+        packs: installed.index.packs.map((p) => (p.id === record.id ? record : p)),
+      }
+      const written = await writePack(pack.id, onDiskText)
       if (!written.ok) {
         setStatusMessage(
           written.reason ?? 'Could not write the pack under ~/.chipblocks/libraries/.',
         )
         return
       }
-      const saved = await persistIndex(bridge, installed.index)
+      const saved = await persistIndex(bridge, nextIndex)
       if (!saved) {
         setStatusMessage('Pack file written, but the install index could not be saved.')
         return
       }
-      setIndex(installed.index)
+      setIndex(nextIndex)
       setCommunityPackParts(pack.id, pack.parts)
+      const fpKept = setCommunityPackFootprints(pack.id, pack.footprints)
+      const trustBit =
+        record.integrityStatus === 'match' ? 'declared content hash matched' : 'no declared hash'
       setStatusMessage(
-        `Installed "${installed.record.name}" v${installed.record.packVersion} (${installed.record.license}). Enabled — ${installed.record.partCount} part(s) registered at community origin.`,
+        `Installed "${record.name}" v${record.packVersion} (${record.license}; ${trustBit}). Enabled — ${record.partCount} part(s), ${fpKept} footprint(s) registered at community origin.`,
       )
     })()
   }, [index])
@@ -156,9 +190,10 @@ export function useContentManager(light: boolean): {
             setStatusMessage('Could not save enable/disable to the install index.')
             return
           }
-          await applyEnabledPacks(bridge, next)
+          await applyEnabledPacks(bridge, next, setStatusMessage)
         } else if (!enabled) {
           clearCommunityPackParts(id)
+          clearCommunityPackFootprints(id)
         }
         setIndex(next)
         setStatusMessage(enabled ? `Enabled "${id}".` : `Disabled "${id}" (pack stays on disk).`)
@@ -177,6 +212,7 @@ export function useContentManager(light: boolean): {
       const bridge = window.chipblocks
       void (async () => {
         clearCommunityPackParts(id)
+        clearCommunityPackFootprints(id)
         if (bridge?.removeContentPack !== undefined) {
           const removed = await bridge.removeContentPack(id)
           if (!removed.ok) {
