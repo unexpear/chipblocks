@@ -189,12 +189,22 @@ function solveCanvas(
   // undefined (and would be a singular matrix) — it sits idle instead of
   // killing the whole canvas. The meter still gets the FULL world.
   const solvable = groundedComponent(world)
+  // Logic-seed warm-start for the transistor-fidelity path: when the canvas has real logic gates,
+  // pin their port nets to 0/Vdd from the fast logic engine and hand that .nodeset to the robust DC
+  // solve. The seed is a starting guess only — convergence is still the real Newton / continuation
+  // (never "logic said so, so solved"). Absent gates → undefined → unchanged cold start.
+  const logicWarm = digitalSeed(
+    nodeList as unknown as BlockNodeLike[],
+    edgeList as unknown as BlockEdgeLike[],
+    solvable,
+  )
   const thermal = solveWithRelays(solvable, {
     ...(projectAmbientC === undefined ? {} : { projectAmbientC }),
     // The budget comes from solveCanvasDispatch — ONE deadline for the whole dispatch, including the
     // mixed path's up-to-five alternations between the two engines. Re-defaulting it here would give
     // each of those its own budget back, so this only ever passes on what it was handed.
     ...(deadline === undefined ? {} : { deadline }),
+    ...(logicWarm !== undefined ? { initialNodes: logicWarm } : {}),
   })
   const solution = thermal.solution
   // Name what the strip set aside — the engine must explain itself ON SCREEN (the footer shows

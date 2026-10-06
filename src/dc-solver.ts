@@ -149,8 +149,8 @@ export type SolveOptions = {
   /**
    * A node-voltage starting guess (net id → volts) — SPICE's .nodeset. Seeds the
    * nonlinear devices' junction/terminal voltages so Newton-Raphson starts near
-   * the answer. Used by the pseudo-transient fallback (pseudo-transient.ts) to make
-   * a hard circuit's final solve converge instantly; harmless on easy circuits.
+   * the answer. Used by source/gmin/pseudo-transient continuations (dc-robust.ts) to seed
+   * a hard circuit's Newton from a known operating point; harmless on easy circuits.
    */
   initialNodes?: Map<string, number>
   /**
@@ -176,6 +176,21 @@ export type SolveOptions = {
    * Absent / 0 ⇒ the circuit exactly as drawn.
    */
   gminShunt?: number
+  /**
+   * Pseudo-transient companion (continuation intermediate only): artificial capacitance (farads) from
+   * every circuit node to ground, with backward-Euler G = C/Δt. Pair with `pseudoDt` and
+   * `previousNodes` (V at the previous time step). The history current G·V_prev is injected on the RHS.
+   * Absent / 0 ⇒ no artificial C. The FINAL answer of a pseudo-transient continuation is always a real
+   * solve with neither of these set — never a capacitively-held snapshot dressed up as DC.
+   */
+  pseudoCapacitance?: number
+  /** Time step (seconds) for the pseudo-transient companion. Ignored unless `pseudoCapacitance` > 0. */
+  pseudoDt?: number
+  /**
+   * Node voltages from the previous pseudo-transient step (net id → volts). Used only with
+   * `pseudoCapacitance` / `pseudoDt` for the history current.
+   */
+  previousNodes?: Map<string, number>
   /**
    * A linear-solver session to REUSE across a run of solves of the same circuit — a continuation's
    * levels (gmin / source stepping) or a direct attempt followed by its fallback. The session caches the
@@ -976,6 +991,23 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
     }
 
     if (gminShunt > 0) for (let i = 0; i < N; i++) M.set([i, i], M.get([i, i]) + gminShunt)
+
+    // Pseudo-transient companion: artificial C to ground with backward-Euler G = C/Δt and
+    // history current G·V_prev on the RHS. Only a continuation's intermediate steps pass this;
+    // the final DC answer never does (see solveDCByPseudoTransient).
+    const pseudoC = options?.pseudoCapacitance ?? 0
+    const pseudoDt = options?.pseudoDt ?? 0
+    if (pseudoC > 0 && pseudoDt > 0) {
+      const G = pseudoC / pseudoDt
+      const prev = options?.previousNodes
+      for (const [netId, idx] of nodeIndex) {
+        M.set([idx, idx], M.get([idx, idx]) + G)
+        if (prev !== undefined) {
+          const Vp = prev.get(netId) ?? 0
+          b.set([idx, 0], (b.get([idx, 0]) ?? 0) + G * Vp)
+        }
+      }
+    }
 
     let x: DenseVector
     try {

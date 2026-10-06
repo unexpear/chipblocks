@@ -5,10 +5,10 @@
  * converged operating point of the full ~250-MOSFET calculator solve, through the
  * canvas-gate-pin → transistor-terminal → world-net mapping.
  *
- * Note (measured): feeding this seed to the present solver does NOT speed it up — the direct solver
- * diverges from it, and the robust solver's gmin/source-stepping continuation starts from a soft,
- * mid-rail circuit and is slowed by a final-operating-point start. The convergence cost lives in that
- * continuation; the seed is kept as validated infrastructure for a continuation that can use it.
+ * Warm-start note (2026-10-06): the canvas transistor path now passes this seed as `initialNodes`
+ * into the robust DC solve. Early gmin levels deliberately ignore it (a final-OP start fights a large
+ * shunt — measured). The direct attempt and the pseudo-transient continuation may use it. This file
+ * still proves the seed is *correct* vs a converged OP; speed claims stay out of scope here.
  */
 
 import { describe, expect, test } from 'vitest'

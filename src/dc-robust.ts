@@ -24,13 +24,14 @@ import { SparseSession } from './sparse-linear.ts'
  * (the direct solve succeeds) returns that solve untouched, so every circuit that
  * already converges is byte-for-byte unaffected.
  *
- * Chosen 2026-06-14 over cap-based pseudo-transient: a zero-state coast slams any
- * junction whose far side is pinned to a rail (a PNP emitter, a current-mirror top)
- * to full forward bias at t=0 and the first solve goes singular (verified on a PNP
- * common-emitter). Source stepping ramps that rail up from zero, so the junction
- * turns on gently — the right tool for the op-amp's rail-referenced bias. The deep
- * research suggested reusing the transient engine precisely because the solver lacked
- * source stepping; this adds the missing tool rather than the substitute.
+ * Chosen 2026-06-14 as the DEFAULT for rail-referenced junction bias over a cold
+ * zero-state pseudo-transient coast: that coast slams any junction whose far side is
+ * pinned to a rail (a PNP emitter, a current-mirror top) to full forward bias at t=0
+ * and the first solve goes singular (verified on a PNP common-emitter). Source stepping
+ * ramps that rail up from zero, so the junction turns on gently — still the right first
+ * tool for BJT/op-amp bias. Pseudo-transient (`solveDCByPseudoTransient`) is available
+ * as a later CMOS continuation after gmin stepping stalls — artificial ground caps with
+ * a real final ungapped solve, never a capacitively-held snapshot as the answer.
  */
 
 /** The DEFAULT Newton budget — "robust" means try hard, so it is generous. Stiff but well-posed
@@ -235,6 +236,125 @@ export function solveDCByGminStepping(world: World, options?: SolveOptions): Sol
   return last ?? solveDC(world, { ...levelOptions })
 }
 
+/** Artificial ground capacitance for pseudo-transient (1 nF). Large enough that early steps are
+ *  soft, small enough that a settled circuit's companion vanishes as Δt grows. */
+const PSEUDO_CAP_F = 1e-9
+/** First time step — short, so a wild cold start cannot jump far in one Newton. */
+const PSEUDO_DT_INITIAL = 1e-9
+const PSEUDO_DT_MAX = 1e-3
+const PSEUDO_DT_MIN = 1e-12
+/** Settled when every node moved less than this (volts) for PSEUDO_SETTLE_STREAK steps. */
+const PSEUDO_DV_TOL = 1e-3
+const PSEUDO_SETTLE_STREAK = 2
+const PSEUDO_MAX_STEPS = 200
+const PSEUDO_LEVEL_MAX_ITERATIONS = 100
+
+/**
+ * Robust DC operating-point finding by PSEUDO-TRANSIENT continuation — artificial capacitors from
+ * every node to ground, marched with backward-Euler companion stamps (`pseudoCapacitance` /
+ * `pseudoDt` / `previousNodes` on `solveDC`) until voltages stop moving, then one REAL solve of
+ * the circuit with no artificial C.
+ *
+ * Why it exists alongside gmin / source stepping: large CMOS netlists whose gmin ramp stalls still
+ * sometimes settle when the nodes are held by capacitance and allowed to coast. Accuracy is the
+ * same contract as the other continuations — the final level IS the real circuit; a stalled coast
+ * returns that failed solve's honest status, never a capacitively-held snapshot as the answer.
+ *
+ * A caller-supplied `initialNodes` (e.g. a logic-sim seed) is used as the coast's starting state
+ * and as the device .nodeset on each step. Early gmin levels deliberately do NOT take that seed
+ * (a final-OP start fights a large shunt); the seed belongs here and on the direct attempt.
+ */
+export function solveDCByPseudoTransient(world: World, options?: SolveOptions): Solution {
+  const deadline = solveDeadline(options?.deadline)
+  const levelOptions: SolveOptions = {
+    maxIterations: PSEUDO_LEVEL_MAX_ITERATIONS,
+    ...options,
+    deadline,
+    sparseSession: options?.sparseSession ?? new SparseSession(),
+  }
+  // Strip companion knobs from the final-options base — only intermediate steps set them.
+  const {
+    pseudoCapacitance: _c,
+    pseudoDt: _dt,
+    previousNodes: _prev,
+    ...baseOptions
+  } = levelOptions
+
+  let nodes: Map<string, number> =
+    options?.initialNodes !== undefined ? new Map(options.initialNodes) : new Map()
+  let dt = PSEUDO_DT_INITIAL
+  let streak = 0
+  let lastGood: Map<string, number> | undefined
+
+  for (let step = 0; step < PSEUDO_MAX_STEPS; step++) {
+    if (pastDeadline(deadline)) {
+      const progress =
+        lastGood !== undefined
+          ? 'Pseudo-transient had a settled candidate when time ran out — the voltages shown are not an operating point of the real circuit.'
+          : 'Pseudo-transient ran out of time before the artificial capacitors settled.'
+      const failed = solveDC(world, {
+        ...baseOptions,
+        ...(lastGood ? { initialNodes: lastGood } : {}),
+      })
+      if (dcRefused(failed.status) || failed.status === 'over-budget') {
+        const [refusal, ...rest] = failed.warnings
+        return {
+          ...failed,
+          warnings: refusal === undefined ? [progress] : [refusal, progress, ...rest],
+        }
+      }
+      return {
+        ...failed,
+        status: 'over-budget',
+        converged: false,
+        warnings: [progress, ...failed.warnings],
+      }
+    }
+
+    const sol = solveDC(world, {
+      ...baseOptions,
+      pseudoCapacitance: PSEUDO_CAP_F,
+      pseudoDt: dt,
+      ...(nodes.size > 0 ? { previousNodes: nodes, initialNodes: nodes } : {}),
+    })
+    if (dcRefused(sol.status)) return sol
+    if (!dcRan(sol.status)) {
+      dt /= 2
+      if (dt < PSEUDO_DT_MIN) break
+      continue
+    }
+
+    let maxDv = 0
+    for (const [net, v] of sol.nodes) {
+      maxDv = Math.max(maxDv, Math.abs(v - (nodes.get(net) ?? 0)))
+    }
+    // Also count nets that appeared
+    for (const [net, v] of nodes) {
+      if (!sol.nodes.has(net)) maxDv = Math.max(maxDv, Math.abs(v))
+    }
+    nodes = sol.nodes
+    lastGood = nodes
+
+    if (maxDv < PSEUDO_DV_TOL) {
+      streak++
+      if (streak >= PSEUDO_SETTLE_STREAK) {
+        // Real circuit — no artificial C. Seed from the settled coast.
+        return solveDC(world, { ...baseOptions, initialNodes: nodes })
+      }
+      dt = Math.min(dt * 2, PSEUDO_DT_MAX)
+    } else {
+      streak = 0
+      dt = Math.min(dt * 1.5, PSEUDO_DT_MAX)
+    }
+  }
+
+  // Out of steps or Δt: honest real-circuit attempt from the last coast state.
+  return solveDC(world, {
+    ...baseOptions,
+    ...(lastGood !== undefined ? { initialNodes: lastGood } : {}),
+  })
+}
+
 /**
  * How much of the budget the DIRECT Newton attempt may spend before solveDCRobust hands the circuit to a
  * continuation. A third: every circuit in this repo whose direct solve converges does so in a small
@@ -290,15 +410,25 @@ export function solveDCRobust(world: World, options?: SolveOptions): Solution {
 
 /**
  * The continuation fallback once the direct Newton has failed. A transistor-level CMOS netlist — MOSFETs
- * plus wires, supplies, resistors and capacitors, nothing else — takes GMIN stepping first (the
- * continuation that suits it; see solveDCByGminStepping) and falls back to source stepping if that
- * stalls. Every other circuit keeps SOURCE stepping, exactly as before: it was chosen for rail-referenced
+ * plus wires, supplies, resistors and capacitors, nothing else — takes GMIN stepping first (see
+ * solveDCByGminStepping), then pseudo-transient if that stalls, then source stepping. A caller-supplied
+ * initialNodes (logic seed) is kept off early gmin levels and offered to pseudo-transient as a warm
+ * start. Every other circuit keeps SOURCE stepping, exactly as before: it was chosen for rail-referenced
  * junction bias (a PNP emitter, an op-amp's current-mirror top), and those circuits' paths are unchanged.
  */
 function solveDCByContinuation(world: World, options: SolveOptions): Solution {
   if (!isCmosNetlist(world)) return solveDCBySourceStepping(world, options)
-  const gmin = solveDCByGminStepping(world, options)
+  // A logic-seed / .nodeset must not feed early gmin levels: a final-OP start fights the large
+  // shunt (measured — slows the soft mid-rail path). Strip it for gmin; keep it for pseudo-transient
+  // and for the direct attempt above (solveDCRobust already passed options through).
+  const { initialNodes: warmSeed, ...gminOptions } = options
+  const gmin = solveDCByGminStepping(world, gminOptions)
   if (dcRan(gmin.status) || dcRefused(gmin.status)) return gmin
+  const ptr = solveDCByPseudoTransient(
+    world,
+    warmSeed !== undefined ? { ...options, initialNodes: warmSeed } : options,
+  )
+  if (dcRan(ptr.status) || dcRefused(ptr.status)) return ptr
   return solveDCBySourceStepping(world, options)
 }
 
