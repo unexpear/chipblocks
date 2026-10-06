@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The Gowin half of the chip-file door (src/renderer/fpga-open.ts + fpga-load.ts).
  *
  * The project has decoded Gowin bitstreams for longer and more thoroughly than either Lattice family — the
@@ -553,12 +553,15 @@ describe('a missing chip description says which part of it is missing', () => {
   test('a description of a DIFFERENT Gowin chip is refused, and named', () => {
     // The real GW1N-1 description with the chip it describes changed. Loading it would decode this file's bits
     // against another part's geometry, which produces a design rather than an error — the worst kind of wrong.
+    // Mutate via JSON (not a compact-key string replace): the fixture is pretty-printed with spaces after `:`.
+    const wrongParsed = JSON.parse(readFileSync(at('gowin-gw1n1-chipdb.json'), 'utf8') as string) as {
+      device: string
+    }
+    expect(wrongParsed.device).toBe('GW1N-1')
+    wrongParsed.device = 'GW1N-9'
     const wrongChip = {
       name: 'gowin-gw1n9-chipdb.json',
-      text: (readFileSync(at('gowin-gw1n1-chipdb.json'), 'utf8') as string).replace(
-        '"device":"GW1N-1"',
-        '"device":"GW1N-9"',
-      ),
+      text: JSON.stringify(wrongParsed),
     }
     expect(wrongChip.text, 'the substitution must have happened').toContain('GW1N-9')
     const result = openGowin('splitmix', [

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The shared board-view pieces used by BOTH the dock panel and the full-size main-area workspace.
  * BoardView is the single place that branches the view mode — this proves the branch: flat/layers →
  * the top-down PcbView ("PCB layout"), 3D → the exploded lamination ("PCB exploded lamination view").
@@ -63,12 +63,15 @@ describe('PcbViewControls', () => {
 
   test('the layer pager appears only in Layers mode, with the sheet label', () => {
     const layers = boardLayers(stackup)
+    // After paste/mask/fab sheets sit above copper, F.Cu is no longer index 1 — look it up by id.
+    const fCuIndex = layers.findIndex((l) => l.id === 'f_cu')
+    expect(fCuIndex).toBeGreaterThanOrEqual(0)
     const flat = renderToStaticMarkup(
       createElement(PcbViewControls, {
         mode: 'flat',
         onMode: () => {},
         layers,
-        activeLayerIndex: 1,
+        activeLayerIndex: fCuIndex,
         onStep: () => {},
       }),
     )
@@ -78,11 +81,11 @@ describe('PcbViewControls', () => {
         mode: 'layers',
         onMode: () => {},
         layers,
-        activeLayerIndex: 1,
+        activeLayerIndex: fCuIndex,
         onStep: () => {},
       }),
     )
     expect(inLayers).toContain('▲')
-    expect(inLayers).toContain('F.Cu (1 oz, 35 µm)') // index 1 = top copper
+    expect(inLayers).toContain('F.Cu (1 oz, 35 µm)') // top copper sheet label with real thickness
   })
 })

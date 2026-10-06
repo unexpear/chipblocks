@@ -1,4 +1,4 @@
-/**
+﻿/**
  * TWO CONNECTIONS THE GOWIN READER NEVER FOLLOWED, and the property that would have caught either.
  *
  * The reader could recover an ordinary design, report `0 refused / 0 incomplete / 0 untrusted`, and be wrong.
@@ -825,9 +825,12 @@ describe('a long wire whose driver cannot be named is SAID, not invented', () =>
   // The other direction, and the one an incomplete fix skips: when the join cannot be made, the parts reading
   // that wire must be marked. Reached by handing the reader the same device with its segment table removed,
   // which is the state this decoder was in before — the table is what closes the hop, and nothing else can.
-  const withoutSegments = parseGowinChipdb(
-    chipdbText.replace(/,"segments":\{.*?\}\}(?=,"tile_types")/s, ''),
-  )
+  // Drop segments via JSON (not a compact-regex strip): the fixture is pretty-printed, so the old
+  // `,"segments":{...}` splice no longer matches and left the table intact — which made the tests below
+  // see a fully-resolved design instead of the "no segment table" state they exist to cover.
+  const strippedChipdb = JSON.parse(chipdbText) as { segments?: unknown }
+  delete strippedChipdb.segments
+  const withoutSegments = parseGowinChipdb(JSON.stringify(strippedChipdb))
 
   test('the stripped chip description really is the same device minus the segments', () => {
     expect(withoutSegments.segments.size).toBe(0)
