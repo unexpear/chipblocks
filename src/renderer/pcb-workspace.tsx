@@ -121,6 +121,7 @@ export function BoardView({
   route,
   measure,
   outline,
+  padEdit,
 }: {
   board: Board
   stackup: Stackup
@@ -161,6 +162,11 @@ export function BoardView({
     onVertexDown: (index: number) => void
     onMove: (mm: { x: number; y: number }) => void
     onVertexUp: () => void
+  }
+  /** Board-side pad editing (flat view): the picked pad and the pick callback, threaded to PcbView. */
+  padEdit?: {
+    picked: { partId: string; padId: string } | null
+    onPick: (partId: string, padId: string) => void
   }
 }) {
   if (mode === 'exploded') {
@@ -226,6 +232,7 @@ export function BoardView({
             onOutlineVertexUp: outline.onVertexUp,
           }
         : {})}
+      {...(padEdit ? { pickedPad: padEdit.picked, onPadPick: padEdit.onPick } : {})}
     />
   )
 }

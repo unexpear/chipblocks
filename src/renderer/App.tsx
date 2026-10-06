@@ -269,6 +269,11 @@ import {
   placedLandOf,
   suggestPlacementFootprintId,
 } from './placement-footprint.ts'
+import {
+  commitPlacementPadEdit,
+  type PlacedPadEdit,
+  placementPadEditGate,
+} from './placement-pad-edit.ts'
 import { PlanPanel } from './plan-panel.tsx'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { projectNameFromPath, recordRecentProject } from './recent-projects.ts'
@@ -2851,6 +2856,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     partId: string
     text: string
   } | null>(null)
+  // Board-side per-pad editing (placement-pad-edit.ts): the pad picked on the board / in the
+  // inspector, and the last pad edit's outcome or named refusal.
+  const [pickedBoardPad, setPickedBoardPad] = useState<{ partId: string; padId: string } | null>(
+    null,
+  )
+  const [padEditNote, setPadEditNote] = useState<{ partId: string; text: string } | null>(null)
   const [sheetSettings, setSheetSettings] = useState<SheetSettings>(() => initial.boardFab.sheet)
   const [showSheet, setShowSheet] = useState(true)
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
@@ -9487,6 +9498,19 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           : {}),
       }
     : null
+  // Board pad pick → that pad is the one the inspector edits, and its part becomes the selection.
+  const boardPadEdit = {
+    picked: pickedBoardPad,
+    onPick: (partId: string, padId: string) => {
+      setPickedBoardPad({ partId, padId })
+      setNodes((current) =>
+        current.some((n) => n.id === partId && n.selected) &&
+        current.every((n) => n.id === partId || !n.selected)
+          ? current
+          : current.map((n) => ({ ...n, selected: n.id === partId })),
+      )
+    },
+  }
   // A selected circuit BLOCK → the pinout editor (instead of the part properties).
   const selectedBlock =
     selectedNode?.type === 'block' ? (selectedNode.data as { block?: BlockData }).block : undefined
@@ -9914,6 +9938,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   onMove: onBoardOutlineMove,
                   onVertexUp: onBoardOutlineVertexUp,
                 }}
+                padEdit={boardPadEdit}
               />
             ) : (
               <span style={{ fontSize: 12, color: THEME.textFaint }}>
@@ -11251,6 +11276,83 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                             placementFootprintNote?.partId === selectedPart.id
                               ? placementFootprintNote.text
                               : undefined,
+                          ...(() => {
+                            // Board-side per-pad editing: this placement's pads in board mm, the
+                            // named refusal that applies before a pad moves, and the edit itself.
+                            const placement = pcbBoard.placements.find(
+                              (p) => p.partId === selectedPart.id,
+                            )
+                            const land =
+                              placement !== undefined ? placedLandOf(placement) : undefined
+                            if (placement === undefined || land === undefined || !selectedNode) {
+                              return {}
+                            }
+                            const gate = placementPadEditGate(
+                              boardPartOfNode(selectedNode),
+                              placement,
+                            )
+                            const r = (v: number) => Math.round(v * 1e4) / 1e4 + 0
+                            return {
+                              boardPads: land.pads.map((p) => ({
+                                id: p.id,
+                                x: r(p.center.x),
+                                y: r(p.center.y),
+                                w: r(p.size.w),
+                                h: r(p.size.h),
+                              })),
+                              pickedPadId:
+                                pickedBoardPad?.partId === selectedPart.id
+                                  ? pickedBoardPad.padId
+                                  : undefined,
+                              onPickPad: (padId: string) =>
+                                setPickedBoardPad({ partId: selectedPart.id, padId }),
+                              padEditBlocked:
+                                gate !== undefined
+                                  ? `Pads not editable here (${gate.reason}): ${gate.detail}`
+                                  : undefined,
+                              onEditPad: (edit: PlacedPadEdit) => {
+                                const partId = selectedPart.id
+                                const note = (text: string) => setPadEditNote({ partId, text })
+                                const current = pcbBoardRef.current.placements.find(
+                                  (p) => p.partId === partId,
+                                )
+                                const parts = nodesRef.current.map(boardPartOfNode)
+                                const part = parts.find((p) => p.id === partId)
+                                if (current === undefined || part === undefined) {
+                                  note('Not on the board — no pad to edit.')
+                                  return
+                                }
+                                const result = commitPlacementPadEdit({
+                                  part,
+                                  placement: current,
+                                  edit,
+                                  otherParts: parts,
+                                })
+                                if (!result.ok) {
+                                  note(`Pad not edited (${result.reason}): ${result.detail}`)
+                                  return
+                                }
+                                setPickedBoardPad({ partId, padId: result.padId })
+                                if (result.unchanged) {
+                                  note(
+                                    `Pad ${result.padId} already matches ${result.footprint.id}.`,
+                                  )
+                                  return
+                                }
+                                void persistAuthoredFootprint(result.footprint)
+                                checkpointAction(`placement-pad:${partId}:${result.padId}`)
+                                // Pin the hand spot so the new bounds cannot move the part.
+                                setPcbPlacements((cur) => new Map(cur).set(partId, result.pin))
+                                note(
+                                  `Pad ${result.padId} saved into ${result.footprint.id}${result.sharedWith.length > 0 ? ` (also re-shapes ${result.sharedWith.join(', ')}, which share it)` : ''}.`,
+                                )
+                              },
+                              padEditNote:
+                                padEditNote?.partId === selectedPart.id
+                                  ? padEditNote.text
+                                  : undefined,
+                            }
+                          })(),
                         }
                       : {})}
                     onMaterial={(key, value) => {
@@ -11646,6 +11748,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                       onMove={onPcbMove}
                       onMoveStart={onPcbMoveStart}
                       onRotate={onPcbRotate}
+                      padEdit={boardPadEdit}
                     />
                     {pcbDrc.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useRef } from 'react'
+import { type CSSProperties, useEffect, useRef, useState } from 'react'
 import { acLossParameters } from '../ac-analysis.ts'
 import { footprintForPart, footprintOptions } from './footprint-assignment.ts'
 import { FootprintView } from './footprint-view.tsx'
@@ -11,6 +11,7 @@ import {
   sourceWaveform,
 } from './part-defaults.ts'
 import type { PartReading } from './part-readings.ts'
+import type { PlacedPadEdit } from './placement-pad-edit.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 import { isUserFootprint } from './user-footprints.ts'
@@ -369,6 +370,20 @@ export type PartInspectorProps = {
   /** The last re-derive's outcome or named refusal, shown under the button. */
   placementFootprintNote?: string | undefined
   /**
+   * Board-side per-pad editing (placement-pad-edit.ts): this placement's pads as the board shows them
+   * (board mm). Absent ⇒ no pad editor (the part is not on the board).
+   */
+  boardPads?: BoardPadRow[] | undefined
+  /** The pad picked for editing — on the board by click, or from the list here. */
+  pickedPadId?: string | undefined
+  onPickPad?: (padId: string) => void
+  /** The named refusal that applies before any pad moves (built-in / provisional / role-sensitive). */
+  padEditBlocked?: string | undefined
+  /** Apply one pad edit (board mm) to the placement's user-owned footprint. */
+  onEditPad?: (edit: PlacedPadEdit) => void
+  /** The last pad edit's outcome or named refusal. */
+  padEditNote?: string | undefined
+  /**
    * Change a material ref. Distinct from onEnum so the App can react physically —
    * e.g. an LED's n_side re-derives its color + forward voltage from the chosen
    * semiconductor's bandgap. The curated color picker stays on onEnum.
@@ -475,6 +490,133 @@ function ScalarField({
   )
 }
 
+/** One placed pad as the board shows it (board mm, board axes). */
+export type BoardPadRow = { id: string; x: number; y: number; w: number; h: number }
+
+const PAD_FIELDS = ['x', 'y', 'w', 'h'] as const
+
+/**
+ * Board pads — edit one placed pad's centre / size (board mm) or turn it a quarter turn. The edit is
+ * written into the placement's user-owned footprint; a built-in / provisional / role-sensitive land
+ * shows its named refusal instead of the fields.
+ */
+function BoardPadEditor({
+  pads,
+  pickedPadId,
+  onPick,
+  blocked,
+  onEdit,
+  note,
+}: {
+  pads: BoardPadRow[]
+  pickedPadId: string | undefined
+  onPick: ((padId: string) => void) | undefined
+  blocked: string | undefined
+  onEdit: ((edit: PlacedPadEdit) => void) | undefined
+  note: string | undefined
+}) {
+  const pad = pads.find((p) => p.id === pickedPadId) ?? pads[0]
+  if (pad === undefined) return null
+  return (
+    <>
+      <div style={sectionLabel}>Board pads</div>
+      {blocked !== undefined ? (
+        <div style={sourceNote}>{blocked}</div>
+      ) : (
+        <>
+          <select
+            value={pad.id}
+            onChange={(e) => onPick?.(e.target.value)}
+            className="nodrag"
+            style={{ ...field, width: '100%', marginBottom: 4 }}
+            title="The pad to edit — or click a pad on the board"
+          >
+            {pads.map((p) => (
+              <option key={p.id} value={p.id}>
+                Pad {p.id}
+              </option>
+            ))}
+          </select>
+          {/* Keyed on the pad's board geometry: a board pick or an applied edit refreshes the fields. */}
+          <PadFields
+            key={`${pad.id}:${pad.x},${pad.y},${pad.w},${pad.h}`}
+            pad={pad}
+            onEdit={onEdit}
+          />
+        </>
+      )}
+      {note !== undefined ? <div style={sourceNote}>{note}</div> : null}
+    </>
+  )
+}
+
+function PadFields({
+  pad,
+  onEdit,
+}: {
+  pad: BoardPadRow
+  onEdit: ((edit: PlacedPadEdit) => void) | undefined
+}) {
+  const [draft, setDraft] = useState(() => ({
+    x: String(pad.x),
+    y: String(pad.y),
+    w: String(pad.w),
+    h: String(pad.h),
+  }))
+  const parsed = PAD_FIELDS.map((k) => Number(draft[k]))
+  const valid = PAD_FIELDS.every((k) => draft[k].trim() !== '') && parsed.every(Number.isFinite)
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto 1fr', gap: 3 }}>
+        {PAD_FIELDS.map((k) => (
+          <label key={k} style={{ display: 'contents' }}>
+            <span style={{ fontSize: 10, color: THEME.textMuted, alignSelf: 'center' }}>
+              {k.toUpperCase()}
+            </span>
+            <input
+              type="number"
+              step={0.05}
+              value={draft[k]}
+              onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
+              className="nodrag"
+              style={{ ...field, width: '100%', minWidth: 0 }}
+              aria-label={`Pad ${pad.id} ${k} (mm)`}
+            />
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
+        <button
+          type="button"
+          className="nodrag"
+          disabled={!valid || onEdit === undefined}
+          style={{ ...deriveButton, marginTop: 0, flex: 1 }}
+          title="Write this pad's board centre and size (mm) into the placement's user-owned footprint"
+          onClick={() => {
+            const [x, y, w, h] = parsed as [number, number, number, number]
+            onEdit?.({ padId: pad.id, x, y, w, h })
+          }}
+        >
+          Apply pad
+        </button>
+        <button
+          type="button"
+          className="nodrag"
+          disabled={onEdit === undefined}
+          style={{ ...deriveButton, marginTop: 0, flex: 1 }}
+          title="Turn this pad a quarter turn about its centre (its width and height swap)"
+          onClick={() => onEdit?.({ padId: pad.id, quarterTurn: true })}
+        >
+          Turn 90°
+        </button>
+      </div>
+      <div style={sourceNote}>
+        Board mm. Saved into this part's user-owned footprint, labeled board-derived.
+      </div>
+    </>
+  )
+}
+
 export function PartInspector({
   selected,
   reading,
@@ -486,6 +628,12 @@ export function PartInspector({
   onEditOwnedFootprint,
   onFootprintFromPlacement,
   placementFootprintNote,
+  boardPads,
+  pickedPadId,
+  onPickPad,
+  padEditBlocked,
+  onEditPad,
+  padEditNote,
   onMaterial,
   onDeriveResistance,
   projectAmbientC,
@@ -643,6 +791,16 @@ export function PartInspector({
             ) : null}
             {placementFootprintNote !== undefined ? (
               <div style={sourceNote}>{placementFootprintNote}</div>
+            ) : null}
+            {boardPads !== undefined ? (
+              <BoardPadEditor
+                pads={boardPads}
+                pickedPadId={pickedPadId}
+                onPick={onPickPad}
+                blocked={padEditBlocked}
+                onEdit={onEditPad}
+                note={padEditNote}
+              />
             ) : null}
             <FootprintView footprint={fp} pxPerMm={26} />
           </>

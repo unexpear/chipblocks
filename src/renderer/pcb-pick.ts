@@ -1,4 +1,5 @@
-import type { PadBox } from './pcb-board.ts'
+import type { Footprint } from './footprint.ts'
+import { type PadBox, type Placement, placePoint } from './pcb-board.ts'
 import type { CopperTrace } from './pcb-route.ts'
 
 /**
@@ -57,4 +58,22 @@ export function hitCopper(
     }
   }
   return best !== null ? { at: best.at, net: best.net } : null
+}
+
+/**
+ * Which of ONE placement's pads is under a board point (mm) — its pad id, or null. Each pad is its
+ * placed copper box (a quarter turn swaps w/h); the last-drawn pad wins where boxes touch. Board-side
+ * pad editing uses this to pick the pad a click landed on.
+ */
+export function hitPlacedPad(placement: Placement, footprint: Footprint, mm: Pt2): string | null {
+  const swap = placement.rotation === 90 || placement.rotation === 270
+  for (let i = footprint.pads.length - 1; i >= 0; i--) {
+    const pad = footprint.pads[i]
+    if (pad === undefined) continue
+    const c = placePoint(placement, pad.center)
+    const w = swap ? pad.size.h : pad.size.w
+    const h = swap ? pad.size.w : pad.size.h
+    if (Math.abs(mm.x - c.x) <= w / 2 && Math.abs(mm.y - c.y) <= h / 2) return pad.id
+  }
+  return null
 }

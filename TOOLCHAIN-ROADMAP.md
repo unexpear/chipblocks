@@ -236,12 +236,28 @@ that can be *authored* OR *derived*, always present, always matching.
    the fit check rolls the library back: `does-not-fit`, `terminal-unmapped`, `pinout-changed` (a
    terminal would solder to a different pad — e.g. a TO-92 copy loses its per-footprint pinout, so
    it is refused rather than re-pinned), `breaks-other-parts` (a shared user id that would stop
-   fitting another part). The part inspector has a "Footprint from placement" action. Still open:
-   the board has no per-pad editing yet, so the in-app action re-derives the land as placed (a
-   built-in fork or a courtyard/label refresh); hand-nudged pad geometry reaches it through the API.
+   fitting another part). The part inspector has a "Footprint from placement" action.
+   Board-side per-pad editing (2026-10-05 slice): `placement-pad-edit.ts` edits ONE placed pad —
+   its board centre and size (board mm, board axes) or a quarter turn (w/h swap; pads have no free
+   angle in this model) — and feeds the edited land to `commitPlacementFootprint`, so the change
+   lands in the placement's own user-owned footprint and re-places onto the same spot (the part is
+   pinned). Pad ids, shape, type, drill and flags are carried, never renamed, so the existing pin →
+   pad map is kept, not re-invented. A click on a pad in the flat board view picks it (`hitPlacedPad`
+   in `pcb-pick.ts`, outlined on the board, selects the part); the part inspector's "Board pads"
+   section edits X / Y / W / H, "Apply pad" and "Turn 90°". `placementPadEditGate` names the refusal
+   before any pad moves and the inspector shows it instead of the fields: `builtin-shadow` (a cited
+   package is not edited in place — fork it with "Footprint from placement" first; the suggested id
+   rides on the refusal), `provisional` (stays generated and labeled), `role-sensitive` (declaration
+   order would invent the pinout). Edit-time refusals: `pad-not-found`, `bad-pad-edit` (non-finite or
+   ≤ 0, or a circle given two diameters), plus every re-derive refusal (`overlapping-pads`,
+   `invalid-geometry`, `terminal-unmapped`, `pinout-changed`, `breaks-other-parts`) with the library
+   rolled back. An edited land is labeled `derived` / low confidence; a shared user id re-shapes every
+   part on it and the result names them. Still open: drag-handles on the pad itself (edits are typed
+   numbers), pad add / delete / rename and shape changes on the board (the footprint editor owns
+   those), and the circuit-block inspector has no pad editor yet (the model handles chip pins).
 
 Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
 the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop, board/fabrication
-parity (paste, mask, silk vs fab), richer terminal→pad maps, and chip-level author-or-derive above
-and place→footprint re-derive are the current footprint-parity slices. Still open beyond this
-slice: board-side per-pad editing that feeds the re-derive, and Gerber viewer generality.
+parity (paste, mask, silk vs fab), richer terminal→pad maps, chip-level author-or-derive above,
+place→footprint re-derive, and board-side per-pad editing are the current footprint-parity slices.
+Still open beyond this slice: drag-to-edit pad handles on the board, and Gerber viewer generality.

@@ -26,7 +26,7 @@ import {
   measureDelta,
   measureDistanceMm,
 } from './pcb-measure.ts'
-import { hitCopper, hitPad } from './pcb-pick.ts'
+import { hitCopper, hitPad, hitPlacedPad } from './pcb-pick.ts'
 import { ALL_COPPER_LAYERS, type CopperLayer, type CopperTrace, type Via } from './pcb-route.ts'
 import { type Bounds, clientToView, fitView, panByPx, type View, zoomAt } from './pcb-viewport.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
@@ -198,6 +198,8 @@ export function PcbView({
   onOutlineVertexDown,
   onOutlineMove,
   onOutlineVertexUp,
+  pickedPad = null,
+  onPadPick,
 }: {
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
@@ -259,6 +261,10 @@ export function PcbView({
   onOutlineVertexDown?: (index: number) => void
   onOutlineMove?: (mm: { x: number; y: number }) => void
   onOutlineVertexUp?: () => void
+  /** BOARD-SIDE PAD EDIT: the pad picked for editing (outlined on the board), and the pick callback —
+   *  a click on a part that lands on one of its pads reports that pad (placement-pad-edit.ts). */
+  pickedPad?: { partId: string; padId: string } | null
+  onPadPick?: (partId: string, padId: string) => void
 }) {
   // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only, and
   // the route/via tools take over the pointer when on.
@@ -369,8 +375,14 @@ export function PcbView({
     if (e.button !== 0) return
     e.stopPropagation() // this part owns the gesture — don't also start a background pan
     setSelected(partId)
-    if (onMove === undefined) return
     const m = eventToMm(e)
+    if (onPadPick !== undefined) {
+      const pl = board.placements.find((p) => p.partId === partId)
+      const fp = pl !== undefined ? footprintByPlacement(pl) : undefined
+      const padId = pl !== undefined && fp !== undefined ? hitPlacedPad(pl, fp, m) : null
+      if (padId !== null) onPadPick(partId, padId)
+    }
+    if (onMove === undefined) return
     drag.current = { partId, offsetX: originX - m.x, offsetY: originY - m.y, moved: false }
     svgRef.current?.setPointerCapture(e.pointerId)
     e.preventDefault()
@@ -767,6 +779,25 @@ export function PcbView({
                 />
               )}
               {pads.map((p) => padShape(p, pxPerMm, `${pl.partId}-p${p.id}`))}
+              {mode === 'flat' &&
+                pickedPad?.partId === pl.partId &&
+                (() => {
+                  const p = fp.pads.find((q) => q.id === pickedPad.padId)
+                  if (p === undefined) return null
+                  return (
+                    <rect
+                      x={(p.center.x - p.size.w / 2) * pxPerMm - 2}
+                      y={(p.center.y - p.size.h / 2) * pxPerMm - 2}
+                      width={p.size.w * pxPerMm + 4}
+                      height={p.size.h * pxPerMm + 4}
+                      fill="none"
+                      stroke={SELECT}
+                      strokeWidth={1.4}
+                      pointerEvents="none"
+                      data-picked-pad={`${pl.partId}/${p.id}`}
+                    />
+                  )
+                })()}
             </g>
           )
         })}
