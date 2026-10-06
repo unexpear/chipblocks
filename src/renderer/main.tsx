@@ -25,6 +25,7 @@ if (bridge !== undefined) {
   // The native Settings ▸ Shortcuts item opens the keybinds panel; broadcast it so whichever
   // screen is mounted (project browser or editor) hears it and opens its panel.
   bridge.onShortcutsOpen?.(() => window.dispatchEvent(new Event('chipblocks:shortcuts')))
+  bridge.onContentManagerOpen?.(() => window.dispatchEvent(new Event('chipblocks:content-manager')))
   bridge.onSymbolStyle?.((next) => {
     window.dispatchEvent(new CustomEvent(SYMBOL_STYLE_EVENT, { detail: next }))
   })

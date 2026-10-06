@@ -124,6 +124,25 @@ contextBridge.exposeInMainWorld('chipblocks', {
   getKeybinds: (): Promise<Record<string, string>> => ipcRenderer.invoke('keybinds:get'),
   setKeybinds: (binds: Record<string, string>): Promise<Record<string, string>> =>
     ipcRenderer.invoke('keybinds:set', binds),
+
+  // Plugin & Content Manager: community packs under ~/.chipblocks/libraries/.
+  // Main does raw I/O + local file picker; renderer owns format + license gate.
+  readContentIndex: (): Promise<string | null> => ipcRenderer.invoke('content:index-read'),
+  writeContentIndex: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('content:index-write', text),
+  readContentPack: (id: string): Promise<string | null> =>
+    ipcRenderer.invoke('content:pack-read', id),
+  writeContentPack: (
+    id: string,
+    text: string,
+  ): Promise<{ ok: boolean; path?: string; reason?: string }> =>
+    ipcRenderer.invoke('content:pack-write', id, text),
+  removeContentPack: (id: string): Promise<{ ok: boolean; reason?: string }> =>
+    ipcRenderer.invoke('content:pack-remove', id),
+  pickLocalContentPack: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>
+    ipcRenderer.invoke('content:pick-local'),
+  onContentManagerOpen: (callback: () => void) => subscribe('content-manager:open', callback),
+
   onShortcutsOpen: (callback: () => void) => subscribe('shortcuts:open', callback),
   // Clipboard (S19-v3-69): the Edit menu's Cut/Copy/Paste Parts items — the
   // renderer owns the clipboard, the menu just asks.

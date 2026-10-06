@@ -287,6 +287,13 @@ export function registerBuiltinParts(parts: Iterable<UserPart>): void {
   if (changed) publish()
 }
 
+// COMMUNITY pack parts - installed content-manager packs at origin community (OBJECT-MODEL.md section 5).
+// Kept separate from authored registry and builtinParts so a pack never lands in user-parts.json
+// (user_local) and never shadows a cited built-in. Resolution: authored -> community -> builtin.
+const communityParts = new Map<string, UserPart>()
+/** part id → pack id that contributed it (so one pack can be cleared without touching others). */
+const communityOwners = new Map<string, string>()
+
 // A tiny external store so React (the palette) re-renders when the registry changes. The module-global
 // Map is invisible to React; `snapshot` is a stable array rebuilt only on a mutation, and getSnapshot
 // returns the SAME reference until then — exactly what useSyncExternalStore needs to avoid render loops.
@@ -294,7 +301,7 @@ let snapshot: UserPart[] = []
 const listeners = new Set<() => void>()
 function publish(): void {
   // Built-ins first, then authored — the palette shows the catalog parts alongside the user's own.
-  snapshot = [...builtinParts.values(), ...registry.values()]
+  snapshot = [...builtinParts.values(), ...communityParts.values(), ...registry.values()]
   for (const listener of listeners) listener()
 }
 /** Subscribe to registry changes (returns an unsubscribe). Pairs with getUserPartsSnapshot. */
@@ -325,6 +332,55 @@ export function isReservedBuiltinId(id: string): boolean {
   return reservedBuiltinIds.has(id)
 }
 
+/**
+ * Replace one pack contribution in the community registry. Skips reserved built-in ids and ids
+ * already authored in the user registry (user_local wins). Returns how many parts are now owned
+ * by this pack after the swap.
+ */
+export function setCommunityPackParts(packId: string, parts: readonly UserPart[]): number {
+  for (const [id, owner] of [...communityOwners.entries()]) {
+    if (owner === packId) {
+      communityOwners.delete(id)
+      communityParts.delete(id)
+    }
+  }
+  let kept = 0
+  for (const p of parts) {
+    if (reservedBuiltinIds.has(p.id) || registry.has(p.id)) continue
+    const existingOwner = communityOwners.get(p.id)
+    if (existingOwner !== undefined && existingOwner !== packId) continue
+    communityParts.set(p.id, p)
+    communityOwners.set(p.id, packId)
+    kept++
+  }
+  publish()
+  return kept
+}
+
+/** Drop every part owned by one pack (disable / uninstall). */
+export function clearCommunityPackParts(packId: string): void {
+  let changed = false
+  for (const [id, owner] of [...communityOwners.entries()]) {
+    if (owner !== packId) continue
+    communityOwners.delete(id)
+    communityParts.delete(id)
+    changed = true
+  }
+  if (changed) publish()
+}
+
+/** Drop all community pack parts (tests / full reload). */
+export function clearAllCommunityParts(): void {
+  if (communityParts.size === 0) return
+  communityParts.clear()
+  communityOwners.clear()
+  publish()
+}
+
+export function getCommunityPackIdForPart(partId: string): string | undefined {
+  return communityOwners.get(partId)
+}
+
 /** Register a user part. Refuses (and warns) an id that collides with a built-in — returns success. */
 export function registerUserPart(part: UserPart): boolean {
   if (reservedBuiltinIds.has(part.id)) {
@@ -345,7 +401,7 @@ export function getUserPart(id: string): UserPart | undefined {
  * exactly like an authored one. `getUserPart` stays registry-only for the authoring/save paths.
  */
 export function resolveUserPart(id: string): UserPart | undefined {
-  return registry.get(id) ?? builtinParts.get(id)
+  return registry.get(id) ?? communityParts.get(id) ?? builtinParts.get(id)
 }
 export function isUserPart(id: string): boolean {
   return registry.has(id)

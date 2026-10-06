@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -663,6 +663,121 @@ function registerUserTemplatesHandlers(): void {
   )
 }
 
+// Plugin & Content Manager: community packs under ~/.chipblocks/libraries/<id>/pack.json
+// plus index.json. Main does raw I/O + the local-file picker; the renderer owns format,
+// license gate, enable/disable, and refuses remote installs.
+const contentLibrariesDir = () => join(app.getPath('home'), '.chipblocks', 'libraries')
+const contentIndexPath = () => join(contentLibrariesDir(), 'index.json')
+const contentPackPath = (id: string) => join(contentLibrariesDir(), id, 'pack.json')
+
+const PACK_ID_RE = /^[a-z][a-z0-9_]*$/
+
+function registerContentManagerHandlers(window: BrowserWindow): void {
+  ipcMain.removeHandler('content:index-read')
+  ipcMain.removeHandler('content:index-write')
+  ipcMain.removeHandler('content:pack-read')
+  ipcMain.removeHandler('content:pack-write')
+  ipcMain.removeHandler('content:pack-remove')
+  ipcMain.removeHandler('content:pick-local')
+
+  ipcMain.handle('content:index-read', async (): Promise<string | null> => {
+    try {
+      return await readFile(contentIndexPath(), 'utf8')
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle(
+    'content:index-write',
+    async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
+      const path = contentIndexPath()
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, text, 'utf8')
+        return { ok: true, path }
+      } catch (error) {
+        dialog.showErrorBox(
+          'Could not save content-manager index',
+          `Writing failed: ${String(error)}`,
+        )
+        return { ok: false }
+      }
+    },
+  )
+
+  ipcMain.handle('content:pack-read', async (_event, id: string): Promise<string | null> => {
+    if (typeof id !== 'string' || !PACK_ID_RE.test(id)) return null
+    try {
+      return await readFile(contentPackPath(id), 'utf8')
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle(
+    'content:pack-write',
+    async (
+      _event,
+      id: string,
+      text: string,
+    ): Promise<{ ok: boolean; path?: string; reason?: string }> => {
+      if (typeof id !== 'string' || !PACK_ID_RE.test(id)) {
+        return { ok: false, reason: 'Invalid pack id.' }
+      }
+      if (typeof text !== 'string') return { ok: false, reason: 'Pack text must be a string.' }
+      const path = contentPackPath(id)
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, text, 'utf8')
+        return { ok: true, path }
+      } catch (error) {
+        return { ok: false, reason: `Writing pack failed: ${String(error)}` }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'content:pack-remove',
+    async (_event, id: string): Promise<{ ok: boolean; reason?: string }> => {
+      if (typeof id !== 'string' || !PACK_ID_RE.test(id)) {
+        return { ok: false, reason: 'Invalid pack id.' }
+      }
+      const dir = join(contentLibrariesDir(), id)
+      // Only delete under ~/.chipblocks/libraries/<id> - never a path the renderer invents.
+      try {
+        await rm(dir, { recursive: true, force: true })
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, reason: `Removing pack failed: ${String(error)}` }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'content:pick-local',
+    async (): Promise<{ ok: boolean; text?: string; reason?: string }> => {
+      const picked = await dialog.showOpenDialog(window, {
+        title: 'Install ChipBlocks content pack',
+        filters: [
+          { name: 'ChipBlocks content pack', extensions: ['json'] },
+          { name: 'All files', extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+      })
+      if (picked.canceled || picked.filePaths[0] === undefined) {
+        return { ok: false, reason: 'Install cancelled.' }
+      }
+      try {
+        const text = await readFile(picked.filePaths[0], 'utf8')
+        return { ok: true, text }
+      } catch (error) {
+        return { ok: false, reason: `Could not read pack file: ${String(error)}` }
+      }
+    },
+  )
+}
+
 // Custom application menu — replaces Electron's default. Top level: File, Edit,
 // View (with the old Window items folded in), Settings, Shortcuts. Every label
 // says what the item actually does. Settings drives the renderer over IPC: a
@@ -856,6 +971,15 @@ function installMenu(window: BrowserWindow): void {
       ],
     },
     {
+      label: 'Tools',
+      submenu: [
+        {
+          label: 'Plugin & Content Manager.',
+          click: () => window.webContents.send('content-manager:open'),
+        },
+      ],
+    },
+    {
       label: 'Shortcuts',
       submenu: [
         {
@@ -990,6 +1114,7 @@ function createWindow(): void {
   registerKeybindHandlers(window)
   registerUserLibraryHandlers()
   registerUserTemplatesHandlers()
+  registerContentManagerHandlers(window)
 }
 
 app.whenReady().then(async () => {

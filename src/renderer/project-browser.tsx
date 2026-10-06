@@ -10,6 +10,7 @@ import {
 } from './recent-projects.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
+import { useContentManager } from './use-content-manager.tsx'
 import { useShortcuts } from './use-shortcuts.tsx'
 import {
   deserializeUserTemplates,
@@ -495,6 +496,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   const ACCENT_TEXT = light ? THEME.accentBlueDeep : THEME.accentBlueSoft
   // Settings ▸ Shortcuts works here too (not only in the editor).
   const { panel: shortcutsPanel } = useShortcuts(light)
+  const { panel: contentManagerPanel } = useContentManager(light)
 
   const [nameEdited, setNameEdited] = useState(false)
   const category = useMemo(() => CATEGORIES.find((c) => c.id === catId), [catId])
@@ -1444,6 +1446,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
         </div>
       ) : null}
       {shortcutsPanel}
+      {contentManagerPanel}
     </div>
   )
 }

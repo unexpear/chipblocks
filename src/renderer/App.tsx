@@ -312,6 +312,7 @@ import { checkpoint, dropLastCheckpoint, emptyHistory, redo, undo } from './undo
 import { formatEng } from './units.ts'
 import { useBode } from './use-bode.ts'
 import { useConnectTool } from './use-connect-tool.ts'
+import { useContentManager } from './use-content-manager.tsx'
 import { useDistortion } from './use-distortion.ts'
 import { useMultimeter } from './use-multimeter.ts'
 import { useOscilloscope } from './use-oscilloscope.ts'
@@ -427,6 +428,16 @@ declare global {
       writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
       readUserTemplates?: () => Promise<string | null>
       writeUserTemplates?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      readContentIndex?: () => Promise<string | null>
+      writeContentIndex?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      readContentPack?: (id: string) => Promise<string | null>
+      writeContentPack?: (
+        id: string,
+        text: string,
+      ) => Promise<{ ok: boolean; path?: string; reason?: string }>
+      removeContentPack?: (id: string) => Promise<{ ok: boolean; reason?: string }>
+      pickLocalContentPack?: () => Promise<{ ok: boolean; text?: string; reason?: string }>
+      onContentManagerOpen?: (callback: () => void) => void
       onSaveTemplateRequest?: (callback: () => void) => void
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
@@ -5140,6 +5151,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // Keybinds + the Shortcuts panel in one hook so the editor (keydown matching) and the project
   // browser both open it from Settings ▸ Shortcuts; the open request is broadcast (main.tsx).
   const { keybinds, isOpen: shortcutsOpen, panel: shortcutsPanel } = useShortcuts(light)
+  const { isOpen: contentManagerOpen, panel: contentManagerPanel } = useContentManager(light)
 
   // Clipboard (S19-v3-69): desktop-style copy/cut/paste with a Win+V-style
   // history — 15 copies, one cut at a time. Ctrl+V pastes the newest at the
@@ -5296,7 +5308,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       if (!activeRef.current) return // a background tab must not act on global keystrokes
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-      if (shortcutsOpen) return // the panel owns the keyboard while open
+      if (shortcutsOpen || contentManagerOpen) return // modal panels own the keyboard while open
       // A modal marked data-modal owns the keyboard too. The text-field guard above isn't enough for a
       // dialog whose main surface is a CANVAS: with the footprint editor open, Delete would otherwise
       // fall through and destroy the selected parts on the schematic behind it.
@@ -5363,6 +5375,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   }, [
     keybinds,
     shortcutsOpen,
+    contentManagerOpen,
     workspaceMode,
     doRotate,
     doDelete,
@@ -9499,6 +9512,39 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       }
     : null
   // Board pad pick → that pad is the one the inspector edits, and its part becomes the selection.
+  // Shared by the inspector's typed fields and the flat board's pad drag / resize handles.
+  const applyBoardPadEdit = (partId: string, edit: PlacedPadEdit) => {
+    const note = (text: string) => setPadEditNote({ partId, text })
+    const current = pcbBoardRef.current.placements.find((p) => p.partId === partId)
+    const parts = nodesRef.current.map(boardPartOfNode)
+    const part = parts.find((p) => p.id === partId)
+    if (current === undefined || part === undefined) {
+      note('Not on the board — no pad to edit.')
+      return
+    }
+    const result = commitPlacementPadEdit({
+      part,
+      placement: current,
+      edit,
+      otherParts: parts,
+    })
+    if (!result.ok) {
+      note(`Pad not edited (${result.reason}): ${result.detail}`)
+      return
+    }
+    setPickedBoardPad({ partId, padId: result.padId })
+    if (result.unchanged) {
+      note(`Pad ${result.padId} already matches ${result.footprint.id}.`)
+      return
+    }
+    void persistAuthoredFootprint(result.footprint)
+    checkpointAction(`placement-pad:${partId}:${result.padId}`)
+    // Pin the hand spot so the new bounds cannot move the part.
+    setPcbPlacements((cur) => new Map(cur).set(partId, result.pin))
+    note(
+      `Pad ${result.padId} saved into ${result.footprint.id}${result.sharedWith.length > 0 ? ` (also re-shapes ${result.sharedWith.join(', ')}, which share it)` : ''}.`,
+    )
+  }
   const boardPadEdit = {
     picked: pickedBoardPad,
     onPick: (partId: string, padId: string) => {
@@ -9509,6 +9555,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           ? current
           : current.map((n) => ({ ...n, selected: n.id === partId })),
       )
+    },
+    onEdit: applyBoardPadEdit,
+    isPadEditable: (partId: string) => {
+      const placement = pcbBoardRef.current.placements.find((p) => p.partId === partId)
+      const part = nodesRef.current.map(boardPartOfNode).find((p) => p.id === partId)
+      if (placement === undefined || part === undefined) return false
+      return placementPadEditGate(part, placement) === undefined
     },
   }
   // A selected circuit BLOCK → the pinout editor (instead of the part properties).
@@ -10834,6 +10887,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
 
         {/* Shortcuts panel — every key and control, viewable and editable. */}
         {shortcutsPanel}
+        {contentManagerPanel}
 
         {/* Field-lens legend — the true contour levels behind the bands. */}
         {lens === 'field' ? (
@@ -11311,41 +11365,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                   ? `Pads not editable here (${gate.reason}): ${gate.detail}`
                                   : undefined,
                               onEditPad: (edit: PlacedPadEdit) => {
-                                const partId = selectedPart.id
-                                const note = (text: string) => setPadEditNote({ partId, text })
-                                const current = pcbBoardRef.current.placements.find(
-                                  (p) => p.partId === partId,
-                                )
-                                const parts = nodesRef.current.map(boardPartOfNode)
-                                const part = parts.find((p) => p.id === partId)
-                                if (current === undefined || part === undefined) {
-                                  note('Not on the board — no pad to edit.')
-                                  return
-                                }
-                                const result = commitPlacementPadEdit({
-                                  part,
-                                  placement: current,
-                                  edit,
-                                  otherParts: parts,
-                                })
-                                if (!result.ok) {
-                                  note(`Pad not edited (${result.reason}): ${result.detail}`)
-                                  return
-                                }
-                                setPickedBoardPad({ partId, padId: result.padId })
-                                if (result.unchanged) {
-                                  note(
-                                    `Pad ${result.padId} already matches ${result.footprint.id}.`,
-                                  )
-                                  return
-                                }
-                                void persistAuthoredFootprint(result.footprint)
-                                checkpointAction(`placement-pad:${partId}:${result.padId}`)
-                                // Pin the hand spot so the new bounds cannot move the part.
-                                setPcbPlacements((cur) => new Map(cur).set(partId, result.pin))
-                                note(
-                                  `Pad ${result.padId} saved into ${result.footprint.id}${result.sharedWith.length > 0 ? ` (also re-shapes ${result.sharedWith.join(', ')}, which share it)` : ''}.`,
-                                )
+                                applyBoardPadEdit(selectedPart.id, edit)
                               },
                               padEditNote:
                                 padEditNote?.partId === selectedPart.id

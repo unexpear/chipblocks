@@ -15,7 +15,7 @@ Canonical measured implementation status and verification gates: [PROJECT-STATUS
 | Calculator Tools | trace width, resistor values, … | ✅ **have** — the Math panel, computed on your REAL live circuit |
 | Drawing Sheet Editor | page border + title block | ✅ **have** — just added |
 | Symbol Editor | author a part's schematic symbol | ✅ **have** — in-app authoring from the New Part dialog; saved drawings persist with user parts |
-| Plugin & Content Manager | install community libraries | ◐ catalog is origin-extensible; no install UI |
+| Plugin & Content Manager | install community libraries | ◐ **have (local-pack slice)** - browse cited catalog + install/enable/disable validated local packs under ~/.chipblocks/libraries/; not a marketplace / no remote auto-install |
 | Footprint Editor | a part's physical pads / outline | ✅ **have** — in-app pad/courtyard authoring with validation and persistence |
 | PCB Editor | place parts + route copper | ◐ board workspace, placement, routing, DRC, and fab export are mounted; broader PCB parity remains |
 | Gerber Viewer | check the factory files | ◐ Check Gerbers, next to Export ZIP, plots the ChipBlocks Gerber and Excellon the manufacturing ZIP writes (that dialect only — not a general gerbview) |
@@ -43,8 +43,7 @@ already have; ticks the PRD's defining metric (an outside user exports a manufac
 
 5. **User-made parts** — in-app Symbol + Footprint authoring is shipped; continue tightening the shared
    library and edit/reload flows.
-6. **Plugin / Content Manager** — install community catalogs (community/user origins exist; the install
-   UI doesn't).
+6. **Plugin / Content Manager** - **local-pack install UI shipped (2026-10-06 slice)**: Tools -> Plugin & Content Manager browses the cited FINAL-STATE-VISION catalog, installs a user-picked local pack after format + permissive-license validation into `~/.chipblocks/libraries/<id>/`, enable/disable/uninstall. Refuses remote URL installs and GPL/unknown licenses. Not a marketplace; signatures (ADR-010) still open.
 
 ## Track 3 — polish
 
@@ -252,12 +251,36 @@ that can be *authored* OR *derived*, always present, always matching.
    ≤ 0, or a circle given two diameters), plus every re-derive refusal (`overlapping-pads`,
    `invalid-geometry`, `terminal-unmapped`, `pinout-changed`, `breaks-other-parts`) with the library
    rolled back. An edited land is labeled `derived` / low confidence; a shared user id re-shapes every
-   part on it and the result names them. Still open: drag-handles on the pad itself (edits are typed
-   numbers), pad add / delete / rename and shape changes on the board (the footprint editor owns
-   those), and the circuit-block inspector has no pad editor yet (the model handles chip pins).
+   part on it and the result names them. Board-side pad drag handles (2026-10-06 slice): on the flat
+   board view, drag a picked editable pad to move it, or pull an edge/corner handle to resize W/H
+   (board mm, board axes). `padEditFromDrag` turns the pointer delta into a `PlacedPadEdit`; commit
+   is still `commitPlacementPadEdit` (same gates as typed X/Y/W/H — built-in / provisional /
+   role-sensitive refuse; inspector fields keep working). Preview follows the pointer; the edit
+   commits on release. Still open: pad add / delete / rename and shape changes on the board (the
+   footprint editor owns those), and the circuit-block inspector has no pad editor yet (the model
+   handles chip pins).
 
 Extends the **Footprint Editor** row above and **Track 2 item 5** (footprint authoring), and ties into
 the "edit on the canvas, not in side dialogs" preference. The part ↔ board loop, board/fabrication
 parity (paste, mask, silk vs fab), richer terminal→pad maps, chip-level author-or-derive above,
-place→footprint re-derive, and board-side per-pad editing are the current footprint-parity slices.
-Still open beyond this slice: drag-to-edit pad handles on the board, and Gerber viewer generality.
+place→footprint re-derive, board-side per-pad editing, and pad drag handles are the current
+footprint-parity slices. Still open beyond this slice: Gerber viewer generality.
+
+### Plugin / Content Manager - local-pack slice (2026-10-06)
+
+Smallest honest Track 2 item 6: a **Plugin & Content Manager** UI (Tools menu) that browses the
+cited community-library catalog (FINAL-STATE-VISION.md) and installs **local** content packs
+into `~/.chipblocks/libraries/<id>/pack.json` after validating `chipblocks-content-pack` format
++ the open-hardware permissive license whitelist (OPEN-HARDWARE-ECOSYSTEM.md / ADR-010 candidate).
+Enabled packs register their parts at community origin (`user-parts.ts` community registry -
+does not write into `user-parts.json`).
+
+**Does:** browse catalog, install from local JSON, enable/disable, uninstall, persist index.
+
+**Refuses:** remote/network installs claiming success without validation; GPL/AGPL/LGPL/unknown
+licenses; malformed / future-version packs; marketplace / unsigned arbitrary-code framing.
+
+**Still open:** published GitHub pack fetch with signature verification (ADR-010), full catalog
+YAML overlay / block-groups loading, footprint registration from packs, palette sections per
+library.
+
