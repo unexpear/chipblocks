@@ -7,6 +7,7 @@ import {
   type SolveOptions,
   solveDC,
 } from './dc-solver.ts'
+import { readScalarParam } from './instance-params.ts'
 import { pastDeadline, solveDeadline } from './solver-budget.ts'
 import { SparseSession } from './sparse-linear.ts'
 
@@ -236,9 +237,6 @@ export function solveDCByGminStepping(world: World, options?: SolveOptions): Sol
   return last ?? solveDC(world, { ...levelOptions })
 }
 
-/** Artificial ground capacitance for pseudo-transient (1 nF). Large enough that early steps are
- *  soft, small enough that a settled circuit's companion vanishes as Δt grows. */
-const PSEUDO_CAP_F = 1e-9
 /** First time step — short, so a wild cold start cannot jump far in one Newton. */
 const PSEUDO_DT_INITIAL = 1e-9
 const PSEUDO_DT_MAX = 1e-3
@@ -248,10 +246,69 @@ const PSEUDO_DV_TOL = 1e-3
 const PSEUDO_SETTLE_STREAK = 2
 const PSEUDO_MAX_STEPS = 200
 const PSEUDO_LEVEL_MAX_ITERATIONS = 100
+/** Bounds on adaptive pseudo-C (farads). Floor keeps a tiny circuit from vanishing; ceiling
+ *  keeps a near-short from stampeding Newton with a huge companion. */
+const PSEUDO_CAP_MIN_F = 1e-15
+const PSEUDO_CAP_MAX_F = 1e-6
+/** Fallback conductance (siemens) when the netlist has no readable R / MOSFET kp / C scale. */
+const PSEUDO_G_FALLBACK = 1e-3
+
+/**
+ * Characteristic conductance of a circuit for sizing the pseudo-transient companion.
+ * Geometric mean of positive resistor conductances, MOSFET kp (A/V² ≈ S at ~1 V), and
+ * C/τ₀ from existing capacitors — the scale the artificial C should match so early steps
+ * are soft relative to THIS circuit, not a fixed 1 nF guess.
+ */
+export function estimateCircuitConductanceScale(world: World): number {
+  const samples: number[] = []
+  for (const inst of world.instances.values()) {
+    if (inst.kind_ref !== 'primitive_device') continue
+    const def = inst.definition
+    if (
+      def === 'resistor' ||
+      def === 'potentiometer' ||
+      def === 'thermistor' ||
+      def === 'photoresistor'
+    ) {
+      const R = readScalarParam(inst, 'resistance')
+      if (R !== undefined && R > 0 && Number.isFinite(R)) samples.push(1 / R)
+    } else if (def === 'capacitor') {
+      const C = readScalarParam(inst, 'capacitance')
+      if (C !== undefined && C > 0 && Number.isFinite(C)) samples.push(C / PSEUDO_DT_INITIAL)
+    } else if (def === 'transistor_mosfet_nmos' || def === 'transistor_mosfet_pmos') {
+      const kp = readScalarParam(inst, 'transconductance_parameter')
+      if (kp !== undefined && kp > 0 && Number.isFinite(kp)) samples.push(kp)
+    } else if (def === 'power_source') {
+      const rInt = readScalarParam(inst, 'internal_resistance')
+      if (rInt !== undefined && rInt > 0 && Number.isFinite(rInt)) samples.push(1 / rInt)
+    } else if (def === 'wire') {
+      const R = readScalarParam(inst, 'resistance')
+      if (R !== undefined && R > 0 && Number.isFinite(R)) samples.push(1 / R)
+    }
+  }
+  if (samples.length === 0) return PSEUDO_G_FALLBACK
+  let logSum = 0
+  for (const g of samples) logSum += Math.log(g)
+  const geo = Math.exp(logSum / samples.length)
+  return Number.isFinite(geo) && geo > 0 ? geo : PSEUDO_G_FALLBACK
+}
+
+/**
+ * Adaptive artificial ground capacitance for pseudo-transient: size C so the initial
+ * companion G = C/Δt₀ matches the circuit's characteristic conductance. Replaces the
+ * fixed 1 nF of 1d81a90. Still only used on intermediate coast steps — the final answer
+ * is always an ungapped real-circuit solve.
+ */
+export function adaptivePseudoCapacitance(world: World): number {
+  const G = estimateCircuitConductanceScale(world)
+  const C = G * PSEUDO_DT_INITIAL
+  return Math.min(PSEUDO_CAP_MAX_F, Math.max(PSEUDO_CAP_MIN_F, C))
+}
 
 /**
  * Robust DC operating-point finding by PSEUDO-TRANSIENT continuation — artificial capacitors from
- * every node to ground, marched with backward-Euler companion stamps (`pseudoCapacitance` /
+ * every node to ground (capacitance sized from the circuit's conductance scale — see
+ * `adaptivePseudoCapacitance`), marched with backward-Euler companion stamps (`pseudoCapacitance` /
  * `pseudoDt` / `previousNodes` on `solveDC`) until voltages stop moving, then one REAL solve of
  * the circuit with no artificial C.
  *
@@ -286,6 +343,8 @@ export function solveDCByPseudoTransient(world: World, options?: SolveOptions): 
   let streak = 0
   let lastGood: Map<string, number> | undefined
 
+  const pseudoC = adaptivePseudoCapacitance(world)
+
   for (let step = 0; step < PSEUDO_MAX_STEPS; step++) {
     if (pastDeadline(deadline)) {
       const progress =
@@ -313,7 +372,7 @@ export function solveDCByPseudoTransient(world: World, options?: SolveOptions): 
 
     const sol = solveDC(world, {
       ...baseOptions,
-      pseudoCapacitance: PSEUDO_CAP_F,
+      pseudoCapacitance: pseudoC,
       pseudoDt: dt,
       ...(nodes.size > 0 ? { previousNodes: nodes, initialNodes: nodes } : {}),
     })

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Pseudo-transient DC continuation + logic-seed warm-start (Track 4).
  *
  * Accuracy contract matches source/gmin stepping: the final answer IS a real-circuit solve
@@ -8,6 +8,8 @@
 import { describe, expect, test } from 'vitest'
 import type { Instance, World } from '../src/cross-fk-validator.ts'
 import {
+  adaptivePseudoCapacitance,
+  estimateCircuitConductanceScale,
   solveDCByPseudoTransient,
   solveDCBySourceStepping,
   solveDCRobust,
@@ -179,5 +181,47 @@ describe('source stepping still preferred for easy BJT (regression)', () => {
     const ramped = solveDCBySourceStepping(commonEmitter(150))
     expect(ramped.status).toBe('solved')
     expect(maxNodeDiff(ramped, truth)).toBeLessThan(SOLVER_TOLERANCE_V)
+  })
+})
+
+describe('adaptive pseudo-capacitance from circuit scale', () => {
+  test('sizes C from resistor conductance scale (not fixed 1 nF)', () => {
+    const world = commonEmitter(150)
+    const G = estimateCircuitConductanceScale(world)
+    const C = adaptivePseudoCapacitance(world)
+    // Geometric mean of 1/100k and 1/470 ≈ 1.46e-4 S; C = G * 1e-9
+    expect(G).toBeGreaterThan(1e-5)
+    expect(G).toBeLessThan(1e-2)
+    expect(C).toBeCloseTo(G * 1e-9, 20)
+    expect(C).not.toBeCloseTo(1e-9, 12) // must not be the old fixed 1 nF
+    expect(C).toBeGreaterThanOrEqual(1e-15)
+    expect(C).toBeLessThanOrEqual(1e-6)
+  })
+
+  test('a kilo-ohm scale circuit gets a larger companion C than a mega-ohm one', () => {
+    const setR = (world: World, id: string, ohms: number) => {
+      const inst = world.instances.get(id)
+      expect(inst).toBeDefined()
+      if (inst === undefined) return
+      world.instances.set(id, {
+        ...inst,
+        parameters: { ...inst.parameters, resistance: scalar(ohms, 'ohm') },
+      } as Instance)
+    }
+    const lowZ = commonEmitter(150)
+    setR(lowZ, 'rc', 1000)
+    setR(lowZ, 'rb', 10000)
+    const highZ = commonEmitter(150)
+    setR(highZ, 'rc', 1e6)
+    setR(highZ, 'rb', 10e6)
+    expect(adaptivePseudoCapacitance(lowZ)).toBeGreaterThan(adaptivePseudoCapacitance(highZ))
+  })
+
+  test('adaptive coast still ungapped-converges to the direct OP', () => {
+    const truth = solveDC(commonEmitter(150))
+    expect(truth.status).toBe('solved')
+    const ptr = solveDCByPseudoTransient(commonEmitter(150))
+    expect(ptr.status).toBe('solved')
+    expect(maxNodeDiff(ptr, truth)).toBeLessThan(SOLVER_TOLERANCE_V)
   })
 })
