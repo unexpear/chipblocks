@@ -5,6 +5,7 @@ import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
 import {
   getAuthoredUserParts,
+  getBuiltinParts,
   getUserPartsSnapshot,
   listCommunityPackSections,
   reserveBuiltinIds,
@@ -288,6 +289,66 @@ export function PaletteItems({ filter }: { filter?: string }) {
 }
 
 /**
+ * Catalog commercial parts (regulator, oscillator, flash, FPGA) registered as built-ins.
+ * They are placeable from the drag palette — community packs and authored parts have their own sections.
+ */
+export function catalogPartsForPalette(): readonly { id: string; name: string }[] {
+  return getBuiltinParts()
+}
+
+export function CatalogPaletteItems({ filter }: { filter?: string }) {
+  useSyncExternalStore(subscribeUserParts, getUserPartsSnapshot)
+  const parts = catalogPartsForPalette()
+  const query = (filter ?? '').trim().toLowerCase()
+  const shown = query
+    ? parts.filter(
+        (p) => p.name.toLowerCase().includes(query) || p.id.toLowerCase().includes(query),
+      )
+    : parts
+  if (shown.length === 0) return null
+  return (
+    <>
+      <div
+        style={{
+          color: THEME.textMuted,
+          fontSize: 10,
+          fontFamily: 'system-ui, sans-serif',
+          margin: '8px 2px 2px',
+        }}
+      >
+        Catalog — drag to place
+      </div>
+      {shown.map((part) => (
+        // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source
+        <div
+          key={part.id}
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData(DEFINITION_MIME, part.id)
+            event.dataTransfer.effectAllowed = 'move'
+          }}
+          title={`Drag ${part.name} onto the canvas`}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 2,
+            padding: '8px 6px',
+            border: `1px solid ${THEME.borderSubtle}`,
+            borderRadius: 6,
+            background: THEME.surfaceRaised,
+            cursor: 'grab',
+          }}
+        >
+          <DeviceGlyph definition={part.id} />
+          <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+        </div>
+      ))}
+    </>
+  )
+}
+
+/**
  * The user-authored parts section: every custom part the user has made (via the New-Part dialog),
  * draggable onto the canvas exactly like a built-in. It subscribes to the user-parts registry through
  * useSyncExternalStore, so a newly saved part appears here the moment it's registered.
@@ -443,6 +504,7 @@ export function Palette({ blocks }: { blocks: { id: string; name: string }[] }) 
         }}
       />
       <PaletteItems filter={query} />
+      <CatalogPaletteItems filter={query} />
       <UserPartPaletteItems filter={query} />
       <CommunityPackPaletteItems filter={query} />
       <BlockPaletteItems blocks={blocks} filter={query} />
