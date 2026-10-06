@@ -293,6 +293,8 @@ export function registerBuiltinParts(parts: Iterable<UserPart>): void {
 const communityParts = new Map<string, UserPart>()
 /** part id → pack id that contributed it (so one pack can be cleared without touching others). */
 const communityOwners = new Map<string, string>()
+/** pack id → display name for palette / part-picker library sections. */
+const communityPackMeta = new Map<string, { name: string }>()
 
 // A tiny external store so React (the palette) re-renders when the registry changes. The module-global
 // Map is invisible to React; `snapshot` is a stable array rebuilt only on a mutation, and getSnapshot
@@ -309,9 +311,20 @@ export function subscribeUserParts(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
-/** The current user parts as a STABLE reference (unchanged until the next mutation) — for React. */
+/** The current user parts as a STABLE reference (unchanged until the next mutation) — for React.
+ *  Includes catalog built-ins + community pack parts + authored parts (palette / picker consumers filter). */
 export function getUserPartsSnapshot(): readonly UserPart[] {
   return snapshot
+}
+
+/** Authored (user_local) parts only — excludes catalog built-ins and community pack parts. */
+export function getAuthoredUserParts(): readonly UserPart[] {
+  return [...registry.values()]
+}
+
+/** Community pack parts only (enabled packs). */
+export function getCommunityPartsSnapshot(): readonly UserPart[] {
+  return [...communityParts.values()]
 }
 
 // Built-in definition ids are OFF-LIMITS as user-part ids. The solver, symbols, and defaults all key off
@@ -337,7 +350,11 @@ export function isReservedBuiltinId(id: string): boolean {
  * already authored in the user registry (user_local wins). Returns how many parts are now owned
  * by this pack after the swap.
  */
-export function setCommunityPackParts(packId: string, parts: readonly UserPart[]): number {
+export function setCommunityPackParts(
+  packId: string,
+  parts: readonly UserPart[],
+  meta?: { name?: string },
+): number {
   for (const [id, owner] of [...communityOwners.entries()]) {
     if (owner === packId) {
       communityOwners.delete(id)
@@ -353,6 +370,13 @@ export function setCommunityPackParts(packId: string, parts: readonly UserPart[]
     communityOwners.set(p.id, packId)
     kept++
   }
+  if (kept > 0) {
+    communityPackMeta.set(packId, {
+      name: meta?.name !== undefined && meta.name.trim() !== '' ? meta.name.trim() : packId,
+    })
+  } else {
+    communityPackMeta.delete(packId)
+  }
   publish()
   return kept
 }
@@ -366,19 +390,54 @@ export function clearCommunityPackParts(packId: string): void {
     communityParts.delete(id)
     changed = true
   }
+  if (communityPackMeta.delete(packId)) changed = true
   if (changed) publish()
 }
 
 /** Drop all community pack parts (tests / full reload). */
 export function clearAllCommunityParts(): void {
-  if (communityParts.size === 0) return
+  if (communityParts.size === 0 && communityPackMeta.size === 0) return
   communityParts.clear()
   communityOwners.clear()
+  communityPackMeta.clear()
   publish()
 }
 
 export function getCommunityPackIdForPart(partId: string): string | undefined {
   return communityOwners.get(partId)
+}
+
+export type CommunityPackSection = {
+  packId: string
+  name: string
+  parts: UserPart[]
+}
+
+/**
+ * Enabled content-library sections for the palette / part picker — one section per pack that
+ * currently contributes at least one community part. Disabled / uninstalled packs are absent
+ * because clearCommunityPackParts drops their contribution.
+ */
+export function listCommunityPackSections(): CommunityPackSection[] {
+  const byPack = new Map<string, UserPart[]>()
+  for (const [partId, packId] of communityOwners) {
+    const part = communityParts.get(partId)
+    if (part === undefined) continue
+    const list = byPack.get(packId)
+    if (list) list.push(part)
+    else byPack.set(packId, [part])
+  }
+  const sections: CommunityPackSection[] = []
+  for (const [packId, parts] of byPack) {
+    const meta = communityPackMeta.get(packId)
+    sections.push({
+      packId,
+      name: meta?.name ?? packId,
+      parts: [...parts].sort((a, b) => a.name.localeCompare(b.name)),
+    })
+  }
+  sections.sort((a, b) => a.name.localeCompare(b.name) || a.packId.localeCompare(b.packId))
+  return sections
 }
 
 /** Register a user part. Refuses (and warns) an id that collides with a built-in — returns success. */

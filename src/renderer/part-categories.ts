@@ -14,6 +14,7 @@
  * registry, not this static list.
  */
 
+import { getCommunityPackIdForPart, listCommunityPackSections } from './user-parts.ts'
 import type { WorkspaceMode } from './workspace.ts'
 
 export type PartCategory = {
@@ -288,6 +289,11 @@ for (const category of PART_CATEGORIES) {
 
 /** The human label of a category id ("logic_gates" → "Logic gates"), or the id if unknown. */
 export function categoryLabelOf(categoryId: string): string {
+  if (categoryId.startsWith('library:')) {
+    const packId = categoryId.slice('library:'.length)
+    const section = listCommunityPackSections().find((s) => s.packId === packId)
+    return section !== undefined ? `Library: ${section.name}` : `Library: ${packId}`
+  }
   return CATEGORY_LABEL[categoryId] ?? categoryId
 }
 
@@ -296,10 +302,17 @@ export function categoryLabelOf(categoryId: string): string {
  * aren't in a static list — the generated display sizes, the catalog commercial parts, and any other
  * user-authored part (which lands in "My parts").
  */
+/** Category id prefix for an enabled content-library section. */
+export function communityLibraryCategoryId(packId: string): string {
+  return `library:${packId}`
+}
+
 export function categoryOf(definition: string): string {
   if (Object.hasOwn(MEMBER_CATEGORY, definition)) return MEMBER_CATEGORY[definition] as string
   if (definition.startsWith('display_seven_segment')) return 'displays'
   if (definition.startsWith('catalog_')) return 'ics'
+  const packId = getCommunityPackIdForPart(definition)
+  if (packId !== undefined) return communityLibraryCategoryId(packId)
   return 'my_parts'
 }
 
@@ -311,5 +324,16 @@ export function categoryOf(definition: string): string {
 export function orderedCategories(level: WorkspaceMode): PartCategory[] {
   const here = PART_CATEGORIES.filter((c) => c.levels.includes(level))
   const rest = PART_CATEGORIES.filter((c) => !c.levels.includes(level))
-  return [...here, ...rest]
+  const base = [...here, ...rest]
+  // Insert enabled content-library sections just before "My parts" (or at end if missing).
+  const libraryCats: PartCategory[] = listCommunityPackSections().map((section) => ({
+    id: communityLibraryCategoryId(section.packId),
+    label: `Library: ${section.name}`,
+    levels: ['schematic', 'board', 'chip'] as WorkspaceMode[],
+    members: section.parts.map((p) => p.id),
+  }))
+  if (libraryCats.length === 0) return base
+  const myIdx = base.findIndex((c) => c.id === 'my_parts')
+  if (myIdx < 0) return [...base, ...libraryCats]
+  return [...base.slice(0, myIdx), ...libraryCats, ...base.slice(myIdx)]
 }

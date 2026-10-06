@@ -66,7 +66,7 @@ async function applyEnabledPacks(
       clearCommunityPackFootprints(rec.id)
       continue
     }
-    setCommunityPackParts(rec.id, parsed.pack.parts)
+    setCommunityPackParts(rec.id, parsed.pack.parts, { name: parsed.pack.name })
     setCommunityPackFootprints(rec.id, parsed.pack.footprints)
   }
 }
@@ -165,7 +165,7 @@ export function useContentManager(light: boolean): {
         return
       }
       setIndex(nextIndex)
-      setCommunityPackParts(pack.id, pack.parts)
+      setCommunityPackParts(pack.id, pack.parts, { name: pack.name })
       const fpKept = setCommunityPackFootprints(pack.id, pack.footprints)
       const trustBit =
         record.integrityStatus === 'match' ? 'declared content hash matched' : 'no declared hash'

@@ -3,7 +3,13 @@ import { BUILTIN_BLOCKS, DIGIT_DISPLAY_SIZES } from './builtin-blocks.ts'
 import { registerCatalogParts } from './catalog-parts.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
-import { getUserPartsSnapshot, reserveBuiltinIds, subscribeUserParts } from './user-parts.ts'
+import {
+  getAuthoredUserParts,
+  getUserPartsSnapshot,
+  listCommunityPackSections,
+  reserveBuiltinIds,
+  subscribeUserParts,
+} from './user-parts.ts'
 
 /**
  * Parts palette (Sprint 19 S19-v3-6; dockable in S19-v3-10). The placeable
@@ -287,7 +293,9 @@ export function PaletteItems({ filter }: { filter?: string }) {
  * useSyncExternalStore, so a newly saved part appears here the moment it's registered.
  */
 export function UserPartPaletteItems({ filter }: { filter?: string }) {
-  const userParts = useSyncExternalStore(subscribeUserParts, getUserPartsSnapshot)
+  // Re-subscribe on registry changes; read authored-only so community packs get their own sections.
+  useSyncExternalStore(subscribeUserParts, getUserPartsSnapshot)
+  const userParts = getAuthoredUserParts()
   const query = (filter ?? '').trim().toLowerCase()
   const shown = query
     ? userParts.filter(
@@ -338,6 +346,73 @@ export function UserPartPaletteItems({ filter }: { filter?: string }) {
 }
 
 /**
+ * One palette section per enabled content library (community pack). Sections disappear when the
+ * pack is disabled / uninstalled because the community registry drops that pack's parts.
+ */
+export function CommunityPackPaletteItems({ filter }: { filter?: string }) {
+  useSyncExternalStore(subscribeUserParts, getUserPartsSnapshot)
+  const sections = listCommunityPackSections()
+  const query = (filter ?? '').trim().toLowerCase()
+  if (sections.length === 0) return null
+  return (
+    <>
+      {sections.map((section) => {
+        const shown = query
+          ? section.parts.filter(
+              (p) =>
+                p.name.toLowerCase().includes(query) ||
+                p.id.toLowerCase().includes(query) ||
+                section.name.toLowerCase().includes(query) ||
+                section.packId.toLowerCase().includes(query),
+            )
+          : section.parts
+        if (shown.length === 0) return null
+        return (
+          <div key={section.packId}>
+            <div
+              style={{
+                color: THEME.textMuted,
+                fontSize: 10,
+                fontFamily: 'system-ui, sans-serif',
+                margin: '8px 2px 2px',
+              }}
+            >
+              Library: {section.name} — drag to place
+            </div>
+            {shown.map((part) => (
+              // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source
+              <div
+                key={part.id}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(DEFINITION_MIME, part.id)
+                  event.dataTransfer.effectAllowed = 'move'
+                }}
+                title={`Drag ${part.name} onto the canvas (${section.name})`}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 2,
+                  padding: '8px 6px',
+                  border: `1px solid ${THEME.borderSubtle}`,
+                  borderRadius: 6,
+                  background: THEME.surfaceRaised,
+                  cursor: 'grab',
+                }}
+              >
+                <DeviceGlyph definition={part.id} />
+                <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+              </div>
+            ))}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+/**
  * The Parts panel: a filter-as-you-type box over the placeable parts AND the
  * on-canvas blocks. The query matches a part's label or its definition id (so
  * "mos" finds the MOSFETs, "logic" finds the gates) and a block's name. Empty
@@ -369,6 +444,7 @@ export function Palette({ blocks }: { blocks: { id: string; name: string }[] }) 
       />
       <PaletteItems filter={query} />
       <UserPartPaletteItems filter={query} />
+      <CommunityPackPaletteItems filter={query} />
       <BlockPaletteItems blocks={blocks} filter={query} />
     </>
   )

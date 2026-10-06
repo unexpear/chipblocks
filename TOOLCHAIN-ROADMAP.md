@@ -15,7 +15,7 @@ Canonical measured implementation status and verification gates: [PROJECT-STATUS
 | Calculator Tools | trace width, resistor values, … | ✅ **have** — the Math panel, computed on your REAL live circuit |
 | Drawing Sheet Editor | page border + title block | ✅ **have** — just added |
 | Symbol Editor | author a part's schematic symbol | ✅ **have** — in-app authoring from the New Part dialog; saved drawings persist with user parts |
-| Plugin & Content Manager | install community libraries | ◐ **have (local-pack slice)** - browse cited catalog + install/enable/disable validated local packs under ~/.chipblocks/libraries/; not a marketplace / no remote auto-install |
+| Plugin & Content Manager | install community libraries | ◐ **have (local-pack slice)** - browse cited catalog + install/enable/disable validated local packs under ~/.chipblocks/libraries/; SHA-256 integrity + ed25519 publisher sigs (trusted-publishers pin); palette/picker library sections; not a marketplace / no remote auto-install |
 | Footprint Editor | a part's physical pads / outline | ✅ **have** — in-app pad/courtyard authoring with validation and persistence |
 | PCB Editor | place parts + route copper | ◐ board workspace, placement, routing, DRC, and fab export are mounted; broader PCB parity remains |
 | Gerber Viewer | check the factory files | ◐ Check Gerbers, next to Export ZIP, plots the ChipBlocks Gerber and Excellon the manufacturing ZIP writes (that dialect only — not a general gerbview) |
@@ -43,7 +43,7 @@ already have; ticks the PRD's defining metric (an outside user exports a manufac
 
 5. **User-made parts** — in-app Symbol + Footprint authoring is shipped; continue tightening the shared
    library and edit/reload flows.
-6. **Plugin / Content Manager** — **local-pack install + footprints + content-hash trust (2026-10-06)**: Tools → Plugin & Content Manager browses the cited catalog, installs a user-picked local pack after format + permissive-license validation + optional declared SHA-256 check into `~/.chipblocks/libraries/<id>/`, enable/disable/uninstall; enabled packs register parts + footprints (no built-in/provisional shadow). Records on-disk content hash for reload tamper-evidence. Refuses remote installs, GPL/unknown licenses, and declared-hash mismatch. Not a marketplace; **publisher signatures still open (ADR-010)** — hash ≠ signature ≠ "secure".
+6. **Plugin / Content Manager** — **local-pack install + footprints + hash + ed25519 publisher signatures + palette sections (2026-10-06)**: Tools → Plugin & Content Manager browses the cited catalog, installs a user-picked local pack after format + permissive-license validation + optional declared SHA-256 + optional ed25519 publisher signature into `~/.chipblocks/libraries/<id>/`, enable/disable/uninstall; enabled packs register parts + footprints (no built-in/provisional shadow) and appear as **Library: <name>** sections in the palette / part picker (hidden when disabled). Records on-disk content hash for reload tamper-evidence. Refuses remote installs, GPL/unknown licenses, declared-hash mismatch, and invalid signatures. Not a marketplace. Trust limits: hash = file integrity; self-declared ed25519 key = cryptographic self-consistency only; **verified publisher** only when the key is pinned in a local trusted-publishers list — no CA / PKI / marketplace guarantee.
 
 ## Track 3 — polish
 
@@ -67,16 +67,17 @@ in-tree — not commercial-ngspice parity, and not a claim of chip-scale transie
    CMOS-only 200-pass cap) and routes a MOSFET+linear netlist to gmin stepping (else source stepping,
    unchanged). Correctness oracle: `digitalSeed` on every gate pin. Final level is the real circuit (no
    shunt); a stalled ramp returns the failed solve's honest status + how far the continuation got.
-3. **Warm-start (logic seed + pseudo-transient).** `digitalSeed` is passed as `initialNodes` on the
+3. **Warm-start (logic seed + adaptive pseudo-transient).** `digitalSeed` is passed as `initialNodes` on the
    canvas transistor-fidelity path (`solve-canvas.ts`). Early gmin levels deliberately ignore that seed
    (a final-OP start fights a large shunt — measured). After gmin stalls on CMOS, `solveDCByPseudoTransient`
-   coasts with artificial ground caps (backward-Euler companion on `solveDC`) and finishes with a real
-   ungapped solve — never a capacitively-held snapshot as the answer. Source stepping remains the
-   non-CMOS / rail-referenced-BJT path. Tests: `tests/dc-pseudo-transient.test.ts`, `tests/logic-seed.test.ts`.
+   coasts with **adaptively-sized** artificial ground caps (`adaptivePseudoCapacitance` from the circuit's
+   conductance scale — geometric mean of resistor G, MOSFET kp, existing C/τ₀; replaces the fixed 1 nF of
+   1d81a90; backward-Euler companion on `solveDC`) and finishes with a real ungapped solve — never a
+   capacitively-held snapshot as the answer. Source stepping remains the non-CMOS / rail-referenced-BJT
+   path. Tests: `tests/dc-pseudo-transient.test.ts`, `tests/logic-seed.test.ts`.
 
 Still open (not this slice): ngspice parity; anything beyond DC operating point at this scale;
-adaptive pseudo-C sizing; claiming a wall-clock win on every CMOS input (the seed is correct and
-wired; speed is not guaranteed).
+claiming a wall-clock win on every CMOS input (the seed is correct and wired; speed is not guaranteed).
 
 Already validated alongside: `digitalSeed` in `src/renderer/logic-sim.ts` (correct mapping vs converged OP).
 
@@ -286,17 +287,23 @@ clears that pack's contribution).
 
 **Does:** browse catalog, install from local JSON, enable/disable, uninstall, persist index,
 register pack parts + footprints when enabled; optional declared SHA-256 content-hash check;
-record on-disk content hash for reload tamper-evidence.
+optional ed25519 publisher signature over the canonical pack body (integrity/signature stripped);
+optional local trusted-publishers pin-list; record on-disk content hash for reload tamper-evidence;
+palette + part-picker **Library: <name>** sections per enabled pack (removed when disabled).
 
 **Refuses:** remote/network installs claiming success without validation; GPL/AGPL/LGPL/unknown
 licenses; malformed / future-version packs; marketplace / unsigned arbitrary-code framing;
 pack footprints that collide with built-in or provisional ids (skipped, not silently shadowed);
-declared content-hash mismatch (install refused with a reason).
+declared content-hash mismatch; invalid / malformed publisher signatures (install refused with a reason).
 
-**Trust limits (honest):** optional declared SHA-256 + recorded on-disk hash are **file integrity
-only**. A pack `signature` field is ignored as proof and called out in the trust note. No publisher
-identity, no remote attestation, no claim the pack is "secure." ADR-010 (signatures / stronger
-trust) remains open.
+**Trust limits (honest):**
+- Optional declared SHA-256 + recorded on-disk hash = **file integrity only**.
+- ed25519 with a **self-declared** pack public key = cryptographic self-consistency under that key —
+  **not** publisher identity (anyone can embed their own key). Status `valid-untrusted`.
+- ed25519 whose public key is **pinned** in the user's local trusted-publishers list = verified against
+  a key **you** chose to trust. Status `valid-trusted`. No CA chain, no remote attestation, no PKI,
+  no marketplace guarantee. Undeclared signature ≠ verified.
+- ADR-010 broader ecosystem / remote marketplace trust remains out of scope for this local-pack slice.
 
-**Still open:** published GitHub pack fetch with real signature verification (ADR-010), full catalog
-YAML overlay / block-groups loading, palette sections per library.
+**Still open:** published GitHub pack fetch / remote install with the same signature gates, full catalog
+YAML overlay / block-groups loading.
