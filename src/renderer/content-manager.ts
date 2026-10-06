@@ -86,6 +86,15 @@ export type InstallResult =
   | { ok: true; record: InstalledPackRecord; pack: ContentPack; index: ContentIndex }
   | { ok: false; reason: string }
 
+/** Why an enabled pack did not fully load on reload. `blocked` means parts were not registered. */
+export type PackLoadIssue = { id: string; reason: string; blocked: boolean }
+
+/** Badge for an installed pack. A blocked load stays enabled in the index but parts were not registered. */
+export function installedPackStatusLabel(enabled: boolean, blocked: boolean): string {
+  if (!enabled) return 'DISABLED'
+  return blocked ? 'ENABLED · NOT LOADED' : 'ENABLED'
+}
+
 export type ManagerRow =
   | {
       kind: 'installed'

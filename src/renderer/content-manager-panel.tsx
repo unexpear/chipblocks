@@ -3,10 +3,19 @@ import type { ContentCatalogEntry } from './content-catalog.ts'
 import {
   type ContentIndex,
   type InstalledPackRecord,
+  installedPackStatusLabel,
   type ManagerRow,
   managerRows,
+  type PackLoadIssue,
 } from './content-manager.ts'
 import { THEME } from './theme.ts'
+
+/**
+ * What the panel claims about install trust. Kept as a constant so a test can lock the wording:
+ * a declared ed25519 signature IS checked, and a bad content hash is refused rather than ignored.
+ */
+export const CONTENT_MANAGER_INTRO =
+  'Browse planned community libraries (cited from FINAL-STATE-VISION.md) and manage packs you install from a local file. Not a marketplace — ChipBlocks does not download arbitrary remote code. Install validates format + permissive license, checks an optional declared SHA-256 content hash (a malformed or non-sha256 declaration is refused, not treated as "no hash"), and records a file hash for reload tamper-evidence. A declared ed25519 signature is checked: invalid signatures are refused; a valid signature is self-declared integrity under the key in the pack, not a certificate authority. This screen does not load ~/.chipblocks/trusted-publishers.json, so it cannot mark a key as one you pinned. Undeclared is not verified.'
 
 /**
  * Plugin & Content Manager panel — browse the cited community catalog, install a local pack,
@@ -17,6 +26,7 @@ import { THEME } from './theme.ts'
 export function ContentManagerPanel({
   index,
   statusMessage,
+  loadIssues,
   light,
   onClose,
   onInstallLocal,
@@ -25,6 +35,7 @@ export function ContentManagerPanel({
 }: {
   index: ContentIndex
   statusMessage: string | null
+  loadIssues?: ReadonlyMap<string, PackLoadIssue>
   light: boolean
   onClose: () => void
   onInstallLocal: () => void
@@ -95,12 +106,7 @@ export function ContentManagerPanel({
         </div>
 
         <p style={{ margin: '0 0 10px', color: dimColor, lineHeight: 1.45 }}>
-          Browse planned community libraries (cited from FINAL-STATE-VISION.md) and manage packs you
-          install from a <strong>local</strong> file. Not a marketplace — ChipBlocks does not
-          download arbitrary remote code. Install validates format + permissive license, checks an
-          optional declared SHA-256 content hash, and records a file hash for reload
-          tamper-evidence. Publisher signatures are not verified (ADR-010) — missing or invalid
-          integrity is shown, never silently trusted.
+          {CONTENT_MANAGER_INTRO}
         </p>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -133,21 +139,28 @@ export function ContentManagerPanel({
           <div style={{ color: dimColor }}>No catalog entries.</div>
         ) : (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {rows.map((row) => (
-              <li key={rowKey(row)} style={{ marginBottom: 8 }}>
-                {row.kind === 'installed' ? (
+            {rows.map((row) => {
+              if (row.kind !== 'installed') {
+                return (
+                  <li key={rowKey(row)} style={{ marginBottom: 8 }}>
+                    <CatalogCard entry={row.entry} light={light} />
+                  </li>
+                )
+              }
+              const loadIssue = loadIssues?.get(row.record.id)
+              return (
+                <li key={rowKey(row)} style={{ marginBottom: 8 }}>
                   <InstalledCard
                     record={row.record}
                     {...(row.catalog !== undefined ? { catalog: row.catalog } : {})}
+                    {...(loadIssue !== undefined ? { loadIssue } : {})}
                     light={light}
                     onSetEnabled={onSetEnabled}
                     onUninstall={onUninstall}
                   />
-                ) : (
-                  <CatalogCard entry={row.entry} light={light} />
-                )}
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
@@ -162,18 +175,21 @@ function rowKey(row: ManagerRow): string {
 function InstalledCard({
   record,
   catalog,
+  loadIssue,
   light,
   onSetEnabled,
   onUninstall,
 }: {
   record: InstalledPackRecord
   catalog?: ContentCatalogEntry
+  loadIssue?: PackLoadIssue
   light: boolean
   onSetEnabled: (id: string, enabled: boolean) => void
   onUninstall: (id: string) => void
 }) {
   const [confirmUninstall, setConfirmUninstall] = useState(false)
   const dim = light ? THEME.textFaint : THEME.textMuted
+  const blocked = loadIssue?.blocked === true
   return (
     <div style={cardStyle(light)}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
@@ -185,10 +201,10 @@ function InstalledCard({
             marginLeft: 'auto',
             fontSize: 10,
             fontWeight: 700,
-            color: record.enabled ? THEME.accentLime : dim,
+            color: record.enabled && !blocked ? THEME.accentLime : dim,
           }}
         >
-          {record.enabled ? 'ENABLED' : 'DISABLED'}
+          {installedPackStatusLabel(record.enabled, blocked)}
         </span>
       </div>
       <div style={{ color: dim, marginTop: 4 }}>
@@ -201,14 +217,21 @@ function InstalledCard({
           : ''}{' '}
         · source: local pack
       </div>
-      <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
-        {record.integrityStatus === 'match'
-          ? 'Integrity: declared content hash matched. '
-          : record.integrityStatus === 'undeclared'
-            ? 'Integrity: no declared content hash. '
-            : ''}
-        {record.trustNote}
-      </div>
+      {loadIssue !== undefined ? (
+        <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
+          {loadIssue.reason}
+        </div>
+      ) : null}
+      {blocked ? null : (
+        <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
+          {record.integrityStatus === 'match'
+            ? 'Integrity: declared content hash matched. '
+            : record.integrityStatus === 'undeclared'
+              ? 'Integrity: no declared content hash. '
+              : ''}
+          {record.trustNote}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
         <button
           type="button"

@@ -5,10 +5,12 @@
 import { describe, expect, test } from 'vitest'
 import {
   emptyContentIndex,
+  installedPackStatusLabel,
   installLocalPackVerified,
   LOCAL_PACK_TRUST_NOTE,
   refuseRemoteInstall,
 } from '../src/renderer/content-manager.ts'
+import { CONTENT_MANAGER_INTRO } from '../src/renderer/content-manager-panel.tsx'
 import {
   CONTENT_PACK_FORMAT,
   CONTENT_PACK_VERSION,
@@ -22,6 +24,7 @@ import {
   trustNoteForVerdict,
   verifyPackIntegrity,
 } from '../src/renderer/content-pack-integrity.ts'
+import { applyEnabledPacks } from '../src/renderer/use-content-manager.tsx'
 import type { UserPart } from '../src/renderer/user-parts.ts'
 
 const samplePart = (id: string): UserPart => ({
@@ -125,11 +128,86 @@ describe('content-pack integrity', () => {
     expect(LOCAL_PACK_TRUST_NOTE).not.toMatch(/\bsecure\b/i)
   })
 
+  test('a declared but unusable integrity field is refused, not treated as "no hash"', async () => {
+    const sha512 = JSON.stringify(
+      basePackObject({ integrity: { alg: 'sha512', hash: 'ab'.repeat(64) } }),
+      null,
+      2,
+    )
+    const verdict = await verifyPackIntegrity(sha512)
+    expect(verdict.kind).toBe('unsupported')
+    const installed = await installLocalPackVerified(emptyContentIndex(), sha512, 5)
+    expect(installed.ok).toBe(false)
+    if (installed.ok) return
+    expect(installed.reason).toMatch(/sha512|only sha256/i)
+    expect(installed.reason).not.toMatch(/no content-hash declaration/i)
+
+    const badHash = JSON.stringify(
+      basePackObject({ integrity: { alg: 'sha256', hash: 'not-a-hash' } }),
+      null,
+      2,
+    )
+    const bad = await installLocalPackVerified(emptyContentIndex(), badHash, 6)
+    expect(bad.ok).toBe(false)
+    if (bad.ok) return
+    expect(bad.reason).toMatch(/64 hex/i)
+  })
+
   test('serialize round-trip stays a valid pack (integrity field not required on disk)', () => {
     const parsed = deserializeContentPack(JSON.stringify(basePackObject(), null, 2))
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     const again = deserializeContentPack(serializeContentPack(parsed.pack))
     expect(again.ok).toBe(true)
+  })
+})
+
+describe('enabled pack reload does not hide a failed load', () => {
+  const enabled = (id: string, contentHash?: string) => ({
+    ...emptyContentIndex(),
+    packs: [
+      {
+        id,
+        name: id,
+        packVersion: '1.0.0',
+        license: 'MIT',
+        enabled: true,
+        installedAt: 1,
+        source: 'local-pack' as const,
+        partCount: 1,
+        footprintCount: 0,
+        trustNote: 'install-time note that must not hide a failed reload',
+        integrityStatus: 'match' as const,
+        ...(contentHash !== undefined ? { contentHash } : {}),
+      },
+    ],
+  })
+
+  test('a missing pack file is reported as blocked, not silently skipped', async () => {
+    const issues = await applyEnabledPacks(
+      { readContentPack: async () => null },
+      enabled('missing_pack'),
+    )
+    expect(issues).toHaveLength(1)
+    expect(issues[0]?.blocked).toBe(true)
+    expect(issues[0]?.reason).toMatch(/could not be read/)
+    expect(installedPackStatusLabel(true, true)).toBe('ENABLED · NOT LOADED')
+  })
+
+  test('a file that no longer parses is reported, even when the stored hash matches', async () => {
+    const text = '{not json'
+    const hash = await sha256Hex(text)
+    const issues = await applyEnabledPacks(
+      { readContentPack: async () => text },
+      enabled('bad_pack', hash),
+    )
+    expect(issues.some((issue) => issue.blocked && /did not load/i.test(issue.reason))).toBe(true)
+  })
+
+  test('the content-manager intro does not claim signatures are unchecked', () => {
+    expect(CONTENT_MANAGER_INTRO).not.toMatch(/signatures are not verified/i)
+    expect(CONTENT_MANAGER_INTRO).toMatch(/invalid signatures are refused/i)
+    expect(CONTENT_MANAGER_INTRO).toMatch(/trusted-publishers\.json/)
+    expect(CONTENT_MANAGER_INTRO).not.toMatch(/\bsecure\b/i)
   })
 })

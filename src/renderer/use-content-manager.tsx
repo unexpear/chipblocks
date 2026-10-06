@@ -5,6 +5,7 @@ import {
   emptyContentIndex,
   enabledPackIds,
   installLocalPackVerified,
+  type PackLoadIssue,
   serializeContentIndex,
   setPackEnabled,
   uninstallPack,
@@ -29,11 +30,16 @@ async function persistIndex(bridge: Bridge, index: ContentIndex): Promise<boolea
   return result.ok
 }
 
-async function applyEnabledPacks(
-  bridge: Bridge,
+export async function applyEnabledPacks(
+  bridge: { readContentPack?: (id: string) => Promise<string | null> },
   index: ContentIndex,
   onTrustIssue?: (message: string) => void,
-): Promise<void> {
+): Promise<PackLoadIssue[]> {
+  const issues: PackLoadIssue[] = []
+  const report = (id: string, reason: string, blocked: boolean) => {
+    issues.push({ id, reason, blocked })
+    onTrustIssue?.(reason)
+  }
   const enabled = new Set(enabledPackIds(index))
   for (const rec of index.packs) {
     if (!enabled.has(rec.id)) {
@@ -41,34 +47,52 @@ async function applyEnabledPacks(
       clearCommunityPackFootprints(rec.id)
       continue
     }
-    if (bridge.readContentPack === undefined) continue
+    if (bridge.readContentPack === undefined) {
+      clearCommunityPackParts(rec.id)
+      clearCommunityPackFootprints(rec.id)
+      report(
+        rec.id,
+        `Pack "${rec.id}" is enabled, but pack files cannot be read in this session. Parts were not loaded.`,
+        true,
+      )
+      continue
+    }
     const text = await bridge.readContentPack(rec.id)
     if (text === null) {
       clearCommunityPackParts(rec.id)
       clearCommunityPackFootprints(rec.id)
+      report(
+        rec.id,
+        `Pack "${rec.id}" is enabled, but its pack file could not be read. Parts were not loaded.`,
+        true,
+      )
       continue
     }
     const hashCheck = await assertStoredContentHash(text, rec.contentHash)
     if (!hashCheck.ok) {
       clearCommunityPackParts(rec.id)
       clearCommunityPackFootprints(rec.id)
-      onTrustIssue?.(`Pack "${rec.id}": ${hashCheck.reason}`)
+      report(rec.id, `Pack "${rec.id}": ${hashCheck.reason}`, true)
       continue
     }
     if (hashCheck.legacyMissingHash) {
-      onTrustIssue?.(
+      report(
+        rec.id,
         `Pack "${rec.id}": no content hash was recorded at install — loaded anyway; re-install from the local file to enable tamper-evidence. Not silently treated as verified.`,
+        false,
       )
     }
     const parsed = deserializeContentPack(text)
     if (!parsed.ok) {
       clearCommunityPackParts(rec.id)
       clearCommunityPackFootprints(rec.id)
+      report(rec.id, `Pack "${rec.id}" did not load: ${parsed.reason}`, true)
       continue
     }
     setCommunityPackParts(rec.id, parsed.pack.parts, { name: parsed.pack.name })
     setCommunityPackFootprints(rec.id, parsed.pack.footprints)
   }
+  return issues
 }
 
 function isRefuse(result: ContentIndex | { ok: false; reason: string }): result is {
@@ -85,6 +109,12 @@ export function useContentManager(light: boolean): {
   const [index, setIndex] = useState<ContentIndex>(emptyContentIndex)
   const [isOpen, setIsOpen] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [loadIssues, setLoadIssues] = useState<ReadonlyMap<string, PackLoadIssue>>(new Map())
+
+  const rememberLoads = useCallback((issues: PackLoadIssue[]) => {
+    setLoadIssues(new Map(issues.map((issue) => [issue.id, issue])))
+    if (issues.length > 0) setStatusMessage(issues.map((issue) => issue.reason).join('\n'))
+  }, [])
 
   useEffect(() => {
     const bridge = window.chipblocks
@@ -104,12 +134,12 @@ export function useContentManager(light: boolean): {
           return
         }
         setIndex(result.index)
-        await applyEnabledPacks(bridge, result.index, setStatusMessage)
+        rememberLoads(await applyEnabledPacks(bridge, result.index))
       })
     }
 
     return () => window.removeEventListener('chipblocks:content-manager', open)
-  }, [])
+  }, [rememberLoads])
 
   const onInstallLocal = useCallback(() => {
     const bridge = window.chipblocks
@@ -190,8 +220,17 @@ export function useContentManager(light: boolean): {
             setStatusMessage('Could not save enable/disable to the install index.')
             return
           }
-          await applyEnabledPacks(bridge, next, setStatusMessage)
-        } else if (!enabled) {
+          const issues = await applyEnabledPacks(bridge, next)
+          rememberLoads(issues)
+          setIndex(next)
+          if (issues.length === 0) {
+            setStatusMessage(
+              enabled ? `Enabled "${id}".` : `Disabled "${id}" (pack stays on disk).`,
+            )
+          }
+          return
+        }
+        if (!enabled) {
           clearCommunityPackParts(id)
           clearCommunityPackFootprints(id)
         }
@@ -199,7 +238,7 @@ export function useContentManager(light: boolean): {
         setStatusMessage(enabled ? `Enabled "${id}".` : `Disabled "${id}" (pack stays on disk).`)
       })()
     },
-    [index],
+    [index, rememberLoads],
   )
 
   const onUninstall = useCallback(
@@ -238,6 +277,7 @@ export function useContentManager(light: boolean): {
     <ContentManagerPanel
       index={index}
       statusMessage={statusMessage}
+      loadIssues={loadIssues}
       light={light}
       onClose={() => setIsOpen(false)}
       onInstallLocal={onInstallLocal}
