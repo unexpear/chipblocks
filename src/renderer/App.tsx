@@ -347,12 +347,7 @@ import {
   resolveUserPart,
   type UserPart,
 } from './user-parts.ts'
-import {
-  deserializeUserTemplates,
-  serializeUserTemplates,
-  type UserTemplate,
-  withTemplate,
-} from './user-templates.ts'
+import { enqueueTemplateWrite, templatesAfterSave, type UserTemplate } from './user-templates.ts'
 import { buildDemoCpu, buildDemoCpu8 } from './verilog-cpu-demo.ts'
 import { STARTER_VERILOG, VerilogEditor } from './verilog-editor.tsx'
 import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
@@ -2539,7 +2534,16 @@ async function updateUserLibrary(
 ): Promise<void> {
   const bridge = window.chipblocks
   if (bridge?.readUserLibrary === undefined || bridge.writeUserLibrary === undefined) return
-  const text = await bridge.readUserLibrary()
+  let text: string | null
+  try {
+    text = await bridge.readUserLibrary()
+  } catch (error) {
+    // A locked or unreadable file is not an empty library. Writing now would replace it.
+    console.warn(
+      `[user-library] not persisting "${what}": library could not be read (${String(error)})`,
+    )
+    return
+  }
   // No library yet → start an empty one and let the caller put the first thing in it.
   const existing =
     text === null ? { ok: true as const, parts: [], footprints: [] } : deserializeUserLibrary(text)
@@ -3219,14 +3223,33 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         circuit,
         createdAt: Date.now(),
       }
-      void (async () => {
-        const text = await read()
-        const parsed = text ? deserializeUserTemplates(text) : null
-        const existing = parsed?.ok ? parsed.templates : []
-        await write(serializeUserTemplates(withTemplate(existing, template)))
+      enqueueTemplateWrite(async () => {
+        let text: string | null
+        try {
+          text = await read()
+        } catch (error) {
+          setNetlistReport({
+            kind: 'refused',
+            title: 'Not saved as a template',
+            reason: `Your templates file could not be read (${String(error)}). Nothing was written.`,
+          })
+          return
+        }
+        const folded = templatesAfterSave(text, template)
+        if (!folded.ok) {
+          setNetlistReport({
+            kind: 'refused',
+            title: 'Not saved as a template',
+            reason: folded.reason,
+          })
+          return
+        }
+        const written = await write(folded.text)
+        if (!written.ok) return
         setTemplateSaved(name)
         window.setTimeout(() => setTemplateSaved(null), 3200)
-      })()
+        window.dispatchEvent(new CustomEvent('chipblocks:user-templates'))
+      })
     })
   }, [nodes, edges, project.name])
 

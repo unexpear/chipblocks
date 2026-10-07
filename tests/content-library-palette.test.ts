@@ -3,6 +3,8 @@
  * Disabled packs disappear from listCommunityPackSections (and thus from UI sections).
  */
 import { afterEach, describe, expect, test } from 'vitest'
+import { CATALOG_PARTS, registerCatalogParts } from '../src/renderer/catalog-parts.ts'
+import { catalogPartsForPalette } from '../src/renderer/palette.tsx'
 import {
   categoryLabelOf,
   categoryOf,
@@ -14,6 +16,7 @@ import {
   clearAllCommunityParts,
   clearCommunityPackParts,
   getAuthoredUserParts,
+  getBuiltinParts,
   listCommunityPackSections,
   registerUserPart,
   setCommunityPackParts,
@@ -74,5 +77,15 @@ describe('content-library palette / picker sections', () => {
     expect(libIdx).toBeGreaterThanOrEqual(0)
     expect(myIdx).toBeGreaterThan(libIdx)
     expect(cats[libIdx]?.label).toBe('Library: Ordered Lib')
+  })
+
+  test('catalog built-ins stay on the drag palette and out of authored parts', () => {
+    registerCatalogParts()
+    const shown = catalogPartsForPalette().map((p) => p.id)
+    for (const part of CATALOG_PARTS) {
+      expect(shown).toContain(part.id)
+      expect(getBuiltinParts().map((p) => p.id)).toContain(part.id)
+      expect(getAuthoredUserParts().map((p) => p.id)).not.toContain(part.id)
+    }
   })
 })

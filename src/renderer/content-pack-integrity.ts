@@ -33,17 +33,29 @@ export async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** Pull an optional integrity declaration from raw pack JSON (before/without full deserialize). */
-export function readDeclaredIntegrity(raw: unknown): PackIntegrityDecl | null {
+/**
+ * Pull an optional integrity declaration from raw pack JSON.
+ * No `integrity` key → null (undeclared, install allowed).
+ * A present but unusable declaration → `{ reason }` (unsupported — install must refuse).
+ * A usable sha256 declaration → the hash to check.
+ */
+export function readDeclaredIntegrity(raw: unknown): PackIntegrityDecl | { reason: string } | null {
   if (typeof raw !== 'object' || raw === null) return null
+  if (!Object.hasOwn(raw as object, 'integrity')) return null
   const integrity = (raw as Record<string, unknown>).integrity
-  if (typeof integrity !== 'object' || integrity === null) return null
+  if (typeof integrity !== 'object' || integrity === null) {
+    return { reason: 'Pack integrity field is present but not an object — refused.' }
+  }
   const i = integrity as Record<string, unknown>
-  if (typeof i.alg !== 'string' || typeof i.hash !== 'string') return null
-  if (i.alg.toLowerCase() !== 'sha256') return null
-  const hash = i.hash.trim().toLowerCase()
-  if (!HEX64.test(hash)) return null
-  return { alg: 'sha256', hash }
+  if (typeof i.alg !== 'string' || i.alg.toLowerCase() !== 'sha256') {
+    return {
+      reason: `Unsupported pack integrity alg ${JSON.stringify(i.alg)} — only sha256 is accepted.`,
+    }
+  }
+  if (typeof i.hash !== 'string' || !HEX64.test(i.hash.trim().toLowerCase())) {
+    return { reason: 'Pack integrity hash must be 64 hex characters (SHA-256).' }
+  }
+  return { alg: 'sha256', hash: i.hash.trim().toLowerCase() }
 }
 
 export function packHasSignatureField(raw: unknown): boolean {
@@ -90,6 +102,9 @@ export async function verifyPackIntegrity(packText: string): Promise<IntegrityVe
   const declared = readDeclaredIntegrity(raw)
   if (declared === null) {
     return { kind: 'undeclared', hash: fileHash, signatureFieldPresent }
+  }
+  if ('reason' in declared) {
+    return { kind: 'unsupported', hash: fileHash, reason: declared.reason }
   }
 
   const canonical = canonicalPackTextForIntegrity(packText)

@@ -2673,6 +2673,13 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   // retry continues from the failed iterate, so it just lets a slow-converging instant finish. An explicit
   // maxIterations is HONOURED (no escalation), so a caller that sets a low cap still sees did-not-converge.
   const stepRetryMaxIter = options.maxIterations ?? 1000
+  // After that generous retry, a multiplexed LED matrix still orbits a few microvolts: the forward
+  // devices have stopped, and the reverse-biased floating columns (column pin left open) have no unique
+  // microvolt solution. 10 µV does not move a milliamp-scale diode current (dI ≈ I·dV/(n·V_T) is
+  // microamps). An unlimited step inside this band is the operating point. A still-limited junction, or
+  // a step larger than this, stays a real non-convergence. The normal 1 µV test is unchanged — this
+  // only applies once the generous retry has already been spent.
+  const NEWTON_CHATTER_ACCEPT_V = 1e-5
 
   const sources: TimedSource[] = []
   const caps: CapElement[] = []
@@ -3249,9 +3256,13 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     t: number,
     iterCap: number = maxIter,
   ): { nodes: Map<string, number>; x: number[][] } | 'singular' | 'no-convergence' => {
+    let lastSolved: { nodes: Map<string, number>; x: number[][] } | null = null
+    let lastDelta = Number.POSITIVE_INFINITY
+    let lastLimited = true
     for (let iter = 1; iter <= iterCap; iter++) {
       const solved = solveInstant(mode, t)
       if (solved === null) return 'singular'
+      lastSolved = solved
       const nodes = solved.nodes
       const acc = new GuessAccumulator()
       const volts = nodeVolts(nodes, ground)
@@ -3273,7 +3284,19 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
         acc.add({ delta: Math.abs(next - (cap.vGuess ?? cap.vPrev)), limited: false })
         cap.vGuess = next
       }
+      lastDelta = acc.maxDelta
+      lastLimited = acc.anyLimited
       if (acc.converged) return solved
+    }
+    // Generous retry only (see NEWTON_CHATTER_ACCEPT_V). The normal cap still returns no-convergence
+    // so a step that is merely slow gets the retry instead of being accepted early.
+    if (
+      lastSolved !== null &&
+      iterCap > maxIter &&
+      !lastLimited &&
+      lastDelta <= NEWTON_CHATTER_ACCEPT_V
+    ) {
+      return lastSolved
     }
     return 'no-convergence'
   }

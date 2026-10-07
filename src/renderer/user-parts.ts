@@ -322,6 +322,11 @@ export function getAuthoredUserParts(): readonly UserPart[] {
   return [...registry.values()]
 }
 
+/** Built-in catalog parts (the placeable commercial devices). Not authored, and not a community pack. */
+export function getBuiltinParts(): readonly UserPart[] {
+  return [...builtinParts.values()]
+}
+
 /** Community pack parts only (enabled packs). */
 export function getCommunityPartsSnapshot(): readonly UserPart[] {
   return [...communityParts.values()]

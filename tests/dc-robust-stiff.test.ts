@@ -109,4 +109,14 @@ describe('the transient solver retries a stiff step instead of collapsing the wh
     }
     for (const c of [1, 2, 5, 6]) expect(ledCurrent(c)).toBeGreaterThan(8e-3) // ~9.2 mA, not collapsed 0
   })
+
+  test('a low iteration cap still reports did-not-converge', () => {
+    // Chatter acceptance only runs after the generous retry. An explicit short cap must still refuse.
+    const result = solveTransient(rowWorld(2, [1, 2, 5, 6]), {
+      timeStep: 0.0001,
+      duration: 0.0001,
+      maxIterations: 20,
+    })
+    expect(result.status).toBe('did-not-converge')
+  })
 })
