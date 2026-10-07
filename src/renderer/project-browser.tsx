@@ -14,7 +14,8 @@ import { useContentManager } from './use-content-manager.tsx'
 import { useShortcuts } from './use-shortcuts.tsx'
 import {
   deserializeUserTemplates,
-  serializeUserTemplates,
+  enqueueTemplateWrite,
+  templatesAfterDelete,
   type UserTemplate,
 } from './user-templates.ts'
 import type { WorkspaceMode } from './workspace.ts'
@@ -573,18 +574,35 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   const refreshTemplates = () => {
     const read = window.chipblocks?.readUserTemplates
     if (read === undefined) return
-    void read().then((text) => {
-      if (text === null) {
-        setUserTemplates([])
-        return
-      }
-      const result = deserializeUserTemplates(text)
-      setUserTemplates(result.ok ? result.templates : [])
-    })
+    void read()
+      .then((text) => {
+        if (text === null) {
+          setUserTemplates([])
+          return
+        }
+        const result = deserializeUserTemplates(text)
+        if (!result.ok) {
+          setOpenRefusal({
+            title: 'Could not read your templates',
+            reason: `${result.reason} The list was left unchanged, and nothing was written.`,
+          })
+          return
+        }
+        setUserTemplates(result.templates)
+      })
+      .catch((error: unknown) => {
+        setOpenRefusal({
+          title: 'Could not read your templates',
+          reason: `Your templates file could not be read (${String(error)}). The list was left unchanged, and nothing was written.`,
+        })
+      })
   }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time load on mount
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time load on mount; refreshTemplates reads window.chipblocks when it runs
   useEffect(() => {
     refreshTemplates()
+    const onChange = () => refreshTemplates()
+    window.addEventListener('chipblocks:user-templates', onChange)
+    return () => window.removeEventListener('chipblocks:user-templates', onChange)
   }, [])
   const startTemplate = (t: UserTemplate) => {
     // A saved template is a whole saved circuit, so it is a bulk canvas load like any other and gets the
@@ -606,11 +624,29 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     })
   }
   const deleteTemplate = (id: string) => {
+    const read = window.chipblocks?.readUserTemplates
     const write = window.chipblocks?.writeUserTemplates
-    if (write === undefined) return
-    const next = userTemplates.filter((t) => t.id !== id)
-    setUserTemplates(next)
-    void write(serializeUserTemplates(next))
+    if (read === undefined || write === undefined) return
+    enqueueTemplateWrite(async () => {
+      let text: string | null
+      try {
+        text = await read()
+      } catch (error) {
+        setOpenRefusal({
+          title: 'Could not delete template',
+          reason: `Your templates file could not be read (${String(error)}). Nothing was written.`,
+        })
+        return
+      }
+      const next = templatesAfterDelete(text, id)
+      if (!next.ok) {
+        setOpenRefusal({ title: 'Could not delete template', reason: next.reason })
+        return
+      }
+      const written = await write(next.text)
+      if (!written.ok) return
+      setUserTemplates(next.templates)
+    })
   }
   const openFromFile = (text: string, path: string) => {
     const nm = projectNameFromPath(path)
