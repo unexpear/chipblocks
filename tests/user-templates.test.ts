@@ -8,6 +8,8 @@ import { serializeCircuit } from '../src/renderer/circuit-file.ts'
 import {
   deserializeUserTemplates,
   serializeUserTemplates,
+  templatesAfterDelete,
+  templatesAfterSave,
   type UserTemplate,
   withTemplate,
 } from '../src/renderer/user-templates.ts'
@@ -85,5 +87,55 @@ describe('user templates library format', () => {
     const replaced = withTemplate([older, newer], { ...older, name: 'Renamed', createdAt: 400 })
     expect(replaced.map((t) => t.id)).toEqual(['a', 'b']) // 'a' now newest
     expect(replaced.find((t) => t.id === 'a')?.name).toBe('Renamed')
+  })
+
+  test('a missing templates file starts with the one just saved', () => {
+    const saved = templatesAfterSave(null, tpl('new', 'New', 500))
+    expect(saved.ok).toBe(true)
+    if (!saved.ok) return
+    const back = deserializeUserTemplates(saved.text)
+    expect(back.ok && back.templates.map((t) => t.id)).toEqual(['new'])
+  })
+
+  test('saving keeps a template that was already in the file', () => {
+    const saved = templatesAfterSave(
+      serializeUserTemplates([tpl('a', 'Older', 100)]),
+      tpl('b', 'Newer', 300),
+    )
+    expect(saved.ok).toBe(true)
+    if (!saved.ok) return
+    const back = deserializeUserTemplates(saved.text)
+    expect(back.ok && back.templates.map((t) => t.id)).toEqual(['b', 'a'])
+  })
+
+  test('saving onto an unreadable templates file refuses instead of replacing it', () => {
+    const refused = templatesAfterSave('not json', tpl('new', 'New', 500))
+    expect(refused.ok).toBe(false)
+    if (refused.ok) return
+    expect(refused.reason).toMatch(/Nothing was written/)
+    expect(
+      templatesAfterSave(
+        JSON.stringify({ format: 'chipblocks-user-templates', version: 99, templates: [] }),
+        tpl('new', 'New', 500),
+      ).ok,
+    ).toBe(false)
+  })
+
+  test('deleting one template keeps the others that are in the file', () => {
+    const text = serializeUserTemplates([tpl('a', 'Older', 100), tpl('b', 'Newer', 300)])
+    const deleted = templatesAfterDelete(text, 'a')
+    expect(deleted.ok).toBe(true)
+    if (!deleted.ok) return
+    expect(deleted.templates.map((t) => t.id)).toEqual(['b'])
+    const back = deserializeUserTemplates(deleted.text)
+    expect(back.ok && back.templates.map((t) => t.id)).toEqual(['b'])
+  })
+
+  test('deleting from a missing or broken templates file writes nothing', () => {
+    expect(templatesAfterDelete(null, 'a').ok).toBe(false)
+    const broken = templatesAfterDelete('not json', 'a')
+    expect(broken.ok).toBe(false)
+    if (broken.ok) return
+    expect(broken.reason).toMatch(/Nothing was written/)
   })
 })

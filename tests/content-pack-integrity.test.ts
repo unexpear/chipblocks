@@ -25,7 +25,14 @@ import {
   verifyPackIntegrity,
 } from '../src/renderer/content-pack-integrity.ts'
 import { applyEnabledPacks } from '../src/renderer/use-content-manager.tsx'
-import type { UserPart } from '../src/renderer/user-parts.ts'
+import {
+  clearAllCommunityParts,
+  getCommunityPackIdForPart,
+  registerUserPart,
+  resolveUserPart,
+  setUserParts,
+  type UserPart,
+} from '../src/renderer/user-parts.ts'
 
 const samplePart = (id: string): UserPart => ({
   id,
@@ -202,6 +209,28 @@ describe('enabled pack reload does not hide a failed load', () => {
       enabled('bad_pack', hash),
     )
     expect(issues.some((issue) => issue.blocked && /did not load/i.test(issue.reason))).toBe(true)
+  })
+
+  test('a part id you already authored is skipped, and the skip is reported', async () => {
+    const text = JSON.stringify(
+      basePackObject({ parts: [samplePart('already_mine'), samplePart('from_the_pack')] }),
+    )
+    registerUserPart(samplePart('already_mine'))
+    try {
+      const hash = await sha256Hex(text)
+      const issues = await applyEnabledPacks(
+        { readContentPack: async () => text },
+        enabled('trust_demo', hash),
+      )
+      expect(issues.some((issue) => !issue.blocked && /skipped/i.test(issue.reason))).toBe(true)
+      expect(resolveUserPart('from_the_pack')?.id).toBe('from_the_pack')
+      expect(getCommunityPackIdForPart('from_the_pack')).toBe('trust_demo')
+      expect(getCommunityPackIdForPart('already_mine')).toBeUndefined()
+      expect(resolveUserPart('already_mine')?.id).toBe('already_mine')
+    } finally {
+      setUserParts([])
+      clearAllCommunityParts()
+    }
   })
 
   test('the content-manager intro does not claim signatures are unchecked', () => {

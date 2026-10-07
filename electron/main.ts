@@ -14,6 +14,7 @@ import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/
 import { type CanvasLoadingItemId, canvasLoadingItems } from './canvas-menu.ts'
 import { planChipDescriptionRequest } from './chip-description.ts'
 import { type CircuitOpenDecision, decideCircuitOpen } from './circuit-open.ts'
+import { isMissingFile } from './missing-file.ts'
 import { isInternalNavigation } from './navigation.ts'
 
 // Reconstruct __dirname under ESM output (package.json is type: module).
@@ -610,8 +611,11 @@ function registerUserLibraryHandlers(): void {
   ipcMain.handle('user-library:read', async (): Promise<string | null> => {
     try {
       return await readFile(userLibraryPath(), 'utf8')
-    } catch {
-      return null // no library file yet (or unreadable) → the renderer starts with an empty library
+    } catch (error) {
+      // Missing file → start empty. Any other failure must reject: treating it as empty makes the
+      // next authoring save overwrite a library this process could not read.
+      if (isMissingFile(error)) return null
+      throw error
     }
   })
   ipcMain.handle(
@@ -640,8 +644,9 @@ function registerUserTemplatesHandlers(): void {
   ipcMain.handle('user-templates:read', async (): Promise<string | null> => {
     try {
       return await readFile(userTemplatesPath(), 'utf8')
-    } catch {
-      return null // no templates file yet → the renderer starts with none
+    } catch (error) {
+      if (isMissingFile(error)) return null
+      throw error
     }
   })
   ipcMain.handle(
@@ -683,8 +688,11 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
   ipcMain.handle('content:index-read', async (): Promise<string | null> => {
     try {
       return await readFile(contentIndexPath(), 'utf8')
-    } catch {
-      return null
+    } catch (error) {
+      // A missing index is a first install. A locked or unreadable index must not look missing,
+      // or the next install would write a new index over it.
+      if (isMissingFile(error)) return null
+      throw error
     }
   })
 

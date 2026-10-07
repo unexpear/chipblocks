@@ -105,3 +105,61 @@ export function withTemplate(
     (a, b) => b.createdAt - a.createdAt,
   )
 }
+
+export type TemplateWrite =
+  | { ok: true; text: string; templates: UserTemplate[] }
+  | { ok: false; reason: string }
+
+/**
+ * Fold one newly saved template into the file text. `null` means the file is not there yet, so the
+ * library starts with this template. Text that does not parse is refused — the caller must not write
+ * a replacement, or a future-version or broken file would be replaced by the one new template.
+ */
+export function templatesAfterSave(
+  existingText: string | null,
+  template: UserTemplate,
+): TemplateWrite {
+  if (existingText === null) {
+    const templates = [template]
+    return { ok: true, text: serializeUserTemplates(templates), templates }
+  }
+  const parsed = deserializeUserTemplates(existingText)
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      reason: `${parsed.reason} Nothing was written, so the templates file was left as it is.`,
+    }
+  }
+  const templates = withTemplate(parsed.templates, template)
+  return { ok: true, text: serializeUserTemplates(templates), templates }
+}
+
+/**
+ * Remove one template from the file text. The result is the file's own list minus that id, so a
+ * template saved since the on-screen list was loaded is kept. A missing or unreadable file is
+ * refused — deleting must not write a shorter list over a file it could not read.
+ */
+export function templatesAfterDelete(existingText: string | null, id: string): TemplateWrite {
+  if (existingText === null) {
+    return {
+      ok: false,
+      reason: 'There is no templates file to update. Nothing was written.',
+    }
+  }
+  const parsed = deserializeUserTemplates(existingText)
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      reason: `${parsed.reason} Nothing was written, so the templates file was left as it is.`,
+    }
+  }
+  const templates = parsed.templates.filter((t) => t.id !== id)
+  return { ok: true, text: serializeUserTemplates(templates), templates }
+}
+
+let templateWriteChain: Promise<void> = Promise.resolve()
+
+/** Save and delete both rewrite the whole templates file, so they take turns. */
+export function enqueueTemplateWrite(task: () => Promise<void>): void {
+  templateWriteChain = templateWriteChain.then(task, task)
+}
