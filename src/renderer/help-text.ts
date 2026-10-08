@@ -592,7 +592,70 @@ export const HELP: Record<string, HelpEntry> = {
     name: 'Install from local pack',
     summary: 'Install a content pack from a file on this computer.',
     detail:
-      'ChipBlocks does not download packs. The file is checked for format and a permissive license.',
+      'The file is checked for format and a permissive license. This button does not download anything. Install from registry is the download, and it writes a pack only after the checks pass.',
+  },
+  'content.registry.url': {
+    name: 'Registry index URL',
+    summary:
+      'The address of a content registry you choose. Typing here does not download anything.',
+    detail:
+      'No registry ships with the app. A real index uses https. A file address is only for a local test.',
+  },
+  'content.registry.save': {
+    name: 'Save registry URL',
+    summary: 'Remember this address on this computer. Saving does not download or install a pack.',
+  },
+  'content.registry.load': {
+    name: 'Load registry index',
+    summary: 'Download the index at the saved address and list its packs.',
+    detail:
+      'Nothing is installed by loading. A download that is too large, too slow, or not https is refused.',
+  },
+  'content.registry.pack': {
+    name: 'Pack in the index',
+    summary: 'Choose which pack from the loaded index to install.',
+    detail: 'The list stays empty until an index has been loaded.',
+  },
+  'content.registry.install': {
+    name: 'Install from registry',
+    summary:
+      'Download the chosen pack and install it only after the size, hash, and signature match the index.',
+    detail:
+      'If a check fails, nothing is written. A newer version stays uninstalled until you choose it.',
+  },
+  'content.update': {
+    name: 'Update available',
+    summary: 'The registry lists a newer version of a pack you already installed.',
+    detail: 'The installed version stays until you install the newer one.',
+  },
+  'content.fingerprint': {
+    name: 'Publisher fingerprint',
+    summary: 'The SHA-256 of this pack’s raw public key, so you can tell keys apart.',
+    detail:
+      'It names the key. It is not a certificate, and it does not by itself mean you trust the publisher.',
+  },
+  'content.trust.pin': {
+    name: 'Trust this publisher',
+    summary: 'Ask to pin this public key on this computer.',
+    detail:
+      'You confirm before anything is written. The pin is a key you choose, not a certificate authority. Other packs signed by the same key count as pinned too.',
+  },
+  'content.trust.unpin': {
+    name: 'Stop trusting this publisher',
+    summary: 'Ask to remove this public key from the pins on this computer.',
+    detail: 'Other packs signed by the same key stop counting as pinned too.',
+  },
+  'content.trust.confirmPin': {
+    name: 'Confirm trust',
+    summary: 'Write this public key into the trusted-publishers file on this computer.',
+  },
+  'content.trust.confirmUnpin': {
+    name: 'Confirm untrust',
+    summary: 'Remove this public key from the trusted-publishers file on this computer.',
+  },
+  'content.trust.cancel': {
+    name: 'Cancel',
+    summary: 'Leave the trusted-publishers file as it is.',
   },
   'content.enable': {
     name: 'Enable',

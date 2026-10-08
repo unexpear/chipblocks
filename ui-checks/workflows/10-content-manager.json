@@ -61,6 +61,47 @@
       ]
     },
     {
+      "id": "no-registry-configured",
+      "title": "No content registry is configured (none ships with the app)",
+      "screen": "contentManager",
+      "do": [
+        {
+          "open": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.registryStatus",
+          "matches": "No content registry is configured",
+          "id": "no-registry-message"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.registryStatus",
+          "matches": "no public registry exists",
+          "id": "says-none-exists"
+        },
+        {
+          "type": "value",
+          "sel": "contentManager.registryUrl",
+          "equals": "",
+          "id": "registry-url-empty"
+        },
+        {
+          "type": "visible",
+          "sel": "contentManager.installFromRegistry",
+          "id": "install-from-registry-visible"
+        },
+        {
+          "type": "text",
+          "region": "contentManager",
+          "matches": "No publisher keys ship as trusted",
+          "id": "no-default-trusted-keys"
+        }
+      ]
+    },
+    {
       "id": "install-without-bridge",
       "title": "Install from local pack explains it needs the desktop bridge",
       "screen": "contentManager",

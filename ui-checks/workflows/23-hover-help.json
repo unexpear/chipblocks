@@ -1,7 +1,12 @@
 {
   "name": "hover-help",
   "title": "Hover help names a tool, a palette part, disabled Export ZIP, a Gerber layer, and a catalog badge, then goes away",
-  "covers": ["workspace", "pcbPanel", "gerberCheck", "contentManager"],
+  "covers": [
+    "workspace",
+    "pcbPanel",
+    "gerberCheck",
+    "contentManager"
+  ],
   "steps": [
     {
       "id": "blank",
@@ -18,7 +23,7 @@
         {
           "type": "text",
           "region": "workspace.status",
-          "matches": "— 0 components, 0 wires",
+          "matches": "\u2014 0 components, 0 wires",
           "id": "status-0c-0w"
         }
       ]
@@ -194,6 +199,34 @@
       ]
     },
     {
+      "id": "hover-registry-url",
+      "title": "The registry URL tip says nothing is downloaded while you type",
+      "screen": "contentManager",
+      "do": [
+        {
+          "hover": "contentManager.registryUrl"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-name"
+          },
+          "matches": "^Registry index URL$",
+          "id": "url-name"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-summary"
+          },
+          "matches": "does not download",
+          "id": "url-summary"
+        }
+      ]
+    },
+    {
       "id": "close-manager",
       "title": "Close the Content Manager",
       "screen": "workspace",
@@ -228,7 +261,7 @@
         {
           "type": "text",
           "region": "workspace.status",
-          "matches": "— 4 components, 4 wires",
+          "matches": "\u2014 4 components, 4 wires",
           "id": "status-4c-4w"
         }
       ]

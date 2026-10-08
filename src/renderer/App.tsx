@@ -435,6 +435,15 @@ declare global {
       ) => Promise<{ ok: boolean; path?: string; reason?: string }>
       removeContentPack?: (id: string) => Promise<{ ok: boolean; reason?: string }>
       pickLocalContentPack?: () => Promise<{ ok: boolean; text?: string; reason?: string }>
+      readTrustedPublishers?: () => Promise<string | null>
+      writeTrustedPublishers?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      readContentRegistrySettings?: () => Promise<string | null>
+      writeContentRegistrySettings?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      downloadRegistryResource?: (
+        url: string,
+        maxBytes: number,
+        timeoutMs: number,
+      ) => Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: string }>
       onContentManagerOpen?: (callback: () => void) => void
       onSaveTemplateRequest?: (callback: () => void) => void
       getKeybinds?: () => Promise<Record<string, string>>

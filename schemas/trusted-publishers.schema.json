@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/trusted-publishers.schema.json",
+  "title": "ChipBlocks trusted publishers",
+  "description": "Local pin list at ~/.chipblocks/trusted-publishers.json. Version 1. No keys ship with the app. A key listed here is one the user chose to trust on this computer — not a certificate authority. The runtime parser (content-pack-signature.ts parseTrustedPublishers) is strict in the same direction: unknown fields, a non-array keys list, a key that is not 32 raw ed25519 bytes, or a repeated key refuses the whole file. Refused files are treated as no trusted keys and are not overwritten.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "keys"],
+  "properties": {
+    "format": { "const": "chipblocks-trusted-publishers" },
+    "version": { "const": 1 },
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["publicKey"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "publicKey": {
+            "type": "string",
+            "minLength": 1,
+            "description": "32 raw ed25519 bytes as hex or base64/base64url. The runtime stores lowercase hex."
+          },
+          "comment": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

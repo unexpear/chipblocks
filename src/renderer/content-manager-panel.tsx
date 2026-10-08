@@ -8,20 +8,29 @@ import {
   managerRows,
   type PackLoadIssue,
 } from './content-manager.ts'
+import { type LivePublisherTrust, publisherTrustLabel } from './content-pack-signature.ts'
+import type { RegistryPackEntry, RegistryUpdate } from './content-registry.ts'
 import { THEME } from './theme.ts'
 import { HelpTip } from './tooltip.tsx'
 
 /**
  * What the panel claims about install trust. Kept as a constant so a test can lock the wording:
  * a declared ed25519 signature IS checked, and a bad content hash is refused rather than ignored.
+ * No publisher key and no registry URL ship with the app.
  */
 export const CONTENT_MANAGER_INTRO =
-  'Browse planned community libraries (cited from FINAL-STATE-VISION.md) and manage packs you install from a local file. Not a marketplace — ChipBlocks does not download arbitrary remote code. Install validates format + permissive license, checks an optional declared SHA-256 content hash (a malformed or non-sha256 declaration is refused, not treated as "no hash"), and records a file hash for reload tamper-evidence. A declared ed25519 signature is checked: invalid signatures are refused; a valid signature is self-declared integrity under the key in the pack, not a certificate authority. This screen does not load ~/.chipblocks/trusted-publishers.json, so it cannot mark a key as one you pinned. Undeclared is not verified.'
+  'Browse planned community libraries (cited from FINAL-STATE-VISION.md) and manage packs you install from a local file or from a content registry whose index URL you set. Not a marketplace — ChipBlocks does not download arbitrary remote code, and it does not ship a registry URL because no public registry exists. Install validates format + permissive license, checks an optional declared SHA-256 content hash (a malformed or non-sha256 declaration is refused, not treated as "no hash"), and records a file hash for reload tamper-evidence. A declared ed25519 signature is checked: invalid signatures are refused; a valid signature is self-declared integrity under the key in the pack, not a certificate authority. The desktop app reads ~/.chipblocks/trusted-publishers.json. No publisher keys ship as trusted. A valid signature is treated as trusted only when that key is pinned in the file. A missing file means no key is pinned. Undeclared is not verified.'
+
+export type PublisherCard = {
+  publicKeyHex: string
+  fingerprint: string
+  trust: LivePublisherTrust
+}
 
 /**
- * Plugin & Content Manager panel — browse the cited community catalog, install a local pack,
- * enable/disable/uninstall. Opened from Tools → Plugin & Content Manager. Not a marketplace;
- * remote downloads are refused by the engine (see content-manager.ts).
+ * Plugin & Content Manager panel — browse the cited community catalog, install a local pack
+ * or a pack from a registry you configured, enable/disable/uninstall, pin a publisher key.
+ * Opened from Tools → Plugin & Content Manager. Not a marketplace. No registry URL is built in.
  */
 
 export function ContentManagerPanel({
@@ -29,19 +38,45 @@ export function ContentManagerPanel({
   statusMessage,
   loadIssues,
   light,
+  trustedStatus,
+  registryUrl,
+  registryStatus,
+  registryPacks,
+  registrySelection,
+  updates,
+  publisherByPack,
   onClose,
   onInstallLocal,
   onSetEnabled,
   onUninstall,
+  onRegistryUrlChange,
+  onSaveRegistryUrl,
+  onLoadRegistry,
+  onRegistrySelection,
+  onInstallFromRegistry,
+  onTrustPublisher,
 }: {
   index: ContentIndex
   statusMessage: string | null
   loadIssues?: ReadonlyMap<string, PackLoadIssue>
   light: boolean
+  trustedStatus: string
+  registryUrl: string
+  registryStatus: string
+  registryPacks: readonly RegistryPackEntry[]
+  registrySelection: string
+  updates: readonly RegistryUpdate[]
+  publisherByPack: Readonly<Record<string, PublisherCard>>
   onClose: () => void
   onInstallLocal: () => void
   onSetEnabled: (id: string, enabled: boolean) => void
   onUninstall: (id: string) => void
+  onRegistryUrlChange: (url: string) => void
+  onSaveRegistryUrl: () => void
+  onLoadRegistry: () => void
+  onRegistrySelection: (id: string) => void
+  onInstallFromRegistry: () => void
+  onTrustPublisher: (publicKeyHex: string, trust: boolean, packId: string) => void
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -81,7 +116,7 @@ export function ContentManagerPanel({
           left: '50%',
           transform: 'translate(-50%, -50%)',
           zIndex: 2100,
-          width: 640,
+          width: 720,
           maxHeight: 'calc(100% - 48px)',
           overflowY: 'auto',
           background: light ? THEME.textBright : THEME.surfaceBase,
@@ -111,6 +146,125 @@ export function ContentManagerPanel({
         <p style={{ margin: '0 0 10px', color: dimColor, lineHeight: 1.45 }}>
           {CONTENT_MANAGER_INTRO}
         </p>
+
+        <div
+          data-testid="content-manager-trusted-status"
+          style={{ margin: '0 0 10px', color: dimColor, lineHeight: 1.45 }}
+        >
+          {trustedStatus}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, color: dimColor, margin: '4px 0 6px' }}>
+            Content registry
+          </div>
+          <div
+            data-testid="content-manager-registry-status"
+            style={{ color: dimColor, lineHeight: 1.45, marginBottom: 8 }}
+          >
+            {registryStatus}
+          </div>
+          <label style={{ display: 'block', color: dimColor, marginBottom: 4 }}>
+            Registry index URL
+            <HelpTip helpId="content.registry.url">
+              <input
+                data-testid="content-manager-registry-url"
+                aria-label="Content registry index URL"
+                value={registryUrl}
+                onChange={(event) => onRegistryUrlChange(event.target.value)}
+                spellCheck={false}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: light
+                    ? `1px solid ${THEME.textPrimary}`
+                    : `1px solid ${THEME.borderStrong}`,
+                  background: light ? THEME.white : THEME.surfaceInput,
+                  color: textColor,
+                  fontSize: 12,
+                }}
+              />
+            </HelpTip>
+          </label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            <HelpTip helpId="content.registry.save">
+              <button
+                type="button"
+                data-testid="content-manager-registry-save"
+                onClick={onSaveRegistryUrl}
+                style={chipButton(light)}
+              >
+                Save registry URL
+              </button>
+            </HelpTip>
+            <HelpTip helpId="content.registry.load">
+              <button
+                type="button"
+                data-testid="content-manager-registry-load"
+                onClick={onLoadRegistry}
+                style={chipButton(light)}
+              >
+                Load registry index
+              </button>
+            </HelpTip>
+          </div>
+          <label style={{ display: 'block', color: dimColor, marginTop: 8 }}>
+            Pack in the loaded index
+            <HelpTip helpId="content.registry.pack">
+              <select
+                data-testid="content-manager-registry-pack"
+                aria-label="Pack in the loaded index"
+                value={registrySelection}
+                onChange={(event) => onRegistrySelection(event.target.value)}
+                style={{
+                  display: 'block',
+                  marginTop: 4,
+                  maxWidth: '100%',
+                  padding: '4px 8px',
+                  borderRadius: 4,
+                  border: light
+                    ? `1px solid ${THEME.textPrimary}`
+                    : `1px solid ${THEME.borderStrong}`,
+                  background: light ? THEME.white : THEME.surfaceInput,
+                  color: textColor,
+                }}
+              >
+                <option value="">No pack chosen</option>
+                {registryPacks.map((pack) => (
+                  <option key={pack.id} value={pack.id}>
+                    {`${pack.name ?? pack.id} ${pack.version}`}
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
+          </label>
+          <HelpTip helpId="content.registry.install">
+            <button
+              type="button"
+              data-testid="content-manager-install-from-registry"
+              onClick={onInstallFromRegistry}
+              style={{ ...primaryButton(light), marginTop: 8 }}
+            >
+              Install from registry
+            </button>
+          </HelpTip>
+          {updates.map((update) => (
+            <HelpTip key={update.id} helpId="content.update">
+              <div
+                data-testid="content-manager-update-available"
+                data-pack={update.id}
+                style={{ color: dimColor, marginTop: 8, lineHeight: 1.4 }}
+              >
+                Update available for {update.name}: installed {update.installed}, registry has{' '}
+                {update.offered}. It stays on the installed version until you install this one.
+              </div>
+            </HelpTip>
+          ))}
+        </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <HelpTip helpId="content.install">
@@ -154,15 +308,18 @@ export function ContentManagerPanel({
                 )
               }
               const loadIssue = loadIssues?.get(row.record.id)
+              const publisher = publisherByPack[row.record.id]
               return (
                 <li key={rowKey(row)} style={{ marginBottom: 8 }}>
                   <InstalledCard
                     record={row.record}
                     {...(row.catalog !== undefined ? { catalog: row.catalog } : {})}
                     {...(loadIssue !== undefined ? { loadIssue } : {})}
+                    {...(publisher !== undefined ? { publisher } : {})}
                     light={light}
                     onSetEnabled={onSetEnabled}
                     onUninstall={onUninstall}
+                    onTrustPublisher={onTrustPublisher}
                   />
                 </li>
               )
@@ -182,18 +339,23 @@ function InstalledCard({
   record,
   catalog,
   loadIssue,
+  publisher,
   light,
   onSetEnabled,
   onUninstall,
+  onTrustPublisher,
 }: {
   record: InstalledPackRecord
   catalog?: ContentCatalogEntry
   loadIssue?: PackLoadIssue
+  publisher?: PublisherCard
   light: boolean
   onSetEnabled: (id: string, enabled: boolean) => void
   onUninstall: (id: string) => void
+  onTrustPublisher: (publicKeyHex: string, trust: boolean, packId: string) => void
 }) {
   const [confirmUninstall, setConfirmUninstall] = useState(false)
+  const [confirmTrust, setConfirmTrust] = useState(false)
   const dim = light ? THEME.textFaint : THEME.textMuted
   const blocked = loadIssue?.blocked === true
   return (
@@ -233,7 +395,7 @@ function InstalledCard({
         {record.footprintCount > 0
           ? ` · ${record.footprintCount} footprint${record.footprintCount === 1 ? '' : 's'}`
           : ''}{' '}
-        · source: local pack
+        · source: {record.acquiredFrom === 'registry' ? 'content registry' : 'local pack'}
       </div>
       {loadIssue !== undefined ? (
         <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
@@ -260,6 +422,26 @@ function InstalledCard({
           </div>
         </HelpTip>
       )}
+      {publisher !== undefined ? (
+        <PublisherTrust
+          packId={record.id}
+          publisher={publisher}
+          confirmTrust={confirmTrust}
+          light={light}
+          onAsk={() => setConfirmTrust(true)}
+          onCancel={() => setConfirmTrust(false)}
+          onConfirm={() => {
+            setConfirmTrust(false)
+            onTrustPublisher(publisher.publicKeyHex, publisher.trust !== 'valid-trusted', record.id)
+          }}
+        />
+      ) : record.signatureStatus === 'valid-trusted' ||
+        record.signatureStatus === 'valid-untrusted' ? (
+        <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
+          This pack was installed before its publisher key was recorded. Install it again to see the
+          fingerprint and to pin the key.
+        </div>
+      ) : null}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
         <HelpTip helpId={record.enabled ? 'content.disable' : 'content.enable'}>
           <button
@@ -306,6 +488,99 @@ function InstalledCard({
           </HelpTip>
         )}
       </div>
+    </div>
+  )
+}
+
+function PublisherTrust({
+  packId,
+  publisher,
+  confirmTrust,
+  light,
+  onAsk,
+  onCancel,
+  onConfirm,
+}: {
+  packId: string
+  publisher: PublisherCard
+  confirmTrust: boolean
+  light: boolean
+  onAsk: () => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const dim = light ? THEME.textFaint : THEME.textMuted
+  const trusting = publisher.trust !== 'valid-trusted'
+  return (
+    <div style={{ marginTop: 6 }}>
+      <HelpTip helpId="content.fingerprint">
+        <div
+          data-testid="content-manager-publisher-fingerprint"
+          data-pack={packId}
+          style={{
+            color: dim,
+            fontSize: 10,
+            lineHeight: 1.4,
+            fontFamily: 'ui-monospace, monospace',
+            overflowWrap: 'anywhere',
+          }}
+        >
+          Publisher key fingerprint (SHA-256 of the raw ed25519 public key):{' '}
+          {publisher.fingerprint || 'still computing'}
+        </div>
+      </HelpTip>
+      <div
+        data-testid="content-manager-trust-state"
+        data-pack={packId}
+        data-trust={publisher.trust}
+        style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}
+      >
+        {publisherTrustLabel(publisher.trust)}
+      </div>
+      {confirmTrust ? (
+        <div
+          data-testid="content-manager-trust-confirm"
+          data-pack={packId}
+          style={{ marginTop: 6 }}
+        >
+          <div style={{ color: dim, fontSize: 11, lineHeight: 1.4 }}>
+            {trusting
+              ? `Pin this publisher key in ~/.chipblocks/trusted-publishers.json? Fingerprint ${publisher.fingerprint}. This writes a key you choose on this computer. It is not a certificate authority. Other packs signed by this same key will count as pinned too.`
+              : `Remove this publisher key from ~/.chipblocks/trusted-publishers.json? Fingerprint ${publisher.fingerprint}. Other packs signed by this same key will also stop counting as pinned.`}
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <HelpTip helpId={trusting ? 'content.trust.confirmPin' : 'content.trust.confirmUnpin'}>
+              <button
+                type="button"
+                data-testid="content-manager-trust-confirm-yes"
+                onClick={onConfirm}
+                style={primaryButton(light)}
+                disabled={publisher.fingerprint === ''}
+              >
+                {trusting ? 'Confirm trust' : 'Confirm untrust'}
+              </button>
+            </HelpTip>
+            <HelpTip helpId="content.trust.cancel">
+              <button type="button" onClick={onCancel} style={chipButton(light)}>
+                Cancel
+              </button>
+            </HelpTip>
+          </div>
+        </div>
+      ) : (
+        <HelpTip helpId={trusting ? 'content.trust.pin' : 'content.trust.unpin'}>
+          <button
+            type="button"
+            data-testid="content-manager-trust-toggle"
+            data-pack={packId}
+            onClick={onAsk}
+            style={{ ...chipButton(light), marginTop: 6 }}
+            disabled={publisher.fingerprint === ''}
+          >
+            {trusting ? 'Trust this publisher…' : 'Stop trusting this publisher…'}
+          </button>
+        </HelpTip>
+      )}
     </div>
   )
 }

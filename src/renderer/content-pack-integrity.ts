@@ -27,10 +27,15 @@ export type IntegrityVerdict =
 
 const HEX64 = /^[a-f0-9]{64}$/i
 
-export async function sha256Hex(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text)
-  const buf = await globalThis.crypto.subtle.digest('SHA-256', data)
+export async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  const buf = await globalThis.crypto.subtle.digest('SHA-256', copy)
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function sha256Hex(text: string): Promise<string> {
+  return sha256HexBytes(new TextEncoder().encode(text))
 }
 
 /**

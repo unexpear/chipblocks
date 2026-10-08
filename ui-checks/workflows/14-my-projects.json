@@ -37,7 +37,7 @@
     },
     {
       "id": "chip-description",
-      "title": "AI chip description",
+      "title": "FPGA chip description files (File ▸ Read an FPGA Chip File…)",
       "requires": ["electron:chipDescription"],
       "independent": true
     }

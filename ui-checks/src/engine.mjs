@@ -4,6 +4,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { compactForLaya } from './laya.mjs'
+import { makePack } from './pack-fixture.mjs'
+import { readZip } from './zip.mjs'
 
 export class StepError extends Error {
   constructor(category, message, extra = {}) {
@@ -15,12 +17,41 @@ export class StepError extends Error {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const norm = (s) => (s ?? '').replace(/\s+/g, ' ').trim()
+// "a.b[0].length" or ["key/with/slashes", 0] → value (undefined when any step is missing)
+const jsonAt = (doc, at) => {
+  const keys = Array.isArray(at)
+    ? at
+    : String(at)
+        .replace(/\[(\d+)\]/g, '.$1')
+        .split('.')
+        .filter((k) => k !== '')
+  let v = doc
+  for (const k of keys) {
+    if (v === null || v === undefined) return undefined
+    v = k === 'length' && (Array.isArray(v) || typeof v === 'string') ? v.length : v[k]
+  }
+  return v
+}
 
 export class Engine {
-  constructor({ map, page, context, outDir, laya, log, workflowName }) {
+  constructor({
+    map,
+    page,
+    context,
+    outDir,
+    laya,
+    log,
+    workflowName,
+    target = 'browser',
+    session = null,
+    pathVars = {},
+  }) {
     this.map = map
-    this.page = page
     this.context = context
+    this.target = target
+    this.session = session // ElectronSession in --target electron
+    this.pathVars = pathVars // {sandbox}, {home}, {userData}, {files}, {out}, {fixtures}
+    this.dialogMark = 0
     this.outDir = outDir
     this.laya = laya
     this.log = log ?? (() => {})
@@ -33,6 +64,24 @@ export class Engine {
     this.layaFlags = []
     this.layaRuns = []
     this.regionSeq = 0
+    this.attachPage(page)
+  }
+
+  /** (Re)attach to a page — once at start, and again after an Electron relaunch. */
+  attachPage(page) {
+    this.page = page
+    if (this.session?.app) {
+      // main-process console errors count like renderer ones
+      this.session.app.on('console', (m) => {
+        if (m.type() === 'error')
+          this.console.push({
+            type: 'error',
+            text: `[main] ${m.text()}`,
+            url: 'main-process',
+            step: this.currentStep,
+          })
+      })
+    }
     page.on('console', (m) => {
       if (m.type() !== 'error' && m.type() !== 'warning') return
       this.console.push({
@@ -66,11 +115,29 @@ export class Engine {
   }
 
   fill(spec, params) {
-    if (!params) return spec
+    const all = { ...this.pathVars, ...(params ?? {}) }
+    if (!Object.keys(all).length) return spec
+    // JSON-escape the value: Windows paths carry backslashes
     const s = JSON.stringify(spec).replace(/\{(\w+)\}/g, (m, k) =>
-      params[k] !== undefined ? String(params[k]).replace(/"/g, '\\"') : m,
+      all[k] !== undefined ? JSON.stringify(String(all[k])).slice(1, -1) : m,
     )
     return JSON.parse(s)
+  }
+
+  electronOnly(what) {
+    if (!this.session?.app)
+      throw new StepError('driver', `${what} needs --target electron (no Electron app in this run)`)
+    return this.session
+  }
+
+  /** Called by the runner before each step: dialogs are counted per step. */
+  async beginStep() {
+    if (this.session?.app) this.dialogMark = (await this.session.dialogCalls()).length
+  }
+
+  async stepDialogs() {
+    if (!this.session?.app) return []
+    return (await this.session.dialogCalls()).slice(this.dialogMark)
   }
 
   // ---------- selectors ----------
@@ -181,6 +248,7 @@ export class Engine {
 
   // ---------- asserts (polling, Playwright-expect style) ----------
   async evalOnce(a, params) {
+    if (a.with) params = { ...params, ...a.with } // assert-level placeholders
     switch (a.type) {
       case 'visible': {
         const l = this.locator(a.sel, params)
@@ -415,6 +483,142 @@ export class Engine {
           detail: `${v} vs @${a.var}=${this.vars[a.var]}`,
         }
       }
+      // ---- Electron target: native menu, window, dialogs, files on disk ----
+      case 'menuItem': {
+        const f = this.fill(a, params)
+        const it = await this.electronOnly('menuItem').menuItem(f.path.split(/\s*▸\s*/))
+        if (!it.found)
+          return {
+            ok: f.exists === false,
+            detail: `no '${it.missing}' (has: ${it.available.join(', ')})`,
+          }
+        if (f.exists === false) return { ok: false, detail: `'${it.label}' exists` }
+        const bad = []
+        if (f.enabled !== undefined && it.enabled !== f.enabled) bad.push(`enabled=${it.enabled}`)
+        if (f.accelerator !== undefined && it.accelerator !== f.accelerator)
+          bad.push(`accelerator=${it.accelerator}`)
+        if (f.checked !== undefined && it.checked !== f.checked) bad.push(`checked=${it.checked}`)
+        for (const want of f.submenuIncludes ?? [])
+          if (!(it.submenu ?? []).some((l) => l === want || l.startsWith(want)))
+            bad.push(`submenu lacks '${want}' (has: ${(it.submenu ?? []).join(', ')})`)
+        return {
+          ok: bad.length === 0,
+          detail: bad.length
+            ? `${it.label}: ${bad.join(', ')}`
+            : `${it.label} (enabled=${it.enabled}${it.accelerator ? `, ${it.accelerator}` : ''})`,
+        }
+      }
+      case 'windowTitle': {
+        const f = this.fill(a, params)
+        const t = await this.electronOnly('windowTitle').windowTitle()
+        const ok = new RegExp(f.matches).test(t ?? '')
+        return { ok, detail: `window title "${t}"` }
+      }
+      case 'dialogs': {
+        // native dialogs the app asked for during this step (stubbed in the main process)
+        const f = this.fill(a, params)
+        this.electronOnly('dialogs')
+        const calls = (await this.stepDialogs()).filter((c) => c.kind === f.kind)
+        const last = calls.at(-1)
+        const bad = []
+        if (f.count !== undefined && calls.length !== f.count)
+          bad.push(`${calls.length} ${f.kind} dialog(s), expected ${f.count}`)
+        if (f.min !== undefined && calls.length < f.min)
+          bad.push(`${calls.length} ${f.kind} dialog(s), expected ≥ ${f.min}`)
+        const fields = { titleRe: 'title', defaultPathRe: 'defaultPath', contentRe: 'content' }
+        for (const [k, field] of Object.entries(fields))
+          if (f[k] !== undefined && !new RegExp(f[k]).test(last?.[field] ?? ''))
+            bad.push(`last ${field} "${last?.[field] ?? '(none)'}" !~ /${f[k]}/`)
+        for (const want of f.filtersInclude ?? [])
+          if (!(last?.filters ?? []).includes(want)) bad.push(`filters lack '${want}'`)
+        return {
+          ok: bad.length === 0,
+          detail: bad.length
+            ? bad.join('; ')
+            : `${calls.length} ${f.kind} dialog(s)${last?.title ? ` — "${last.title}"` : ''}${last?.defaultPath ? ` default ${last.defaultPath}` : ''}`,
+        }
+      }
+      case 'file': {
+        const f = this.fill(a, params)
+        const file = path.resolve(f.path)
+        const exists = fs.existsSync(file)
+        if (f.exists === false)
+          return { ok: !exists, detail: exists ? `${file} exists` : `${file} absent` }
+        if (!exists) return { ok: false, detail: `${file} does not exist` }
+        const st = fs.statSync(file)
+        if (st.isDirectory()) return { ok: f.dir === true, detail: `${file} is a folder` }
+        const bad = []
+        if (f.minBytes !== undefined && st.size < f.minBytes)
+          bad.push(`${st.size} bytes < ${f.minBytes}`)
+        const text = fs.readFileSync(file, 'utf8')
+        if (f.matches && !new RegExp(f.matches, f.flags ?? '').test(text))
+          bad.push(`text !~ /${f.matches}/`)
+        if (f.notMatches && new RegExp(f.notMatches, f.flags ?? '').test(text))
+          bad.push(`text ~ /${f.notMatches}/`)
+        if (f.json) {
+          let doc
+          try {
+            doc = JSON.parse(text)
+          } catch (e) {
+            return { ok: false, detail: `${file} is not JSON: ${e.message}` }
+          }
+          for (const c of f.json) {
+            const v = jsonAt(doc, c.at)
+            const show = JSON.stringify(v)?.slice(0, 120)
+            if (c.eq !== undefined && JSON.stringify(v) !== JSON.stringify(c.eq))
+              bad.push(`${c.at} = ${show}, expected ${JSON.stringify(c.eq)}`)
+            if (c.matches !== undefined && !new RegExp(c.matches).test(String(v ?? '')))
+              bad.push(`${c.at} = ${show} !~ /${c.matches}/`)
+            if (c.gte !== undefined && !(Number(v) >= c.gte))
+              bad.push(`${c.at} = ${show} < ${c.gte}`)
+            if (c.exists === false && v !== undefined) bad.push(`${c.at} present (${show})`)
+            if (c.exists === true && v === undefined) bad.push(`${c.at} missing`)
+          }
+        }
+        return {
+          ok: bad.length === 0,
+          detail: bad.length ? `${file}: ${bad.join('; ')}` : `${file} (${st.size} bytes)`,
+        }
+      }
+      case 'zip': {
+        const f = this.fill(a, params)
+        const file = path.resolve(f.path)
+        if (!fs.existsSync(file)) return { ok: false, detail: `${file} does not exist` }
+        let z
+        try {
+          z = readZip(file)
+        } catch (e) {
+          return { ok: false, detail: `${file} does not open as a ZIP: ${e.message}` }
+        }
+        const bad = []
+        for (const want of f.entries ?? []) {
+          const re = new RegExp(want.nameRe)
+          const hits = z.entries.filter((e) => re.test(e.name))
+          if (!hits.length) {
+            bad.push(`no entry /${want.nameRe}/`)
+            continue
+          }
+          for (const e of hits) {
+            if (e.size < (want.minBytes ?? 1)) bad.push(`${e.name} is ${e.size} bytes`)
+            const head = e.data.subarray(0, 4096).toString('utf8')
+            if (want.startsRe && !new RegExp(want.startsRe).test(head))
+              bad.push(`${e.name} starts "${head.slice(0, 40).replace(/\s+/g, ' ')}"`)
+            if (want.contains && !e.data.toString('utf8').includes(want.contains))
+              bad.push(`${e.name} lacks "${want.contains}"`)
+          }
+        }
+        if (f.minEntries !== undefined && z.entries.length < f.minEntries)
+          bad.push(`${z.entries.length} entries < ${f.minEntries}`)
+        if (f.noEmptyEntries)
+          for (const e of z.entries) if (e.size === 0) bad.push(`${e.name} is empty`)
+        const list = z.entries.map((e) => `${e.name} (${e.size})`).join(', ')
+        return {
+          ok: bad.length === 0,
+          detail: bad.length
+            ? `${bad.join('; ')} — entries: ${list}`
+            : `${z.entries.length} entries, all CRC-checked: ${list}`,
+        }
+      }
       default:
         throw new StepError('driver', `unknown assert type ${a.type}`)
     }
@@ -523,9 +727,12 @@ export class Engine {
     } else if (act.waitReady) {
       await this.waitReady(act.waitReady, p)
     } else if (act.goto !== undefined) {
-      await this.page.goto(new URL(act.goto, this.map.defaults.url).toString(), {
-        waitUntil: 'domcontentloaded',
-      })
+      // Electron loads its own built index.html; "go to the start" there is a reload.
+      if (this.session?.app) await this.page.reload({ waitUntil: 'domcontentloaded' })
+      else
+        await this.page.goto(new URL(act.goto, this.map.defaults.url).toString(), {
+          waitUntil: 'domcontentloaded',
+        })
     } else if (act.open) {
       const s = this.screen(act.open)
       for (const a of s.reach ?? []) await this.doAction(a, p)
@@ -596,9 +803,81 @@ export class Engine {
         box.x + (act.mouseClickAt.dx ?? 5),
         box.y + (act.mouseClickAt.dy ?? 5),
       )
+    } else if (act.menu) {
+      const r = await this.electronOnly('menu').clickMenu(act.menu.split(/\s*▸\s*/))
+      if (!r.ok) throw new StepError('assert', `native menu ${act.menu}: ${r.why}`)
+      // A person cannot pick two menu items within one frame; let the renderer commit the IPC's state
+      // update first (back-to-back Select All → Copy otherwise copies the pre-selection canvas).
+      await this.settle()
+    } else if (act.settle) {
+      await this.settle()
+    } else if (act.dialog) {
+      // queue the answer the next native open/save dialog gets
+      const s = this.electronOnly('dialog')
+      const d = act.dialog
+      if (d.open)
+        await s.queueDialog('open', { paths: [].concat(d.open).map((f) => path.resolve(f)) })
+      else if (d.save) await s.queueDialog('save', { path: path.resolve(d.save) })
+      else if (d.cancel) await s.queueDialog(d.cancel, { cancel: true })
+      else throw new StepError('driver', `bad dialog action ${JSON.stringify(d)}`)
+    } else if (act.relaunch) {
+      // quit the app and start it again on the same sandbox (persistence checks)
+      const s = this.electronOnly('relaunch')
+      await s.close()
+      await s.launch()
+      this.dialogMark = 0
+      this.attachPage(s.page)
+    } else if (act.writeFile) {
+      const w = act.writeFile
+      const file = this.sandboxed(w.path, 'writeFile')
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      if (w.copyFrom) fs.copyFileSync(path.resolve(w.copyFrom), file)
+      else
+        fs.writeFileSync(
+          file,
+          w.json !== undefined ? JSON.stringify(w.json, null, 2) : String(w.text ?? ''),
+          'utf8',
+        )
+    } else if (act.editFile) {
+      const e = act.editFile
+      const file = this.sandboxed(e.path, 'editFile')
+      if (!fs.existsSync(file))
+        throw new StepError('precondition', `editFile: ${file} does not exist`)
+      let t = fs.readFileSync(file, 'utf8')
+      if (e.replace) {
+        if (!t.includes(e.replace[0]))
+          throw new StepError('precondition', `editFile: "${e.replace[0]}" not found in ${file}`)
+        t = t.replace(e.replace[0], e.replace[1])
+      }
+      if (e.append !== undefined) t += e.append
+      fs.writeFileSync(file, t, 'utf8')
+    } else if (act.makePack) {
+      const m = act.makePack
+      const file = this.sandboxed(m.path, 'makePack')
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      const { text, publicKeyHex } = makePack(m)
+      fs.writeFileSync(file, text, 'utf8')
+      if (m.keyVar) this.vars[m.keyVar] = publicKeyHex
     } else {
       throw new StepError('driver', `unknown action ${JSON.stringify(act)}`)
     }
+  }
+
+  /** Two animation frames: React has committed whatever the last event scheduled. */
+  async settle() {
+    await this.page
+      .evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+      .catch(() => {})
+  }
+
+  /** Test-side writes stay inside the Electron sandbox. */
+  sandboxed(p, what) {
+    this.electronOnly(what)
+    const file = path.resolve(p)
+    const rel = path.relative(path.resolve(this.pathVars.sandbox), file)
+    if (rel.startsWith('..') || path.isAbsolute(rel))
+      throw new StepError('driver', `${what}: ${file} is outside the sandbox`)
+    return file
   }
 
   // ---------- console / crash ----------
@@ -676,6 +955,37 @@ export class Engine {
       )
       out.console = `${base}.console.txt`
     } catch {}
+    if (this.session?.app) {
+      // Electron: what the stubbed native dialogs were asked, and what is in the sandbox
+      try {
+        const tree = []
+        const walk = (d, depth) => {
+          for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const full = path.join(d, e.name)
+            if (e.isDirectory()) {
+              if (
+                depth < 6 &&
+                !/^(Cache|Code Cache|GPUCache|Dawn\w*|blob_storage|Crashpad|Network|Shared Dictionary|Session Storage|Local Storage|DIPS|logs)$/.test(
+                  e.name,
+                )
+              )
+                walk(full, depth + 1)
+            } else
+              tree.push(`${path.relative(this.pathVars.sandbox, full)}  ${fs.statSync(full).size}`)
+          }
+        }
+        walk(this.pathVars.sandbox, 0)
+        const calls = await this.session.dialogCalls()
+        fs.writeFileSync(
+          `${base}.electron.txt`,
+          `# native dialogs since launch (stubbed)\n${JSON.stringify(calls, null, 2)}\n\n# sandbox files\n${tree.join('\n')}\n`,
+          'utf8',
+        )
+        out.electron = `${base}.electron.txt`
+      } catch (e) {
+        out.electronError = String(e.message).split('\n')[0]
+      }
+    }
     return out
   }
 

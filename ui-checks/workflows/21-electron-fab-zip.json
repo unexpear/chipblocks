@@ -1,0 +1,178 @@
+{
+  "name": "electron-fab-zip",
+  "targets": ["electron"],
+  "title": "Export ZIP writes the manufacturing ZIP through the save dialog; the ZIP opens and holds non-empty Gerber + drill files",
+  "covers": ["workspace", "pcbPanel"],
+  "steps": [
+    {
+      "id": "led-board",
+      "title": "LED project, PCB panel: DRC clean, Export ZIP enabled",
+      "screen": "pcbPanel",
+      "do": [
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplLed"
+          }
+        },
+        {
+          "open": "pcbPanel"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "pcbPanel.summary",
+          "name": "data-drc",
+          "matches": "^0$",
+          "id": "drc-0"
+        },
+        {
+          "type": "enabled",
+          "sel": "pcbPanel.exportZip",
+          "id": "export-enabled"
+        }
+      ]
+    },
+    {
+      "id": "cancel-writes-nothing",
+      "title": "Cancel the save dialog: nothing written, no 'saved' note",
+      "screen": "pcbPanel",
+      "do": [
+        {
+          "dialog": {
+            "cancel": "save"
+          }
+        },
+        {
+          "click": "pcbPanel.exportZip"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "defaultPathRe": "manufacturing\\.zip$",
+          "filtersInclude": ["Manufacturing ZIP"],
+          "id": "asked-where"
+        },
+        {
+          "type": "file",
+          "path": "{out}/manufacturing.zip",
+          "exists": false,
+          "id": "no-file"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^manufacturing ZIP saved"
+          },
+          "id": "no-saved-note"
+        }
+      ]
+    },
+    {
+      "id": "save-zip",
+      "title": "Save it: the note names the path",
+      "screen": "pcbPanel",
+      "do": [
+        {
+          "dialog": {
+            "save": "{out}/manufacturing.zip"
+          }
+        },
+        {
+          "click": "pcbPanel.exportZip"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "id": "asked-where"
+        },
+        {
+          "type": "text",
+          "region": "pcbPanel.exportNote",
+          "matches": "^manufacturing ZIP saved — .*manufacturing\\.zip$",
+          "id": "saved-note"
+        },
+        {
+          "type": "file",
+          "path": "{out}/manufacturing.zip",
+          "minBytes": 1000,
+          "id": "zip-written"
+        }
+      ]
+    },
+    {
+      "id": "zip-contents",
+      "title": "The ZIP opens (every entry inflates, CRC-32 checked) and has the Gerber, drill, job and assembly files",
+      "screen": "pcbPanel",
+      "expect": [
+        {
+          "type": "zip",
+          "path": "{out}/manufacturing.zip",
+          "noEmptyEntries": true,
+          "id": "zip-opens",
+          "entries": [
+            {
+              "nameRe": "-F_Cu\\.gtl$",
+              "startsRe": "^(G04|%TF|%FS)",
+              "contains": "%TF.FileFunction,Copper,L1,Top"
+            },
+            {
+              "nameRe": "-B_Cu\\.gbl$",
+              "startsRe": "^(G04|%TF|%FS)"
+            },
+            {
+              "nameRe": "-F_Mask\\.gts$",
+              "startsRe": "^(G04|%TF|%FS)"
+            },
+            {
+              "nameRe": "-B_Mask\\.gbs$",
+              "startsRe": "^(G04|%TF|%FS)"
+            },
+            {
+              "nameRe": "-F_Silkscreen\\.gto$",
+              "startsRe": "^(G04|%TF|%FS)"
+            },
+            {
+              "nameRe": "-Edge_Cuts\\.gm1$",
+              "startsRe": "^(G04|%TF|%FS)"
+            },
+            {
+              "nameRe": "^(?!.*NPTH).*\\.drl$",
+              "startsRe": "^M48"
+            },
+            {
+              "nameRe": "-job\\.gbrjob$",
+              "startsRe": "^\\s*\\{"
+            },
+            {
+              "nameRe": "^bom\\.csv$"
+            },
+            {
+              "nameRe": "^placement\\.csv$"
+            },
+            {
+              "nameRe": "^netlist\\.cir$"
+            },
+            {
+              "nameRe": "^validation-report\\.txt$"
+            },
+            {
+              "nameRe": "^README\\.txt$"
+            },
+            {
+              "nameRe": "^board-stackup\\.txt$"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

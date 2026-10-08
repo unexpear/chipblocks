@@ -24,9 +24,14 @@ export function writeReports(run, map, outDir) {
   L.push(`# ChipBlocks UI click-through report`)
   L.push('')
   L.push(`- When: ${local(run.startedAt)} · took ${(run.ms / 1000).toFixed(1)} s`)
-  L.push(
-    `- App: commit \`${run.commit}\` served by the browser-only dev server at ${run.url}${run.devServer?.started ? ' (started and stopped by the runner)' : ' (already running)'}`,
-  )
+  if (run.target === 'electron')
+    L.push(
+      `- App: commit \`${run.commit}\` — the real Electron app (${run.browser}, built renderer over file://; ${run.build?.built ? `built by the runner in ${(run.build.ms / 1000).toFixed(1)} s` : `no rebuild: ${run.build?.reason}`}). One fresh sandbox (home, userData, Documents/Desktop/Downloads) per workflow, checked before any step runs; native dialogs stubbed in the main process.`,
+    )
+  else
+    L.push(
+      `- App: commit \`${run.commit}\` served by the browser-only dev server at ${run.url}${run.devServer?.started ? ' (started and stopped by the runner)' : ' (already running)'}`,
+    )
   L.push(
     `- Result: **${totals.pass} pass · ${totals.fail} fail · ${totals.known} known issue · ${totals.skip} skip** — failures by category: ${totals.failByCategory}`,
   )
@@ -35,7 +40,7 @@ export function writeReports(run, map, outDir) {
   )
   L.push('')
   L.push(
-    '`known` = a step tagged `knownIssue` that still fails: evidence is saved but the run stays green. Failure categories: `assert`/`invariant` = the app did not do what the map says (suspected app issue); `unreachable` = the control exists but is covered or off-screen (layout issue); `console` = console.error / page error; `crash` = error boundary or blank root; `precondition`; `driver` = the runner itself could not drive (should be zero).',
+    '`known` = a step tagged `knownIssue` that still fails: evidence is saved but the run stays green. Failure categories: `assert`/`invariant` = the app did not do what the map says (suspected app issue); `unreachable` = the control exists but is covered or off-screen (layout issue); `console` = console.error / page error (and main-process errors in Electron); `crash` = error boundary or blank root; `dialog` = (Electron) an error box or a native dialog the step did not expect; `precondition`; `driver` = the runner itself could not drive (should be zero).',
   )
   L.push('')
   L.push('## Workflows')
@@ -56,6 +61,11 @@ export function writeReports(run, map, outDir) {
       `${w.title}. Viewport ${w.viewport.width}×${w.viewport.height}.${w.notes ? ` ${w.notes}` : ''}`,
     )
     L.push('')
+    if (w.electron)
+      L.push(
+        `Electron: ${w.electron.launches} launch(es), last ${w.electron.launchMs} ms; sandbox ${w.sandbox.kept ? `kept at \`${w.sandbox.root}\`` : 'removed'}; app folders verified inside it: ${Object.keys(w.electron.isolatedPaths).join(', ')}.`,
+        '',
+      )
     L.push('| step | result | why / detail | ms |')
     L.push('|---|---|---|---|')
     for (const s of w.steps) {
@@ -69,7 +79,7 @@ export function writeReports(run, map, outDir) {
         why = `known issue _${s.knownIssue}_ (does not fail the run) — ${s.category}: ${why}`
       if (s.note) why += ` — ${s.note}`
       if (s.artifacts)
-        why += ` — artifacts: ${['screenshot', 'panelText', 'dom', 'console']
+        why += ` — artifacts: ${['screenshot', 'panelText', 'dom', 'console', 'electron']
           .filter((k) => s.artifacts[k])
           .map((k) => `[${k}](${rel(outDir, s.artifacts[k])})`)
           .join(' ')}`
@@ -94,15 +104,22 @@ export function writeReports(run, map, outDir) {
         `- ${f.wf} › ${f.step} (${f.screen}): “${f.q}” — assert says **${f.assertSays ? 'yes' : 'no'}**, Laya says ${f.layaSays ? 'yes' : 'no'} at ${f.conf}. The assert decides; look at the panel if in doubt.`,
       )
   L.push('')
-  L.push('## Skipped (browser-only dev server)')
+  L.push(run.target === 'electron' ? '## Skipped' : '## Skipped (browser-only dev server)')
   L.push('')
   const skips = run.workflows.flatMap((w) =>
     w.steps.filter((s) => s.status === 'skip').map((s) => `- ${w.name} › ${s.id}: ${s.reason}`),
   )
   L.push(skips.length ? skips.join('\n') : 'None.')
   L.push('')
-  L.push('Not exercised at all in the browser (from the app map):')
-  for (const e of map.electronOnly) L.push(`- ${e.feature} — ${e.skip}`)
+  if (run.target === 'electron') {
+    L.push('Not exercised in Electron mode (from the app map):')
+    for (const e of map.electron?.notCovered ?? []) L.push(`- ${e.feature} — ${e.why}`)
+  } else {
+    L.push(
+      'Not exercised at all in the browser (from the app map; `npm run ui-checks:electron` covers them):',
+    )
+    for (const e of map.electronOnly) L.push(`- ${e.feature} — ${e.skip}`)
+  }
   const md = path.join(outDir, 'report.md')
   const json = path.join(outDir, 'report.json')
   fs.writeFileSync(md, `${L.join('\n')}\n`, 'utf8')

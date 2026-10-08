@@ -10,12 +10,17 @@ import {
   type MenuItemConstructorOptions,
   session,
 } from 'electron'
+import {
+  REGISTRY_DOWNLOAD_TIMEOUT_MS,
+  REGISTRY_MAX_PACK_BYTES,
+} from '../src/renderer/content-registry.ts'
 import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
 import { type CanvasLoadingItemId, canvasLoadingItems } from './canvas-menu.ts'
 import { planChipDescriptionRequest } from './chip-description.ts'
 import { type CircuitOpenDecision, decideCircuitOpen } from './circuit-open.ts'
 import { isMissingFile } from './missing-file.ts'
 import { isInternalNavigation } from './navigation.ts'
+import { downloadBounded } from './registry-download.ts'
 
 // Reconstruct __dirname under ESM output (package.json is type: module).
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -674,6 +679,10 @@ function registerUserTemplatesHandlers(): void {
 const contentLibrariesDir = () => join(app.getPath('home'), '.chipblocks', 'libraries')
 const contentIndexPath = () => join(contentLibrariesDir(), 'index.json')
 const contentPackPath = (id: string) => join(contentLibrariesDir(), id, 'pack.json')
+const trustedPublishersPath = () =>
+  join(app.getPath('home'), '.chipblocks', 'trusted-publishers.json')
+const contentRegistrySettingsPath = () =>
+  join(app.getPath('home'), '.chipblocks', 'content-registry.json')
 
 const PACK_ID_RE = /^[a-z][a-z0-9_]*$/
 
@@ -684,6 +693,11 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
   ipcMain.removeHandler('content:pack-write')
   ipcMain.removeHandler('content:pack-remove')
   ipcMain.removeHandler('content:pick-local')
+  ipcMain.removeHandler('trusted-publishers:read')
+  ipcMain.removeHandler('trusted-publishers:write')
+  ipcMain.removeHandler('content-registry:settings-read')
+  ipcMain.removeHandler('content-registry:settings-write')
+  ipcMain.removeHandler('content-registry:download')
 
   ipcMain.handle('content:index-read', async (): Promise<string | null> => {
     try {
@@ -782,6 +796,86 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
       } catch (error) {
         return { ok: false, reason: `Could not read pack file: ${String(error)}` }
       }
+    },
+  )
+
+  // ~/.chipblocks/trusted-publishers.json — same read/write shape as user-templates.json.
+  // Missing file is an empty pin list. Any other read failure rejects so the renderer
+  // will not write a new list over a file this process could not read.
+  ipcMain.handle('trusted-publishers:read', async (): Promise<string | null> => {
+    try {
+      return await readFile(trustedPublishersPath(), 'utf8')
+    } catch (error) {
+      if (isMissingFile(error)) return null
+      throw error
+    }
+  })
+  ipcMain.handle(
+    'trusted-publishers:write',
+    async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
+      if (typeof text !== 'string') return { ok: false }
+      const path = trustedPublishersPath()
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, text, 'utf8')
+        return { ok: true, path }
+      } catch (error) {
+        dialog.showErrorBox('Could not save trusted publishers', `Writing failed: ${String(error)}`)
+        return { ok: false }
+      }
+    },
+  )
+
+  ipcMain.handle('content-registry:settings-read', async (): Promise<string | null> => {
+    try {
+      return await readFile(contentRegistrySettingsPath(), 'utf8')
+    } catch (error) {
+      if (isMissingFile(error)) return null
+      throw error
+    }
+  })
+  ipcMain.handle(
+    'content-registry:settings-write',
+    async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
+      if (typeof text !== 'string') return { ok: false }
+      const path = contentRegistrySettingsPath()
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, text, 'utf8')
+        return { ok: true, path }
+      } catch (error) {
+        dialog.showErrorBox(
+          'Could not save the content registry URL',
+          `Writing failed: ${String(error)}`,
+        )
+        return { ok: false }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'content-registry:download',
+    async (
+      _event,
+      url: unknown,
+      maxBytes: unknown,
+      timeoutMs: unknown,
+    ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: string }> => {
+      if (typeof url !== 'string') {
+        return { ok: false, reason: 'Registry download URL must be text. Nothing was downloaded.' }
+      }
+      if (typeof maxBytes !== 'number' || !Number.isInteger(maxBytes) || maxBytes < 1) {
+        return {
+          ok: false,
+          reason: 'Registry download size limit is missing. Nothing was downloaded.',
+        }
+      }
+      const limit = Math.min(maxBytes, REGISTRY_MAX_PACK_BYTES)
+      const timeout =
+        typeof timeoutMs === 'number' && Number.isInteger(timeoutMs) && timeoutMs > 0
+          ? Math.min(timeoutMs, REGISTRY_DOWNLOAD_TIMEOUT_MS)
+          : REGISTRY_DOWNLOAD_TIMEOUT_MS
+      return downloadBounded(url, { maxBytes: limit, timeoutMs: timeout })
     },
   )
 }
