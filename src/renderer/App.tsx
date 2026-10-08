@@ -973,7 +973,7 @@ export function App() {
             display: activeId === 'home' ? 'block' : 'none',
           }}
         >
-          <ProjectBrowser onCreate={openProject} />
+          <ProjectBrowser onCreate={openProject} active={activeId === 'home'} />
         </div>
         {tabs.map((t) => (
           <div
@@ -5172,9 +5172,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // deletion so combos work; React Flow's deleteKeyCode is off), and opening
   // the Shortcuts panel. Keys are ignored while typing in a field.
   // Keybinds + the Shortcuts panel in one hook so the editor (keydown matching) and the project
-  // browser both open it from Settings ▸ Shortcuts; the open request is broadcast (main.tsx).
-  const { keybinds, isOpen: shortcutsOpen, panel: shortcutsPanel } = useShortcuts(light)
-  const { isOpen: contentManagerOpen, panel: contentManagerPanel } = useContentManager(light)
+  // browser both open it from Settings ▸ Shortcuts. The open request is a window event; only
+  // this tab handles it while it is the one on screen (background tabs stay mounted).
+  const { keybinds, isOpen: shortcutsOpen, panel: shortcutsPanel } = useShortcuts(light, active)
+  const { isOpen: contentManagerOpen, panel: contentManagerPanel } = useContentManager(
+    light,
+    active,
+  )
 
   // Clipboard (S19-v3-69): desktop-style copy/cut/paste with a Win+V-style
   // history — 15 copies, one cut at a time. Ctrl+V pastes the newest at the
@@ -9782,6 +9786,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           }}
         >
           <div
+            data-testid="board-header"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -10337,6 +10342,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         </HealthContext.Provider>
 
         <div
+          data-testid="status-line"
           style={{
             position: 'absolute',
             bottom: 8,
@@ -11663,7 +11669,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 <div
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                 >
-                  <span style={{ fontSize: 12, color: THEME.textSoft }}>
+                  <span
+                    data-testid="pcb-summary"
+                    data-placed={pcbBoard.placements.length}
+                    data-routed={
+                      pcbRatsnest.airwires.length === 0
+                        ? 0
+                        : pcbRatsnest.airwires.length - pcbMergedRouting.unrouted.length
+                    }
+                    data-drc={pcbDrc.length}
+                    style={{ fontSize: 12, color: THEME.textSoft }}
+                  >
                     {pcbBoard.placements.length} part
                     {pcbBoard.placements.length === 1 ? '' : 's'} placed ·{' '}
                     {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
@@ -11705,6 +11721,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   <span style={{ display: 'flex', gap: 6 }}>
                     <button
                       type="button"
+                      data-testid="pcb-export-zip"
                       onClick={onExportFabZip}
                       disabled={pcbFabProblems.length > 0}
                       title={
@@ -11726,6 +11743,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                     </button>
                     <button
                       type="button"
+                      data-testid="pcb-check-gerbers"
                       aria-pressed={gerberCheck !== null}
                       onClick={() => {
                         if (gerberCheck !== null) {
@@ -11765,7 +11783,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   </span>
                 </div>
                 {pcbExportNote !== null && (
-                  <span style={{ fontSize: 11, color: THEME.textFaint }}>{pcbExportNote}</span>
+                  <span
+                    data-testid="pcb-export-note"
+                    style={{ fontSize: 11, color: THEME.textFaint }}
+                  >
+                    {pcbExportNote}
+                  </span>
                 )}
                 {gerberCheck !== null && <GerberCheck files={gerberCheck} />}
                 {pcbBoard.placements.length > 0 ? (

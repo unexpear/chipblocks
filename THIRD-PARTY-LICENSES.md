@@ -26,6 +26,15 @@ ChipBlocks depends on third-party software. This file lists each direct dependen
 - **Source:** <https://github.com/vitest-dev/vitest>
 - **License text:** `node_modules/vitest/LICENSE.md` after `npm install`
 
+#### jsdom
+- **Package:** `jsdom` ^29.1.1
+- **License:** MIT
+- **Copyright:** Copyright (c) 2010 Elijah Insua
+- **Source:** <https://github.com/jsdom/jsdom>
+- **License text:** `node_modules/jsdom/LICENSE.txt` after `npm install`
+- **NOTICE:** none (`ls node_modules/jsdom/NOTICE*` → absent)
+- **Usage tier:** dev-time only — the Vitest environment for renderer tests that need a document (panel open/close, shared key bindings). Not shipped.
+
 #### Biome
 - **Package:** `@biomejs/biome` ^2.4.16
 - **License:** MIT OR Apache-2.0 (dual — either grant satisfies)

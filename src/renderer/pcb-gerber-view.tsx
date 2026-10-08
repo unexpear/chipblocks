@@ -301,27 +301,29 @@ export function GerberCheck({ files }: { files: readonly ManufacturingFile[] }) 
             >
               Stack
             </button>
-            {visible.map((layer, i) => (
-              <button
-                key={layer.name}
-                type="button"
-                onClick={() => {
-                  setMode('one')
-                  setIndex(i)
-                }}
-                style={{
-                  ...zoomBtn,
-                  background:
-                    mode === 'one' && i === (visible[index] ? index : 0)
-                      ? THEME.surfaceActive
-                      : THEME.surfaceInput,
-                }}
-              >
-                {layer.name}
-              </button>
-            ))}
+            {visible.map((layer, i) => {
+              const pressed = mode === 'one' && i === (visible[index] ? index : 0)
+              return (
+                <button
+                  key={layer.name}
+                  type="button"
+                  data-testid="gerber-layer-tab"
+                  aria-pressed={pressed}
+                  onClick={() => {
+                    setMode('one')
+                    setIndex(i)
+                  }}
+                  style={{
+                    ...zoomBtn,
+                    background: pressed ? THEME.surfaceActive : THEME.surfaceInput,
+                  }}
+                >
+                  {layer.name}
+                </button>
+              )
+            })}
           </div>
-          <span style={{ fontSize: 11, color: THEME.textFaint }}>
+          <span data-testid="gerber-counts" style={{ fontSize: 11, color: THEME.textFaint }}>
             {mode === 'stack'
               ? 'All plotted layers, one frame.'
               : `${counts(active.plot.draws)}${active.plot.fileFunction !== null ? ` · ${active.plot.fileFunction}` : ''}${active.plot.polarity !== null ? ` · ${active.plot.polarity}` : ''}`}

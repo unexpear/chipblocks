@@ -474,7 +474,14 @@ function Thumb({
   )
 }
 
-export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice) => void }) {
+export function ProjectBrowser({
+  onCreate,
+  active = true,
+}: {
+  onCreate: (choice: ProjectChoice) => void
+  /** False while a project tab is the one on screen. This launcher stays mounted either way. */
+  active?: boolean
+}) {
   const [catId, setCatId] = useState('component')
   const [tplId, setTplId] = useState('dc-motor')
   const [depth, setDepth] = useState<'block' | 'design'>('design')
@@ -496,8 +503,8 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   const MUTED = light ? THEME.borderStrong : THEME.textMuted
   const ACCENT_TEXT = light ? THEME.accentBlueDeep : THEME.accentBlueSoft
   // Settings ▸ Shortcuts works here too (not only in the editor).
-  const { panel: shortcutsPanel } = useShortcuts(light)
-  const { panel: contentManagerPanel } = useContentManager(light)
+  const { panel: shortcutsPanel } = useShortcuts(light, active)
+  const { panel: contentManagerPanel } = useContentManager(light, active)
 
   const [nameEdited, setNameEdited] = useState(false)
   const category = useMemo(() => CATEGORIES.find((c) => c.id === catId), [catId])

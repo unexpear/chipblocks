@@ -70,6 +70,8 @@ export type MathNetRow = {
   note?: string
 }
 export type MathView = {
+  /** Newton–Raphson settled. False when the solve did not, including when there is no solved circuit. */
+  converged: boolean
   solver: string[]
   parts: MathPartCard[]
   nets: MathNetRow[]
@@ -166,6 +168,7 @@ export function buildMathView(
 ): MathView {
   if (solution.status !== 'solved') {
     return {
+      converged: false,
       solver: [
         `No solved circuit to show: the solver reported '${solution.status}'.`,
         ...(solution.warnings.length > 0 ? [`First warning: ${solution.warnings[0]}`] : []),
@@ -306,7 +309,7 @@ export function buildMathView(
     ...nets.flatMap((n) => n.terms),
     ...fields,
   ])
-  return { solver, parts, nets, fields, unitsKey }
+  return { converged: solution.converged, solver, parts, nets, fields, unitsKey }
 }
 
 function partCard(

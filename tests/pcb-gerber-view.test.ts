@@ -176,6 +176,11 @@ describe('the check draws every layer in one frame', () => {
     expect(html).toContain(`data-mm="${String(bar.mm)}"`)
     expect(html).toContain(`x2="${String(bar.x2)}"`)
     expect(html).toContain('Not plotted (not a Gerber or drill file): README.txt')
+    expect(html).toContain('data-testid="gerber-counts"')
+    expect(html).toContain('data-testid="gerber-layer-tab"')
+    expect(html).toMatch(/data-testid="gerber-layer-tab"[^>]*>board\.drl</)
+    expect(html).toContain('aria-pressed="false"')
+    expect(html).not.toContain('aria-pressed="true"')
   })
 
   test('a negative file with no openings says the film is intact', () => {
