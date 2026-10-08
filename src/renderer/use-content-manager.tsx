@@ -4,15 +4,38 @@ import {
   deserializeContentIndex,
   emptyContentIndex,
   enabledPackIds,
+  installedPackFiles,
   installLocalPackVerified,
   type PackLoadIssue,
   serializeContentIndex,
   setPackEnabled,
   uninstallPack,
 } from './content-manager.ts'
-import { ContentManagerPanel } from './content-manager-panel.tsx'
-import { type ContentPack, deserializeContentPack, serializeContentPack } from './content-pack.ts'
-import { assertStoredContentHash, sha256Hex } from './content-pack-integrity.ts'
+import { ContentManagerPanel, type PublisherCard } from './content-manager-panel.tsx'
+import { type ContentPack, deserializeContentPack } from './content-pack.ts'
+import { assertStoredContentHash } from './content-pack-integrity.ts'
+import {
+  commitTrustedPublisherChange,
+  effectiveTrustedPublishers,
+  emptyTrustedPublishers,
+  livePublisherTrust,
+  publisherKeyFingerprint,
+  type TrustedPublishers,
+} from './content-pack-signature.ts'
+import {
+  commitRegistrySettings,
+  installDownloadedRegistryPack,
+  NO_REGISTRY_CONFIGURED,
+  parseRegistryIndex,
+  parseRegistrySettings,
+  REGISTRY_DOWNLOAD_TIMEOUT_MS,
+  REGISTRY_INDEX_TIMEOUT_MS,
+  REGISTRY_MAX_INDEX_BYTES,
+  REGISTRY_MAX_PACK_BYTES,
+  type RegistryPackEntry,
+  registryUpdates,
+  TRUSTED_PUBLISHERS_UNAVAILABLE,
+} from './content-registry.ts'
 import { clearCommunityPackFootprints, setCommunityPackFootprints } from './user-footprints.ts'
 import { clearCommunityPackParts, setCommunityPackParts } from './user-parts.ts'
 
@@ -136,6 +159,14 @@ export function useContentManager(
   const activeRef = useRef(active)
   activeRef.current = active
   const [loadIssues, setLoadIssues] = useState<ReadonlyMap<string, PackLoadIssue>>(new Map())
+  const [trusted, setTrusted] = useState<TrustedPublishers>(emptyTrustedPublishers())
+  const [pinsLoaded, setPinsLoaded] = useState(false)
+  const [trustedStatus, setTrustedStatus] = useState(TRUSTED_PUBLISHERS_UNAVAILABLE)
+  const [fingerprints, setFingerprints] = useState<Readonly<Record<string, string>>>({})
+  const [registryUrl, setRegistryUrl] = useState('')
+  const [registryStatus, setRegistryStatus] = useState(NO_REGISTRY_CONFIGURED)
+  const [registryPacks, setRegistryPacks] = useState<readonly RegistryPackEntry[]>([])
+  const [registrySelection, setRegistrySelection] = useState('')
   // Install / enable / uninstall all rewrite index.json from whatever they last read. The ref is
   // the copy those writes actually build on, updated as soon as a write is accepted, so a second
   // click does not start from the index from before the first click. Writes wait until the first
@@ -145,10 +176,21 @@ export function useContentManager(
   const indexReady = useRef(false)
   const indexWritable = useRef(false)
   const writeChain = useRef(Promise.resolve())
+  const trustedRef = useRef(trusted)
+  const trustedReady = useRef(false)
+  const trustWriteChain = useRef(Promise.resolve())
+  const registryWriteChain = useRef(Promise.resolve())
 
   const commitIndex = useCallback((next: ContentIndex) => {
     indexRef.current = next
     setIndex(next)
+  }, [])
+
+  const commitTrusted = useCallback((next: TrustedPublishers, loaded: boolean, status: string) => {
+    trustedRef.current = next
+    setTrusted(next)
+    setPinsLoaded(loaded)
+    setTrustedStatus(status)
   }, [])
 
   const enqueueIndexWrite = useCallback((task: () => Promise<void>) => {
@@ -222,8 +264,78 @@ export function useContentManager(
       indexWritable.current = true
     }
 
+    if (bridge?.readTrustedPublishers !== undefined) {
+      void bridge
+        .readTrustedPublishers()
+        .then((text) => {
+          const effective = effectiveTrustedPublishers(text)
+          commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
+        })
+        .catch((error: unknown) => {
+          const effective = effectiveTrustedPublishers(null, String(error))
+          commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
+        })
+        .finally(() => {
+          trustedReady.current = true
+        })
+    } else {
+      trustedReady.current = true
+    }
+
+    if (bridge?.readContentRegistrySettings !== undefined) {
+      void bridge
+        .readContentRegistrySettings()
+        .then((text) => {
+          if (text === null) {
+            setRegistryStatus(NO_REGISTRY_CONFIGURED)
+            return
+          }
+          const parsed = parseRegistrySettings(text)
+          if (!parsed.ok) {
+            setRegistryStatus(
+              `${parsed.reason} The saved registry URL was not used. Nothing will be written over that settings file.`,
+            )
+            return
+          }
+          if (parsed.indexUrl === '') {
+            setRegistryStatus(NO_REGISTRY_CONFIGURED)
+            return
+          }
+          setRegistryUrl(parsed.indexUrl)
+          setRegistryStatus(
+            `Registry index saved: ${parsed.indexUrl}. Load the index when you want to see its packs. Nothing is installed by saving.`,
+          )
+        })
+        .catch((error: unknown) => {
+          setRegistryStatus(
+            `The registry settings file could not be read (${String(error)}). No registry URL was used. Nothing will be written over that file.`,
+          )
+        })
+    }
+
     return () => window.removeEventListener('chipblocks:content-manager', open)
-  }, [rememberLoads, commitIndex])
+  }, [rememberLoads, commitIndex, commitTrusted])
+
+  useEffect(() => {
+    let cancelled = false
+    const packs = index.packs.filter((pack) => pack.publisherKeyHex !== undefined)
+    if (packs.length === 0) {
+      setFingerprints({})
+      return
+    }
+    void (async () => {
+      const next: Record<string, string> = {}
+      for (const pack of packs) {
+        if (pack.publisherKeyHex === undefined) continue
+        const fingerprint = await publisherKeyFingerprint(pack.publisherKeyHex)
+        if (typeof fingerprint === 'string') next[pack.id] = fingerprint
+      }
+      if (!cancelled) setFingerprints(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [index])
 
   const onInstallLocal = useCallback(() => {
     const bridge = window.chipblocks
@@ -243,6 +355,12 @@ export function useContentManager(
     }
     enqueueIndexWrite(async () => {
       if (!indexWritesAllowed()) return
+      if (!trustedReady.current) {
+        setStatusMessage(
+          'Trusted publishers are still loading. Nothing was installed. Try again in a moment.',
+        )
+        return
+      }
       const picked = await pickLocal()
       if (!picked.ok) {
         if (picked.reason) setStatusMessage(picked.reason)
@@ -252,7 +370,12 @@ export function useContentManager(
         setStatusMessage('No pack file text returned.')
         return
       }
-      const installed = await installLocalPackVerified(indexRef.current, picked.text)
+      const installed = await installLocalPackVerified(
+        indexRef.current,
+        picked.text,
+        Date.now(),
+        trustedRef.current,
+      )
       if (!installed.ok) {
         setStatusMessage(installed.reason)
         return
@@ -260,13 +383,10 @@ export function useContentManager(
       const pack: ContentPack = installed.pack
       // Hash the bytes we actually write — serialize may differ from the picked file (dropped
       // malformed entries, stable field order). Reload tamper-checks this on-disk text.
-      const onDiskText = serializeContentPack(pack)
-      const diskHash = await sha256Hex(onDiskText)
-      const record = { ...installed.record, contentHash: diskHash }
-      const nextIndex = {
-        ...installed.index,
-        packs: installed.index.packs.map((p) => (p.id === record.id ? record : p)),
-      }
+      const files = await installedPackFiles(installed)
+      const record = files.record
+      const onDiskText = files.onDiskText
+      const nextIndex = files.index
       const written = await writePack(pack.id, onDiskText)
       if (!written.ok) {
         setStatusMessage(
@@ -370,16 +490,235 @@ export function useContentManager(
     [commitIndex, enqueueIndexWrite, indexWritesAllowed],
   )
 
+  const onTrustPublisher = useCallback(
+    (publicKeyHex: string, trust: boolean, packId: string) => {
+      const bridge = window.chipblocks
+      const read = bridge?.readTrustedPublishers
+      const write = bridge?.writeTrustedPublishers
+      if (read === undefined || write === undefined) {
+        setStatusMessage(
+          'Pinning a publisher key needs the desktop app bridge (read and write ~/.chipblocks/trusted-publishers.json).',
+        )
+        return
+      }
+      trustWriteChain.current = trustWriteChain.current.then(async () => {
+        const result = await commitTrustedPublisherChange({
+          read,
+          write,
+          change: trust ? 'trust' : 'untrust',
+          publicKey: publicKeyHex,
+          id: packId,
+          comment: `Pinned in Content Manager from pack ${packId}.`,
+        })
+        if (!result.ok) {
+          setStatusMessage(result.reason)
+          return
+        }
+        const count = result.publishers.keys.length
+        commitTrusted(
+          result.publishers,
+          true,
+          count === 0
+            ? 'No publisher keys are pinned. ~/.chipblocks/trusted-publishers.json lists none. No key is trusted by default.'
+            : `${count} publisher key${count === 1 ? '' : 's'} pinned in ~/.chipblocks/trusted-publishers.json. Trust is only this local pin.`,
+        )
+        setStatusMessage(
+          trust
+            ? `Pinned the publisher key from "${packId}". Packs signed by that key now count as trusted on this computer.`
+            : `Removed the publisher key. Packs signed by it no longer count as pinned.`,
+        )
+      })
+    },
+    [commitTrusted],
+  )
+
+  const onSaveRegistryUrl = useCallback(() => {
+    const bridge = window.chipblocks
+    const read = bridge?.readContentRegistrySettings
+    const write = bridge?.writeContentRegistrySettings
+    if (read === undefined || write === undefined) {
+      setStatusMessage(
+        'Saving a registry URL needs the desktop app bridge (~/.chipblocks/content-registry.json).',
+      )
+      return
+    }
+    const url = registryUrl
+    registryWriteChain.current = registryWriteChain.current.then(async () => {
+      const result = await commitRegistrySettings({ read, write, indexUrl: url })
+      if (!result.ok) {
+        setRegistryStatus(result.reason)
+        setStatusMessage(result.reason)
+        return
+      }
+      setRegistryUrl(result.indexUrl)
+      setRegistryPacks([])
+      setRegistrySelection('')
+      setRegistryStatus(
+        result.indexUrl === ''
+          ? NO_REGISTRY_CONFIGURED
+          : `Registry index saved: ${result.indexUrl}. Load the index when you want to see its packs. Nothing is installed by saving.`,
+      )
+    })
+  }, [registryUrl])
+
+  const onLoadRegistry = useCallback(() => {
+    const bridge = window.chipblocks
+    const download = bridge?.downloadRegistryResource
+    if (download === undefined) {
+      setStatusMessage(
+        'Loading a registry index needs the desktop app bridge. Nothing was downloaded.',
+      )
+      return
+    }
+    const url = registryUrl.trim()
+    if (url === '') {
+      setRegistryStatus(NO_REGISTRY_CONFIGURED)
+      setStatusMessage('No registry index URL is set. Nothing was downloaded.')
+      return
+    }
+    void (async () => {
+      const downloaded = await download(url, REGISTRY_MAX_INDEX_BYTES, REGISTRY_INDEX_TIMEOUT_MS)
+      if (!downloaded.ok) {
+        setRegistryStatus(downloaded.reason)
+        setStatusMessage(downloaded.reason)
+        setRegistryPacks([])
+        return
+      }
+      let text: string
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(downloaded.bytes)
+      } catch {
+        const reason = 'The registry index is not UTF-8 text. It was not used.'
+        setRegistryStatus(reason)
+        setStatusMessage(reason)
+        setRegistryPacks([])
+        return
+      }
+      const parsed = parseRegistryIndex(text)
+      if (!parsed.ok) {
+        setRegistryStatus(parsed.reason)
+        setStatusMessage(parsed.reason)
+        setRegistryPacks([])
+        return
+      }
+      setRegistryPacks(parsed.packs)
+      setRegistrySelection('')
+      setRegistryStatus(
+        `Loaded ${parsed.packs.length} pack${parsed.packs.length === 1 ? '' : 's'} from the registry index. Nothing was installed.`,
+      )
+    })()
+  }, [registryUrl])
+
+  const onInstallFromRegistry = useCallback(() => {
+    const bridge = window.chipblocks
+    const download = bridge?.downloadRegistryResource
+    const writePack = bridge?.writeContentPack
+    const removePack = bridge?.removeContentPack
+    const writeIndex = bridge?.writeContentIndex
+    const readPack = bridge?.readContentPack
+    if (
+      download === undefined ||
+      writePack === undefined ||
+      removePack === undefined ||
+      writeIndex === undefined
+    ) {
+      setStatusMessage(
+        'Install from registry needs the desktop app to download the pack and write ~/.chipblocks/libraries/. Nothing was written.',
+      )
+      return
+    }
+    const entry = registryPacks.find((pack) => pack.id === registrySelection)
+    if (entry === undefined) {
+      setStatusMessage('Choose a pack from a loaded registry index. Nothing was installed.')
+      return
+    }
+    enqueueIndexWrite(async () => {
+      if (!indexWritesAllowed()) return
+      if (!trustedReady.current) {
+        setStatusMessage(
+          'Trusted publishers are still loading. Nothing was installed. Try again in a moment.',
+        )
+        return
+      }
+      const downloaded = await download(
+        entry.downloadUrl,
+        REGISTRY_MAX_PACK_BYTES,
+        REGISTRY_DOWNLOAD_TIMEOUT_MS,
+      )
+      if (!downloaded.ok) {
+        setStatusMessage(downloaded.reason)
+        return
+      }
+      const installed = await installDownloadedRegistryPack({
+        index: indexRef.current,
+        entry,
+        body: downloaded.bytes,
+        trusted: trustedRef.current,
+        io: {
+          writePack,
+          writeIndex,
+          ...(readPack !== undefined ? { readPack } : {}),
+          removePack,
+        },
+      })
+      if (!installed.ok) {
+        setStatusMessage(installed.reason)
+        return
+      }
+      commitIndex(installed.index)
+      const partsKept = setCommunityPackParts(installed.pack.id, installed.pack.parts, {
+        name: installed.pack.name,
+      })
+      const fpKept = setCommunityPackFootprints(installed.pack.id, installed.pack.footprints)
+      const trustBit =
+        installed.record.signatureStatus === 'valid-trusted'
+          ? 'publisher key pinned'
+          : installed.record.signatureStatus === 'valid-untrusted'
+            ? 'publisher signature valid, key not pinned'
+            : 'no publisher signature'
+      setStatusMessage(
+        `Installed "${installed.record.name}" v${installed.record.packVersion} from the registry (${trustBit}). ${partsKept} part(s), ${fpKept} footprint(s).`,
+      )
+    })
+  }, [commitIndex, enqueueIndexWrite, indexWritesAllowed, registryPacks, registrySelection])
+
+  const publisherByPack: Record<string, PublisherCard> = {}
+  for (const pack of index.packs) {
+    if (pack.publisherKeyHex === undefined) continue
+    if (pack.signatureStatus !== 'valid-trusted' && pack.signatureStatus !== 'valid-untrusted') {
+      continue
+    }
+    publisherByPack[pack.id] = {
+      publicKeyHex: pack.publisherKeyHex,
+      fingerprint: fingerprints[pack.id] ?? '',
+      trust: livePublisherTrust(pack.signatureStatus, pack.publisherKeyHex, trusted, pinsLoaded),
+    }
+  }
+  const updates = registryUpdates(index.packs, registryPacks)
+
   const panel = isOpen ? (
     <ContentManagerPanel
       index={index}
       statusMessage={statusMessage}
       loadIssues={loadIssues}
       light={light}
+      trustedStatus={trustedStatus}
+      registryUrl={registryUrl}
+      registryStatus={registryStatus}
+      registryPacks={registryPacks}
+      registrySelection={registrySelection}
+      updates={updates}
+      publisherByPack={publisherByPack}
       onClose={() => setIsOpen(false)}
       onInstallLocal={onInstallLocal}
       onSetEnabled={onSetEnabled}
       onUninstall={onUninstall}
+      onRegistryUrlChange={setRegistryUrl}
+      onSaveRegistryUrl={onSaveRegistryUrl}
+      onLoadRegistry={onLoadRegistry}
+      onRegistrySelection={setRegistrySelection}
+      onInstallFromRegistry={onInstallFromRegistry}
+      onTrustPublisher={onTrustPublisher}
     />
   ) : null
 

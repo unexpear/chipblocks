@@ -10,6 +10,10 @@ import {
   type InstalledPackRecord,
 } from '../src/renderer/content-manager.ts'
 import { ContentManagerPanel } from '../src/renderer/content-manager-panel.tsx'
+import {
+  NO_REGISTRY_CONFIGURED,
+  TRUSTED_PUBLISHERS_UNAVAILABLE,
+} from '../src/renderer/content-registry.ts'
 import { DEFAULT_KEYBINDS } from '../src/renderer/keybinds.ts'
 import { MathPanel } from '../src/renderer/math-panel.tsx'
 import type { MathView } from '../src/renderer/math-view.ts'
@@ -61,10 +65,23 @@ describe('panel landmarks', () => {
         index: { format: CONTENT_INDEX_FORMAT, version: CONTENT_INDEX_VERSION, packs: [pack] },
         statusMessage: 'Installed Demo pack.',
         light: false,
+        trustedStatus: TRUSTED_PUBLISHERS_UNAVAILABLE,
+        registryUrl: '',
+        registryStatus: NO_REGISTRY_CONFIGURED,
+        registryPacks: [],
+        registrySelection: '',
+        updates: [],
+        publisherByPack: {},
         onClose: () => {},
         onInstallLocal: () => {},
         onSetEnabled: () => {},
         onUninstall: () => {},
+        onRegistryUrlChange: () => {},
+        onSaveRegistryUrl: () => {},
+        onLoadRegistry: () => {},
+        onRegistrySelection: () => {},
+        onInstallFromRegistry: () => {},
+        onTrustPublisher: () => {},
       }),
     )
     expect(html).toContain('data-testid="content-manager-badge"')

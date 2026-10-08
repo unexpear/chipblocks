@@ -15,6 +15,8 @@
  * - No CA chain, no remote attestation, no "secure" / marketplace wording
  * - Undeclared signature ≠ verified
  */
+import { sha256HexBytes } from './content-pack-integrity.ts'
+
 export type PackSignatureDecl = {
   alg: 'ed25519'
   /** Raw 32-byte public key as lowercase hex OR standard/base64url. */
@@ -124,6 +126,21 @@ export function readDeclaredSignature(raw: unknown): PackSignatureDecl | { reaso
   return { alg: 'ed25519', publicKey, sig }
 }
 
+const TRUSTED_TOP_FIELDS = new Set(['format', 'version', 'keys'])
+const TRUSTED_KEY_FIELDS = new Set(['id', 'publicKey', 'comment'])
+
+function unknownField(record: Record<string, unknown>, allowed: Set<string>): string | null {
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) return key
+  }
+  return null
+}
+
+/**
+ * Strict reader for ~/.chipblocks/trusted-publishers.json.
+ * A bad file is a refusal, not a shorter key list: one broken entry means no key from
+ * that file is trusted. Callers then show the reason and skip the write.
+ */
 export function parseTrustedPublishers(text: string): TrustedPublishers | { reason: string } {
   let raw: unknown
   try {
@@ -131,10 +148,14 @@ export function parseTrustedPublishers(text: string): TrustedPublishers | { reas
   } catch {
     return { reason: 'trusted-publishers file is not valid JSON.' }
   }
-  if (typeof raw !== 'object' || raw === null) {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { reason: 'trusted-publishers file is not a JSON object.' }
   }
   const f = raw as Record<string, unknown>
+  const extra = unknownField(f, TRUSTED_TOP_FIELDS)
+  if (extra !== null) {
+    return { reason: `trusted-publishers file has unknown field ${JSON.stringify(extra)}.` }
+  }
   if (f.format !== 'chipblocks-trusted-publishers') {
     return { reason: 'Not a chipblocks-trusted-publishers file (wrong or missing format).' }
   }
@@ -143,18 +164,280 @@ export function parseTrustedPublishers(text: string): TrustedPublishers | { reas
       reason: `Unsupported trusted-publishers version ${String(f.version)} (this build reads 1).`,
     }
   }
-  const list = Array.isArray(f.keys) ? f.keys : []
+  if (!Array.isArray(f.keys)) {
+    return { reason: 'trusted-publishers file "keys" must be an array.' }
+  }
   const keys: TrustedPublisherKey[] = []
-  for (const entry of list) {
-    if (typeof entry !== 'object' || entry === null) continue
+  const seen = new Set<string>()
+  for (let i = 0; i < f.keys.length; i++) {
+    const entry = f.keys[i]
+    const label = `Publisher key ${i + 1}`
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return { reason: `${label} is not an object.` }
+    }
     const e = entry as Record<string, unknown>
-    if (typeof e.publicKey !== 'string' || e.publicKey.trim() === '') continue
-    const key: TrustedPublisherKey = { publicKey: e.publicKey.trim() }
-    if (typeof e.id === 'string' && e.id.trim() !== '') key.id = e.id.trim()
-    if (typeof e.comment === 'string' && e.comment.trim() !== '') key.comment = e.comment.trim()
+    const extraKey = unknownField(e, TRUSTED_KEY_FIELDS)
+    if (extraKey !== null) {
+      return { reason: `${label} has unknown field ${JSON.stringify(extraKey)}.` }
+    }
+    if (typeof e.publicKey !== 'string' || e.publicKey.trim() === '') {
+      return { reason: `${label} needs a publicKey string.` }
+    }
+    const rawBytes = decodeKeyOrSigBytes(e.publicKey, 32)
+    if (rawBytes === null) {
+      return {
+        reason: `${label} publicKey must be 32 raw ed25519 bytes (64 hex characters or base64).`,
+      }
+    }
+    const publicKey = bytesToHex(rawBytes)
+    if (seen.has(publicKey)) {
+      return { reason: `${label} repeats a public key already listed.` }
+    }
+    seen.add(publicKey)
+    const key: TrustedPublisherKey = { publicKey }
+    if (e.id !== undefined) {
+      if (typeof e.id !== 'string' || e.id.trim() === '') {
+        return { reason: `${label} id must be a non-empty string when present.` }
+      }
+      key.id = e.id.trim()
+    }
+    if (e.comment !== undefined) {
+      if (typeof e.comment !== 'string' || e.comment.trim() === '') {
+        return { reason: `${label} comment must be a non-empty string when present.` }
+      }
+      key.comment = e.comment.trim()
+    }
     keys.push(key)
   }
   return { format: 'chipblocks-trusted-publishers', version: 1, keys }
+}
+
+export function isTrustedPublishers(
+  value: TrustedPublishers | { reason: string },
+): value is TrustedPublishers {
+  return !('reason' in value)
+}
+
+export function serializeTrustedPublishers(publishers: TrustedPublishers): string {
+  return JSON.stringify(
+    {
+      format: 'chipblocks-trusted-publishers' as const,
+      version: 1 as const,
+      keys: publishers.keys,
+    },
+    null,
+    2,
+  )
+}
+
+export type TrustedPublishersWrite =
+  | { ok: true; text: string; publishers: TrustedPublishers }
+  | { ok: false; reason: string }
+
+function refuseUnreadableTrusted(parsed: { reason: string }): TrustedPublishersWrite {
+  return {
+    ok: false,
+    reason: `${parsed.reason} Nothing was written, so the trusted-publishers file was left as it is.`,
+  }
+}
+
+/** Canonical 32-byte hex for a declared public key, or null when it is not an ed25519 key. */
+export function canonicalPublicKeyHex(publicKey: string): string | null {
+  const bytes = decodeKeyOrSigBytes(publicKey, 32)
+  if (bytes === null) return null
+  return bytesToHex(bytes)
+}
+
+/**
+ * SHA-256 of the raw 32-byte public key. Hex and base64 spellings of the same key share
+ * one fingerprint. This is an identifier for the confirm dialog, not a certificate.
+ */
+export async function publisherKeyFingerprint(
+  publicKey: string,
+): Promise<string | { reason: string }> {
+  const bytes = decodeKeyOrSigBytes(publicKey, 32)
+  if (bytes === null) {
+    return { reason: 'That publisher key is not 32 raw ed25519 bytes, so it has no fingerprint.' }
+  }
+  return sha256HexBytes(bytes)
+}
+
+/**
+ * Add or replace one pin. `null` text means the file is not there yet, so this write creates it.
+ * Text that does not parse is refused — a trust click must not replace a file it could not read.
+ */
+export function trustedPublishersAfterTrust(
+  existingText: string | null,
+  key: TrustedPublisherKey,
+): TrustedPublishersWrite {
+  const publicKey = canonicalPublicKeyHex(key.publicKey)
+  if (publicKey === null) {
+    return {
+      ok: false,
+      reason: 'That publisher key is not 32 raw ed25519 bytes. Nothing was written.',
+    }
+  }
+  let publishers: TrustedPublishers
+  if (existingText === null) {
+    publishers = emptyTrustedPublishers()
+  } else {
+    const parsed = parseTrustedPublishers(existingText)
+    if (!isTrustedPublishers(parsed)) return refuseUnreadableTrusted(parsed)
+    publishers = parsed
+  }
+  const keys = publishers.keys.filter((pinned) => pinned.publicKey !== publicKey)
+  const stored: TrustedPublisherKey = { publicKey }
+  if (key.id !== undefined && key.id.trim() !== '') stored.id = key.id.trim()
+  if (key.comment !== undefined && key.comment.trim() !== '') stored.comment = key.comment.trim()
+  keys.push(stored)
+  const next = emptyTrustedPublishers()
+  next.keys = keys
+  return { ok: true, text: serializeTrustedPublishers(next), publishers: next }
+}
+
+/**
+ * Drop one pin. A missing file, or a file that does not parse, is refused — untrust must not
+ * write a fresh empty list over a file this session could not read.
+ */
+export function trustedPublishersAfterUntrust(
+  existingText: string | null,
+  publicKeyRaw: string,
+): TrustedPublishersWrite {
+  if (existingText === null) {
+    return {
+      ok: false,
+      reason: 'There is no trusted-publishers file to update. Nothing was written.',
+    }
+  }
+  const parsed = parseTrustedPublishers(existingText)
+  if (!isTrustedPublishers(parsed)) return refuseUnreadableTrusted(parsed)
+  const publicKey = canonicalPublicKeyHex(publicKeyRaw)
+  if (publicKey === null) {
+    return {
+      ok: false,
+      reason: 'That publisher key is not 32 raw ed25519 bytes. Nothing was written.',
+    }
+  }
+  const keys = parsed.keys.filter((pinned) => pinned.publicKey !== publicKey)
+  if (keys.length === parsed.keys.length) {
+    return {
+      ok: false,
+      reason: 'That publisher key is not pinned. Nothing was written.',
+    }
+  }
+  const next = emptyTrustedPublishers()
+  next.keys = keys
+  return { ok: true, text: serializeTrustedPublishers(next), publishers: next }
+}
+
+export type TrustedPublisherCommit =
+  | { ok: true; publishers: TrustedPublishers }
+  | { ok: false; reason: string }
+
+/**
+ * Re-read the pin file, apply trust or untrust, then write. A read that throws never reaches
+ * the writer. Serialized by the caller (one chain), same idea as the templates library.
+ */
+export async function commitTrustedPublisherChange(opts: {
+  read: () => Promise<string | null>
+  write: (text: string) => Promise<{ ok: boolean }>
+  change: 'trust' | 'untrust'
+  publicKey: string
+  id?: string
+  comment?: string
+}): Promise<TrustedPublisherCommit> {
+  let text: string | null
+  try {
+    text = await opts.read()
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `trusted-publishers file could not be read (${String(error)}). Nothing was written.`,
+    }
+  }
+  const key: TrustedPublisherKey = { publicKey: opts.publicKey }
+  if (opts.id !== undefined) key.id = opts.id
+  if (opts.comment !== undefined) key.comment = opts.comment
+  const next =
+    opts.change === 'trust'
+      ? trustedPublishersAfterTrust(text, key)
+      : trustedPublishersAfterUntrust(text, opts.publicKey)
+  if (!next.ok) return next
+  const written = await opts.write(next.text)
+  if (!written.ok) {
+    return {
+      ok: false,
+      reason:
+        'The trusted-publishers file could not be saved. Nothing new was applied over the file.',
+    }
+  }
+  return { ok: true, publishers: next.publishers }
+}
+
+export type LivePublisherTrust = 'none' | 'valid-untrusted' | 'valid-trusted'
+
+/** Current pin list, not the status stored at install. Unloaded pins never count as trusted. */
+export function livePublisherTrust(
+  signatureStatus: 'none' | 'valid-untrusted' | 'valid-trusted' | undefined,
+  publicKeyHex: string | undefined,
+  trusted: TrustedPublishers,
+  pinsLoaded: boolean,
+): LivePublisherTrust {
+  if (publicKeyHex === undefined || signatureStatus === undefined || signatureStatus === 'none') {
+    return 'none'
+  }
+  if (!pinsLoaded) return 'valid-untrusted'
+  const hex = publicKeyHex.toLowerCase()
+  const pinned = trusted.keys.some((key) => key.publicKey === hex)
+  return pinned ? 'valid-trusted' : 'valid-untrusted'
+}
+
+export function publisherTrustLabel(trust: LivePublisherTrust): string {
+  if (trust === 'none') return 'No publisher signature on this pack. Undeclared is not verified.'
+  if (trust === 'valid-trusted') {
+    return 'Publisher signature is valid, and this key is pinned in trusted-publishers on this computer. The pin is the whole of the trust. There is no certificate authority.'
+  }
+  return 'Publisher signature is valid. This key is not pinned in trusted-publishers, so it is not treated as a publisher you chose.'
+}
+
+/**
+ * What to do with a pin file the desktop app just read.
+ * Missing file → no pins, and a later trust click may create the file.
+ * Malformed or unreadable → no pins, and the caller must not write over that file.
+ */
+export function effectiveTrustedPublishers(
+  text: string | null,
+  readFailed?: string,
+): { publishers: TrustedPublishers; pinsLoaded: boolean; status: string } {
+  if (readFailed !== undefined) {
+    return {
+      publishers: emptyTrustedPublishers(),
+      pinsLoaded: false,
+      status: `Could not read ~/.chipblocks/trusted-publishers.json (${readFailed}). No publisher key is treated as pinned. Nothing will be written over that file.`,
+    }
+  }
+  if (text === null) {
+    return {
+      publishers: emptyTrustedPublishers(),
+      pinsLoaded: true,
+      status:
+        'No publisher keys are pinned. There is no ~/.chipblocks/trusted-publishers.json yet, or it lists none. No key is trusted by default.',
+    }
+  }
+  const parsed = parseTrustedPublishers(text)
+  if (!isTrustedPublishers(parsed)) {
+    return {
+      publishers: emptyTrustedPublishers(),
+      pinsLoaded: false,
+      status: `${parsed.reason} No publisher key from that file is trusted. Nothing will be written over it.`,
+    }
+  }
+  const count = parsed.keys.length
+  const status =
+    count === 0
+      ? 'No publisher keys are pinned. ~/.chipblocks/trusted-publishers.json lists none. No key is trusted by default.'
+      : `${count} publisher key${count === 1 ? '' : 's'} pinned in ~/.chipblocks/trusted-publishers.json. Trust is only this local pin.`
+  return { publishers: parsed, pinsLoaded: true, status }
 }
 
 export function emptyTrustedPublishers(): TrustedPublishers {

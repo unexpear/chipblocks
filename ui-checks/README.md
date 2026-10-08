@@ -41,7 +41,7 @@ failure `artifacts/<workflow>/<step>.png`, `.panel.txt` (region text + accessibi
 | gerber-check-led | Gerber check at 1600×1000: plot drawn, no refusal, 9 layer tabs, hidden empty bottom files, benign footer, every control actually clickable |
 | gerber-layers | each layer tab (`aria-pressed`, `gerber-counts`, FileFunction / polarity), Stack, zoom + / − / Fit, toggle off |
 | gerber-blank | empty board → honest empty state, no refusal |
-| content-manager | six PLANNED catalog rows, no installed badges, honesty notes, bridge-less Install message, Close / backdrop, no stray dialog on other screens |
+| content-manager | six PLANNED catalog rows, no installed badges, honesty notes, no registry configured, bridge-less Install message, Close / backdrop, no stray dialog on other screens |
 | shortcuts | Ctrl+K opens, defaults (`shortcut-row` data-binding), bare key refused, duplicate refused, Ctrl+J accepted and works, Esc cancels, Reset |
 | board-workspace | Blank board opens the Board workspace |
 | voltage-divider | Math: 500 µA × 10.00 kΩ = 5.00 V, converged |
