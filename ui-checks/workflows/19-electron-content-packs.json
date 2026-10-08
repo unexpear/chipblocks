@@ -3,7 +3,7 @@
   "targets": ["electron"],
   "title": "Content packs from a local file: signed install, badges, refusals, enable/disable, persistence, tamper detection, uninstall",
   "covers": ["contentManager", "partPicker"],
-  "notes": "Packs are generated at test time with a throwaway ed25519 key held in memory (src/pack-fixture.mjs); no private key is written or committed. Only the local-file install path and the badges on master are exercised.",
+  "notes": "Packs are generated at test time with a throwaway ed25519 key held in memory (src/pack-fixture.mjs); no private key is written or committed. The local-file install checks the ENABLED badge, the install-time trust note, the publisher fingerprint, and the live untrusted state. Pinning the key and registry downloads are not driven.",
   "steps": [
     {
       "id": "make-packs",
@@ -95,6 +95,48 @@
           },
           "matches": "Integrity: declared content hash matched\\..*cryptographically valid.*NOT in your trusted-publishers list",
           "id": "trust-note"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.fingerprintFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "Publisher key fingerprint \\(SHA-256 of the raw ed25519 public key\\): [0-9a-f]{64}$",
+          "id": "fingerprint"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "trust-unpinned"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "This key is not pinned in trusted-publishers",
+          "id": "trust-label"
+        },
+        {
+          "type": "visible",
+          "sel": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "id": "trust-toggle"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "exists": false,
+          "id": "no-pin-file"
         },
         {
           "type": "file",

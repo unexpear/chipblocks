@@ -15,7 +15,7 @@ Canonical measured implementation status and verification gates: [PROJECT-STATUS
 | Calculator Tools | trace width, resistor values, … | ✅ **have** — the Math panel, computed on your REAL live circuit |
 | Drawing Sheet Editor | page border + title block | ✅ **have** — just added |
 | Symbol Editor | author a part's schematic symbol | ✅ **have** — in-app authoring from the New Part dialog; saved drawings persist with user parts |
-| Plugin & Content Manager | install community libraries | ◐ **have (local-pack slice)** - browse cited catalog + install/enable/disable validated local packs under ~/.chipblocks/libraries/; SHA-256 integrity + ed25519 publisher sigs (trusted-publishers pin); palette/picker library sections; not a marketplace / no remote auto-install |
+| Plugin & Content Manager | install community libraries | ◐ **have** - local packs plus a user-configured registry index (https, or file:// for a local test). SHA-256 + ed25519 checked before a registry pack is written. Trusted publishers load from ~/.chipblocks/trusted-publishers.json (no keys ship with the app). No default registry URL, no auto-update. Not a marketplace |
 | Footprint Editor | a part's physical pads / outline | ✅ **have** — in-app pad/courtyard authoring with validation and persistence |
 | PCB Editor | place parts + route copper | ◐ board workspace, placement, routing, DRC, and fab export are mounted; broader PCB parity remains |
 | Gerber Viewer | check the factory files | ◐ Check Gerbers, next to Export ZIP, plots the ChipBlocks Gerber and Excellon the manufacturing ZIP writes (that dialect only — not a general gerbview) |
@@ -305,5 +305,6 @@ declared content-hash mismatch; invalid / malformed publisher signatures (instal
   no marketplace guarantee. Undeclared signature ≠ verified.
 - ADR-010 broader ecosystem / remote marketplace trust remains out of scope for this local-pack slice.
 
-**Still open:** published GitHub pack fetch / remote install with the same signature gates, full catalog
-YAML overlay / block-groups loading.
+**Still open:** a published pack host (none exists — the app does not invent one), full catalog
+YAML overlay / block-groups loading. A user-supplied registry index is a later slice; see
+`schemas/content-registry-index.md`.

@@ -45,7 +45,7 @@ Browser target (default):
 | gerber-check-led | Gerber check at 1600×1000: plot drawn, no refusal, 9 layer tabs, hidden empty bottom files, benign footer, every control actually clickable |
 | gerber-layers | each layer tab (`aria-pressed`, `gerber-counts`, FileFunction / polarity), Stack, zoom + / − / Fit, toggle off |
 | gerber-blank | empty board → honest empty state, no refusal |
-| content-manager | six PLANNED catalog rows, no installed badges, honesty notes, bridge-less Install message, Close / backdrop, no stray dialog on other screens |
+| content-manager | six PLANNED catalog rows, no installed badges, honesty notes, no registry configured, bridge-less Install message, Close / backdrop, no stray dialog on other screens |
 | shortcuts | Ctrl+K opens, defaults (`shortcut-row` data-binding), bare key refused, duplicate refused, Ctrl+J accepted and works, Esc cancels, Reset |
 | board-workspace | Blank board opens the Board workspace |
 | voltage-divider | Math: 500 µA × 10.00 kΩ = 5.00 V, converged |
@@ -79,8 +79,9 @@ Electron target (`npm run ui-checks:electron`):
 **Not covered by either target** (listed in `map.electron.notCovered` and in the Electron report):
 the other imports / exports and Compile to iCE40 (listed and reachable, not driven end to end),
 View-menu window roles, accelerators delivered by the OS menu (checked on the menu items instead),
-the look of real native dialogs (stubbed), trusted-publishers pinning and registry installs (not
-on master), and the packaged electron-builder build.
+the look of real native dialogs (stubbed), writing a publisher pin and installing from a
+registry index (a local signed pack's fingerprint and untrusted state are checked; the Trust
+click and the registry download are not driven), and the packaged electron-builder build.
 
 ## Electron mode
 

@@ -141,6 +141,20 @@ contextBridge.exposeInMainWorld('chipblocks', {
     ipcRenderer.invoke('content:pack-remove', id),
   pickLocalContentPack: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>
     ipcRenderer.invoke('content:pick-local'),
+  readTrustedPublishers: (): Promise<string | null> =>
+    ipcRenderer.invoke('trusted-publishers:read'),
+  writeTrustedPublishers: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('trusted-publishers:write', text),
+  readContentRegistrySettings: (): Promise<string | null> =>
+    ipcRenderer.invoke('content-registry:settings-read'),
+  writeContentRegistrySettings: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('content-registry:settings-write', text),
+  downloadRegistryResource: (
+    url: string,
+    maxBytes: number,
+    timeoutMs: number,
+  ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: string }> =>
+    ipcRenderer.invoke('content-registry:download', url, maxBytes, timeoutMs),
   onContentManagerOpen: (callback: () => void) => subscribe('content-manager:open', callback),
 
   onShortcutsOpen: (callback: () => void) => subscribe('shortcuts:open', callback),
