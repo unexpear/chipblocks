@@ -1,5 +1,6 @@
 import type { MathView } from './math-view.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 
 /**
@@ -47,29 +48,33 @@ export function MathPanel({
     >
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
         <div style={{ fontSize: 14, fontWeight: 700 }}>The math behind this circuit</div>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            marginLeft: 'auto',
-            padding: '3px 10px',
-            borderRadius: 4,
-            cursor: 'pointer',
-            fontSize: 11,
-            background: light ? THEME.white : THEME.surfaceRaised,
-            border,
-            color: textColor,
-          }}
-        >
-          ✕ Close
-        </button>
+        <HelpTip helpId="math.close">
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              marginLeft: 'auto',
+              padding: '3px 10px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 11,
+              background: light ? THEME.white : THEME.surfaceRaised,
+              border,
+              color: textColor,
+            }}
+          >
+            ✕ Close
+          </button>
+        </HelpTip>
       </div>
       <div style={{ color: dimColor, fontSize: 11, marginBottom: 8 }}>
         Recomputed live from the same solved state the canvas shows — these ARE the equations and
         numbers the engine used, not a description of them.
       </div>
 
-      <div style={{ fontWeight: 700, color: dimColor, margin: '8px 0 4px' }}>How it solves</div>
+      <HelpTip helpId="math.how">
+        <div style={{ fontWeight: 700, color: dimColor, margin: '8px 0 4px' }}>How it solves</div>
+      </HelpTip>
       {view.solver.map((line) => (
         <div key={line} style={{ padding: '2px 0' }}>
           {line}
@@ -77,9 +82,11 @@ export function MathPanel({
       ))}
 
       {view.parts.length > 0 ? (
-        <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 4px' }}>
-          Each part’s law, with the real numbers in it
-        </div>
+        <HelpTip helpId="math.laws">
+          <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 4px' }}>
+            Each part’s law, with the real numbers in it
+          </div>
+        </HelpTip>
       ) : null}
       {view.parts.map((part) => (
         <div key={part.id} style={{ margin: '6px 0', padding: '6px 8px', border, borderRadius: 5 }}>
@@ -96,9 +103,11 @@ export function MathPanel({
 
       {view.nets.length > 0 ? (
         <>
-          <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 2px' }}>
-            Kirchhoff’s current law — the proof, net by net
-          </div>
+          <HelpTip helpId="math.kcl">
+            <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 2px' }}>
+              Kirchhoff’s current law — the proof, net by net
+            </div>
+          </HelpTip>
           <div style={{ color: dimColor, fontSize: 11, marginBottom: 4 }}>
             Whatever current flows INTO a junction must flow OUT — charge can’t pile up at a point.
             Below, every current at every net is re-added; the sum must come out zero.
@@ -113,9 +122,13 @@ export function MathPanel({
             <span style={{ marginLeft: 6 }}>
               → Σ = {formatEng(net.sumAmps, 'A')}{' '}
               {Math.abs(net.sumAmps) < 1e-9 ? (
-                <span style={{ color: THEME.statusOk }}>✓ balanced</span>
+                <HelpTip helpId="math.balanced">
+                  <span style={{ color: THEME.statusOk }}>✓ balanced</span>
+                </HelpTip>
               ) : (
-                <span style={{ color: THEME.statusDanger }}>⚠ NOT balanced</span>
+                <HelpTip helpId="math.unbalanced">
+                  <span style={{ color: THEME.statusDanger }}>⚠ NOT balanced</span>
+                </HelpTip>
               )}
             </span>
           ) : (

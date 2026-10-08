@@ -67,6 +67,8 @@ const ROLE_STYLE: Record<PlotRole, { label: string; color: string }> = {
   other: { label: 'Other', color: '#e2b15c' },
 }
 
+export const PLOT_ROLES = Object.keys(ROLE_STYLE) as PlotRole[]
+
 /** Back to front, looking down from the top. Bottom mask is a separate tab — a second film would hide the bottom copper. */
 const STACK_RANK: Partial<Record<PlotRole, number>> = {
   'copper-bottom': 0,

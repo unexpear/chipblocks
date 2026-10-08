@@ -1,8 +1,10 @@
 import { useState, useSyncExternalStore } from 'react'
 import { BUILTIN_BLOCKS, DIGIT_DISPLAY_SIZES } from './builtin-blocks.ts'
 import { registerCatalogParts } from './catalog-parts.ts'
+import { partHelpId } from './help-text.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import {
   getAuthoredUserParts,
   getBuiltinParts,
@@ -50,45 +52,47 @@ export function BlockPaletteItems({
   if (shown.length === 0) return null
   return (
     <>
-      <div
-        style={{
-          color: THEME.textMuted,
-          fontSize: 10,
-          fontFamily: 'system-ui, sans-serif',
-          margin: '8px 2px 2px',
-        }}
-      >
-        Blocks — drag to copy
-      </div>
-      {shown.map((block) => (
-        // biome-ignore lint/a11y/noStaticElementInteractions: a palette block is a drag source, same as the parts above
+      <HelpTip helpId="palette.section.blocks">
         <div
-          key={block.id}
-          draggable
-          onDragStart={(event) => {
-            event.dataTransfer.setData(BLOCK_MIME, block.id)
-            event.dataTransfer.effectAllowed = 'move'
-          }}
-          title={`Drag to place an independent copy of ${block.name}`}
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '6px 8px',
-            border: `1px solid ${THEME.borderSubtle}`,
-            borderRadius: 6,
-            background: THEME.surfaceRaised,
-            cursor: 'grab',
-            color: THEME.textPrimary,
-            fontSize: 11,
+            color: THEME.textMuted,
+            fontSize: 10,
             fontFamily: 'system-ui, sans-serif',
+            margin: '8px 2px 2px',
           }}
         >
-          <span aria-hidden style={{ color: THEME.accentPurple }}>
-            ⧉
-          </span>
-          {block.name}
+          Blocks — drag to copy
         </div>
+      </HelpTip>
+      {shown.map((block) => (
+        <HelpTip key={block.id} helpId="palette.blockCopy" name={block.name}>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: a palette block is a drag source, same as the parts above */}
+          <div
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.setData(BLOCK_MIME, block.id)
+              event.dataTransfer.effectAllowed = 'move'
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 8px',
+              border: `1px solid ${THEME.borderSubtle}`,
+              borderRadius: 6,
+              background: THEME.surfaceRaised,
+              cursor: 'grab',
+              color: THEME.textPrimary,
+              fontSize: 11,
+              fontFamily: 'system-ui, sans-serif',
+            }}
+          >
+            <span aria-hidden style={{ color: THEME.accentPurple }}>
+              ⧉
+            </span>
+            {block.name}
+          </div>
+        </HelpTip>
       ))}
     </>
   )
@@ -259,30 +263,32 @@ export function PaletteItems({ filter }: { filter?: string }) {
   return (
     <>
       {shown.map((part) => (
-        // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source; keyboard-accessible placement is future work
-        <div
-          key={part.definition}
-          draggable
-          onDragStart={(event) => {
-            event.dataTransfer.setData(DEFINITION_MIME, part.definition)
-            event.dataTransfer.effectAllowed = 'move'
-          }}
-          title={`Drag ${part.label} onto the canvas`}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 2,
-            padding: '8px 6px',
-            border: `1px solid ${THEME.borderSubtle}`,
-            borderRadius: 6,
-            background: THEME.surfaceRaised,
-            cursor: 'grab',
-          }}
-        >
-          <DeviceGlyph definition={part.definition} />
-          <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.label}</span>
-        </div>
+        <HelpTip key={part.definition} helpId={partHelpId(part.definition)}>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source; keyboard-accessible placement is future work */}
+          <div
+            draggable
+            data-testid="palette-part"
+            data-part={part.definition}
+            onDragStart={(event) => {
+              event.dataTransfer.setData(DEFINITION_MIME, part.definition)
+              event.dataTransfer.effectAllowed = 'move'
+            }}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 2,
+              padding: '8px 6px',
+              border: `1px solid ${THEME.borderSubtle}`,
+              borderRadius: 6,
+              background: THEME.surfaceRaised,
+              cursor: 'grab',
+            }}
+          >
+            <DeviceGlyph definition={part.definition} />
+            <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.label}</span>
+          </div>
+        </HelpTip>
       ))}
     </>
   )
@@ -308,41 +314,45 @@ export function CatalogPaletteItems({ filter }: { filter?: string }) {
   if (shown.length === 0) return null
   return (
     <>
-      <div
-        style={{
-          color: THEME.textMuted,
-          fontSize: 10,
-          fontFamily: 'system-ui, sans-serif',
-          margin: '8px 2px 2px',
-        }}
-      >
-        Catalog — drag to place
-      </div>
-      {shown.map((part) => (
-        // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source
+      <HelpTip helpId="palette.section.catalog">
         <div
-          key={part.id}
-          draggable
-          onDragStart={(event) => {
-            event.dataTransfer.setData(DEFINITION_MIME, part.id)
-            event.dataTransfer.effectAllowed = 'move'
-          }}
-          title={`Drag ${part.name} onto the canvas`}
           style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 2,
-            padding: '8px 6px',
-            border: `1px solid ${THEME.borderSubtle}`,
-            borderRadius: 6,
-            background: THEME.surfaceRaised,
-            cursor: 'grab',
+            color: THEME.textMuted,
+            fontSize: 10,
+            fontFamily: 'system-ui, sans-serif',
+            margin: '8px 2px 2px',
           }}
         >
-          <DeviceGlyph definition={part.id} />
-          <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+          Catalog — drag to place
         </div>
+      </HelpTip>
+      {shown.map((part) => (
+        <HelpTip key={part.id} helpId={partHelpId(part.id)} name={part.name}>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source */}
+          <div
+            draggable
+            data-testid="palette-part"
+            data-part={part.id}
+            onDragStart={(event) => {
+              event.dataTransfer.setData(DEFINITION_MIME, part.id)
+              event.dataTransfer.effectAllowed = 'move'
+            }}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 2,
+              padding: '8px 6px',
+              border: `1px solid ${THEME.borderSubtle}`,
+              borderRadius: 6,
+              background: THEME.surfaceRaised,
+              cursor: 'grab',
+            }}
+          >
+            <DeviceGlyph definition={part.id} />
+            <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+          </div>
+        </HelpTip>
       ))}
     </>
   )
@@ -366,41 +376,45 @@ export function UserPartPaletteItems({ filter }: { filter?: string }) {
   if (shown.length === 0) return null
   return (
     <>
-      <div
-        style={{
-          color: THEME.textMuted,
-          fontSize: 10,
-          fontFamily: 'system-ui, sans-serif',
-          margin: '8px 2px 2px',
-        }}
-      >
-        Your parts — drag to place
-      </div>
-      {shown.map((part) => (
-        // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source; keyboard-accessible placement is future work
+      <HelpTip helpId="palette.section.yours">
         <div
-          key={part.id}
-          draggable
-          onDragStart={(event) => {
-            event.dataTransfer.setData(DEFINITION_MIME, part.id)
-            event.dataTransfer.effectAllowed = 'move'
-          }}
-          title={`Drag ${part.name} onto the canvas`}
           style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 2,
-            padding: '8px 6px',
-            border: `1px solid ${THEME.borderSubtle}`,
-            borderRadius: 6,
-            background: THEME.surfaceRaised,
-            cursor: 'grab',
+            color: THEME.textMuted,
+            fontSize: 10,
+            fontFamily: 'system-ui, sans-serif',
+            margin: '8px 2px 2px',
           }}
         >
-          <DeviceGlyph definition={part.id} />
-          <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+          Your parts — drag to place
         </div>
+      </HelpTip>
+      {shown.map((part) => (
+        <HelpTip key={part.id} helpId={partHelpId(part.id)} name={part.name}>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source; keyboard-accessible placement is future work */}
+          <div
+            draggable
+            data-testid="palette-part"
+            data-part={part.id}
+            onDragStart={(event) => {
+              event.dataTransfer.setData(DEFINITION_MIME, part.id)
+              event.dataTransfer.effectAllowed = 'move'
+            }}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 2,
+              padding: '8px 6px',
+              border: `1px solid ${THEME.borderSubtle}`,
+              borderRadius: 6,
+              background: THEME.surfaceRaised,
+              cursor: 'grab',
+            }}
+          >
+            <DeviceGlyph definition={part.id} />
+            <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+          </div>
+        </HelpTip>
       ))}
     </>
   )
@@ -430,41 +444,45 @@ export function CommunityPackPaletteItems({ filter }: { filter?: string }) {
         if (shown.length === 0) return null
         return (
           <div key={section.packId}>
-            <div
-              style={{
-                color: THEME.textMuted,
-                fontSize: 10,
-                fontFamily: 'system-ui, sans-serif',
-                margin: '8px 2px 2px',
-              }}
-            >
-              Library: {section.name} — drag to place
-            </div>
-            {shown.map((part) => (
-              // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source
+            <HelpTip helpId="palette.section.library">
               <div
-                key={part.id}
-                draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.setData(DEFINITION_MIME, part.id)
-                  event.dataTransfer.effectAllowed = 'move'
-                }}
-                title={`Drag ${part.name} onto the canvas (${section.name})`}
                 style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 2,
-                  padding: '8px 6px',
-                  border: `1px solid ${THEME.borderSubtle}`,
-                  borderRadius: 6,
-                  background: THEME.surfaceRaised,
-                  cursor: 'grab',
+                  color: THEME.textMuted,
+                  fontSize: 10,
+                  fontFamily: 'system-ui, sans-serif',
+                  margin: '8px 2px 2px',
                 }}
               >
-                <DeviceGlyph definition={part.id} />
-                <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+                Library: {section.name} — drag to place
               </div>
+            </HelpTip>
+            {shown.map((part) => (
+              <HelpTip key={part.id} helpId={partHelpId(part.id)} name={part.name}>
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source */}
+                <div
+                  draggable
+                  data-testid="palette-part"
+                  data-part={part.id}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData(DEFINITION_MIME, part.id)
+                    event.dataTransfer.effectAllowed = 'move'
+                  }}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 2,
+                    padding: '8px 6px',
+                    border: `1px solid ${THEME.borderSubtle}`,
+                    borderRadius: 6,
+                    background: THEME.surfaceRaised,
+                    cursor: 'grab',
+                  }}
+                >
+                  <DeviceGlyph definition={part.id} />
+                  <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+                </div>
+              </HelpTip>
             ))}
           </div>
         )
@@ -483,26 +501,28 @@ export function Palette({ blocks }: { blocks: { id: string; name: string }[] }) 
   const [query, setQuery] = useState('')
   return (
     <>
-      <input
-        type="text"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Search parts…"
-        aria-label="Search parts"
-        style={{
-          width: '100%',
-          boxSizing: 'border-box',
-          margin: '0 0 6px',
-          padding: '5px 8px',
-          border: `1px solid ${THEME.borderSubtle}`,
-          borderRadius: 6,
-          background: THEME.surfaceBase,
-          color: THEME.textPrimary,
-          fontSize: 11,
-          fontFamily: 'system-ui, sans-serif',
-          outline: 'none',
-        }}
-      />
+      <HelpTip helpId="palette.search">
+        <input
+          type="text"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search parts…"
+          aria-label="Search parts"
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            margin: '0 0 6px',
+            padding: '5px 8px',
+            border: `1px solid ${THEME.borderSubtle}`,
+            borderRadius: 6,
+            background: THEME.surfaceBase,
+            color: THEME.textPrimary,
+            fontSize: 11,
+            fontFamily: 'system-ui, sans-serif',
+            outline: 'none',
+          }}
+        />
+      </HelpTip>
       <PaletteItems filter={query} />
       <CatalogPaletteItems filter={query} />
       <UserPartPaletteItems filter={query} />

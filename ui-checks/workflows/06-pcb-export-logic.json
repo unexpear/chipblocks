@@ -58,7 +58,7 @@
         {
           "type": "attr",
           "sel": "pcbPanel.exportZip",
-          "name": "title",
+          "name": "data-export-reason",
           "matches": "^The board isn't manufacturable yet:.*no parts",
           "flags": "i",
           "id": "title-says-why"

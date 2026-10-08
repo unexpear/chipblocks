@@ -2,8 +2,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.tsx'
 import { ErrorBoundary } from './error-boundary.tsx'
+import { type HoverHelpMode, loadHoverHelpMode, setHoverHelpMode } from './hover-help-pref.ts'
 import { SYMBOL_STYLE_EVENT, SymbolStyleProvider } from './symbol-style.tsx'
 import { applyTheme, loadTheme, saveTheme, THEME_LIST, type ThemeName } from './theme.ts'
+import { HoverHelpProvider } from './tooltip.tsx'
 
 const root = document.getElementById('root')
 if (root === null) throw new Error('renderer root element not found')
@@ -29,14 +31,21 @@ if (bridge !== undefined) {
   bridge.onSymbolStyle?.((next) => {
     window.dispatchEvent(new CustomEvent(SYMBOL_STYLE_EVENT, { detail: next }))
   })
+  bridge.registerHoverHelp?.(loadHoverHelpMode())
+  bridge.onHoverHelp?.((next) => {
+    if (next === 'full' || next === 'brief' || next === 'off')
+      setHoverHelpMode(next as HoverHelpMode)
+  })
 }
 
 createRoot(root).render(
   <StrictMode>
-    <SymbolStyleProvider>
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    </SymbolStyleProvider>
+    <HoverHelpProvider>
+      <SymbolStyleProvider>
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      </SymbolStyleProvider>
+    </HoverHelpProvider>
   </StrictMode>,
 )

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { partHelpId, pickerSectionHelpId } from './help-text.ts'
 import { PARTS } from './palette.tsx'
 import { categoryLabelOf, categoryOf, keywordsFor, orderedCategories } from './part-categories.ts'
 import { type SearchItem, searchParts } from './part-search.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { getUserPartsSnapshot, subscribeUserParts } from './user-parts.ts'
 import type { WorkspaceMode } from './workspace.ts'
 
@@ -231,78 +233,84 @@ export function PartPicker({
           >
             {query ? `${count} of ${entries.length}` : `${entries.length} parts`}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              marginLeft: 'auto',
-              border: 'none',
-              background: 'transparent',
-              color: THEME.textMuted,
-              fontSize: 18,
-              cursor: 'pointer',
-              lineHeight: 1,
-            }}
-          >
-            ×
-          </button>
-        </div>
-
-        <div style={{ padding: '10px 14px 6px', position: 'relative' }}>
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value)
-              setSel(0)
-            }}
-            placeholder="Search parts… (try “mosfet”, “adder”, “fpga”)"
-            aria-label="Search parts"
-            role="combobox"
-            aria-expanded
-            aria-controls={listId}
-            aria-activedescendant={
-              selectedDefinition ? `part-picker-row-${selectedDefinition}` : undefined
-            }
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              padding: '8px 30px 8px 11px',
-              borderRadius: 7,
-              border: `1px solid ${THEME.borderStrong}`,
-              background: THEME.surfaceInput,
-              color: THEME.textPrimary,
-              fontSize: 13,
-              outline: 'none',
-            }}
-          />
-          {query ? (
+          <HelpTip helpId="picker.cancel">
             <button
               type="button"
-              aria-label="Clear search"
-              onClick={() => {
-                setQuery('')
-                setSel(0)
-                inputRef.current?.focus()
-              }}
+              onClick={onClose}
+              aria-label="Close"
               style={{
-                position: 'absolute',
-                right: 22,
-                top: '50%',
-                transform: 'translateY(-50%)',
+                marginLeft: 'auto',
                 border: 'none',
                 background: 'transparent',
                 color: THEME.textMuted,
-                fontSize: 15,
+                fontSize: 18,
                 cursor: 'pointer',
                 lineHeight: 1,
-                padding: 2,
               }}
             >
               ×
             </button>
+          </HelpTip>
+        </div>
+
+        <div style={{ padding: '10px 14px 6px', position: 'relative' }}>
+          <HelpTip helpId="picker.search">
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setSel(0)
+              }}
+              placeholder="Search parts… (try “mosfet”, “adder”, “fpga”)"
+              aria-label="Search parts"
+              role="combobox"
+              aria-expanded
+              aria-controls={listId}
+              aria-activedescendant={
+                selectedDefinition ? `part-picker-row-${selectedDefinition}` : undefined
+              }
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '8px 30px 8px 11px',
+                borderRadius: 7,
+                border: `1px solid ${THEME.borderStrong}`,
+                background: THEME.surfaceInput,
+                color: THEME.textPrimary,
+                fontSize: 13,
+                outline: 'none',
+              }}
+            />
+          </HelpTip>
+          {query ? (
+            <HelpTip helpId="picker.clear">
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => {
+                  setQuery('')
+                  setSel(0)
+                  inputRef.current?.focus()
+                }}
+                style={{
+                  position: 'absolute',
+                  right: 22,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  border: 'none',
+                  background: 'transparent',
+                  color: THEME.textMuted,
+                  fontSize: 15,
+                  cursor: 'pointer',
+                  lineHeight: 1,
+                  padding: 2,
+                }}
+              >
+                ×
+              </button>
+            </HelpTip>
           ) : null}
         </div>
 
@@ -324,72 +332,81 @@ export function PartPicker({
               rows.map((row, i) => {
                 if (row.kind === 'header') {
                   return (
-                    <div
+                    <HelpTip
                       key={`header-${row.id}`}
-                      data-testid="part-picker-section"
-                      style={{
-                        fontSize: 10.5,
-                        fontWeight: 700,
-                        letterSpacing: 0.5,
-                        textTransform: 'uppercase',
-                        color: THEME.textMuted,
-                        padding: '9px 8px 3px',
-                      }}
+                      helpId={pickerSectionHelpId(row.id)}
+                      name={row.label}
                     >
-                      {row.label}
-                    </div>
+                      <div
+                        data-testid="part-picker-section"
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          letterSpacing: 0.5,
+                          textTransform: 'uppercase',
+                          color: THEME.textMuted,
+                          padding: '9px 8px 3px',
+                        }}
+                      >
+                        {row.label}
+                      </div>
+                    </HelpTip>
                   )
                 }
                 const active = i === activeRowIndex
                 return (
-                  // biome-ignore lint/a11y/useKeyWithClickEvents: a selectable list row, keyboard handled at the dialog
-                  <div
+                  <HelpTip
                     key={row.definition}
-                    id={`part-picker-row-${row.definition}`}
-                    role="option"
-                    aria-selected={active}
-                    aria-label={row.label}
-                    tabIndex={-1}
-                    data-active={active}
-                    onClick={() => {
-                      const pos = selectableRowIndices.indexOf(i)
-                      if (pos >= 0) setSel(pos)
-                    }}
-                    onDoubleClick={() => place(row.definition)}
-                    title={`Place ${row.label}`}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                      background: active ? THEME.surfaceActive : 'transparent',
-                    }}
+                    helpId={partHelpId(row.definition)}
+                    name={row.label}
                   >
-                    <span
-                      aria-hidden
+                    {/* biome-ignore lint/a11y/useKeyWithClickEvents: a selectable list row, keyboard handled at the dialog */}
+                    <div
+                      id={`part-picker-row-${row.definition}`}
+                      role="option"
+                      aria-selected={active}
+                      aria-label={row.label}
+                      tabIndex={-1}
+                      data-active={active}
+                      onClick={() => {
+                        const pos = selectableRowIndices.indexOf(i)
+                        if (pos >= 0) setSel(pos)
+                      }}
+                      onDoubleClick={() => place(row.definition)}
                       style={{
-                        width: 40,
-                        height: 26,
-                        flex: 'none',
-                        overflow: 'hidden',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center',
+                        gap: 8,
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        background: active ? THEME.surfaceActive : 'transparent',
                       }}
                     >
-                      <span style={{ transform: 'scale(0.5)' }}>
-                        <DeviceGlyph definition={row.definition} />
+                      <span
+                        aria-hidden
+                        style={{
+                          width: 40,
+                          height: 26,
+                          flex: 'none',
+                          overflow: 'hidden',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <span style={{ transform: 'scale(0.5)' }}>
+                          <DeviceGlyph definition={row.definition} />
+                        </span>
                       </span>
-                    </span>
-                    <span style={{ fontSize: 12.5, color: THEME.textPrimary }}>
-                      <Highlighted text={row.label} positions={row.highlight} />
-                    </span>
-                    <span style={{ marginLeft: 'auto', fontSize: 10.5, color: THEME.textFaint }}>
-                      {row.definition}
-                    </span>
-                  </div>
+                      <span style={{ fontSize: 12.5, color: THEME.textPrimary }}>
+                        <Highlighted text={row.label} positions={row.highlight} />
+                      </span>
+                      <span style={{ marginLeft: 'auto', fontSize: 10.5, color: THEME.textFaint }}>
+                        {row.definition}
+                      </span>
+                    </div>
+                  </HelpTip>
                 )
               })
             )}
@@ -443,39 +460,46 @@ export function PartPicker({
           <span style={{ fontSize: 11, color: THEME.textFaint }}>
             ↑↓ move · Home/End jump · Enter or double-click to place · Esc to clear or close
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              marginLeft: 'auto',
-              padding: '7px 16px',
-              borderRadius: 7,
-              border: `1px solid ${THEME.borderStrong}`,
-              background: 'transparent',
-              color: THEME.textPrimary,
-              fontSize: 12.5,
-              cursor: 'pointer',
-            }}
+          <HelpTip helpId="picker.cancel">
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                marginLeft: 'auto',
+                padding: '7px 16px',
+                borderRadius: 7,
+                border: `1px solid ${THEME.borderStrong}`,
+                background: 'transparent',
+                color: THEME.textPrimary,
+                fontSize: 12.5,
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </HelpTip>
+          <HelpTip
+            helpId="picker.place"
+            detail={selectedDefinition === undefined ? 'Pick a part in the list first.' : undefined}
           >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => place(selectedDefinition)}
-            disabled={selectedDefinition === undefined}
-            style={{
-              padding: '7px 18px',
-              borderRadius: 7,
-              border: `1px solid ${THEME.accentBlue}`,
-              background: selectedDefinition ? THEME.accentBlueDeep : THEME.surfaceRaised,
-              color: selectedDefinition ? THEME.white : THEME.textMuted,
-              fontSize: 12.5,
-              fontWeight: 600,
-              cursor: selectedDefinition ? 'pointer' : 'default',
-            }}
-          >
-            Place
-          </button>
+            <button
+              type="button"
+              onClick={() => place(selectedDefinition)}
+              disabled={selectedDefinition === undefined}
+              style={{
+                padding: '7px 18px',
+                borderRadius: 7,
+                border: `1px solid ${THEME.accentBlue}`,
+                background: selectedDefinition ? THEME.accentBlueDeep : THEME.surfaceRaised,
+                color: selectedDefinition ? THEME.white : THEME.textMuted,
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: selectedDefinition ? 'pointer' : 'default',
+              }}
+            >
+              Place
+            </button>
+          </HelpTip>
         </div>
       </div>
     </div>

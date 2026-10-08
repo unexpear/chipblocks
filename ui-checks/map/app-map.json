@@ -304,6 +304,18 @@
           },
           "does": "Wire tool (TOOL_MODES)."
         },
+        "partsTab": {
+          "sel": {
+            "css": "[data-dock-tab=\"parts\"]"
+          },
+          "does": "Parts palette, tabbed with Hierarchy on the left dock."
+        },
+        "paletteResistor": {
+          "sel": {
+            "css": "[data-part=\"resistor\"]"
+          },
+          "does": "Resistor in the parts palette."
+        },
         "connect": {
           "sel": {
             "role": "button",
@@ -918,10 +930,10 @@
           "b": {
             "type": "attr",
             "sel": "pcbPanel.exportZip",
-            "name": "title",
+            "name": "data-export-reason",
             "matches": "^The board isn't manufacturable yet:"
           },
-          "why": "disabled={pcbFabProblems.length > 0} and the title is built from the same list."
+          "why": "disabled={pcbFabProblems.length > 0} and data-export-reason is built from the same list."
         },
         {
           "id": "pcb.drc-violations-block-export",
@@ -1372,6 +1384,13 @@
             "name": "Install from local pack"
           },
           "does": "Pick a local pack (Electron bridge). In the browser it shows a 'needs the desktop app bridge' status instead."
+        },
+        "plannedBadge": {
+          "sel": {
+            "text": "PLANNED · NOT INSTALLED",
+            "exact": true
+          },
+          "does": "Catalog badge. Hover help says the library is a citation, not an install."
         },
         "close": {
           "sel": {

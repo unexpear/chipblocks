@@ -103,7 +103,7 @@
         {
           "type": "attr",
           "sel": "pcbPanel.exportZip",
-          "name": "title",
+          "name": "data-export-reason",
           "matches": "^Export the manufacturing ZIP",
           "id": "export-title-ready"
         },

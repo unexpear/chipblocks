@@ -9,6 +9,7 @@ import {
   type PackLoadIssue,
 } from './content-manager.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * What the panel claims about install trust. Kept as a constant so a test can lock the wording:
@@ -96,13 +97,15 @@ export function ContentManagerPanel({
       >
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, gap: 8 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Plugin & Content Manager</div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{ ...chipButton(light), marginLeft: 'auto' }}
-          >
-            Close
-          </button>
+          <HelpTip helpId="content.close">
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ ...chipButton(light), marginLeft: 'auto' }}
+            >
+              Close
+            </button>
+          </HelpTip>
         </div>
 
         <p style={{ margin: '0 0 10px', color: dimColor, lineHeight: 1.45 }}>
@@ -110,9 +113,11 @@ export function ContentManagerPanel({
         </p>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={onInstallLocal} style={primaryButton(light)}>
-            Install from local pack…
-          </button>
+          <HelpTip helpId="content.install">
+            <button type="button" onClick={onInstallLocal} style={primaryButton(light)}>
+              Install from local pack…
+            </button>
+          </HelpTip>
         </div>
 
         {statusMessage !== null ? (
@@ -197,18 +202,28 @@ function InstalledCard({
         <strong>{record.name}</strong>
         <span style={{ color: dim }}>v{record.packVersion}</span>
         <span style={{ color: dim }}>{record.license}</span>
-        <span
-          data-testid="content-manager-badge"
-          data-pack={record.id}
-          style={{
-            marginLeft: 'auto',
-            fontSize: 10,
-            fontWeight: 700,
-            color: record.enabled && !blocked ? THEME.accentLime : dim,
-          }}
+        <HelpTip
+          helpId={
+            !record.enabled
+              ? 'content.badge.disabled'
+              : blocked
+                ? 'content.badge.notLoaded'
+                : 'content.badge.enabled'
+          }
         >
-          {installedPackStatusLabel(record.enabled, blocked)}
-        </span>
+          <span
+            data-testid="content-manager-badge"
+            data-pack={record.id}
+            style={{
+              marginLeft: 'auto',
+              fontSize: 10,
+              fontWeight: 700,
+              color: record.enabled && !blocked ? THEME.accentLime : dim,
+            }}
+          >
+            {installedPackStatusLabel(record.enabled, blocked)}
+          </span>
+        </HelpTip>
       </div>
       <div style={{ color: dim, marginTop: 4 }}>
         {record.description ?? catalog?.description ?? 'Local community pack.'}
@@ -226,47 +241,69 @@ function InstalledCard({
         </div>
       ) : null}
       {blocked ? null : (
-        <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
-          {record.integrityStatus === 'match'
-            ? 'Integrity: declared content hash matched. '
-            : record.integrityStatus === 'undeclared'
-              ? 'Integrity: no declared content hash. '
-              : ''}
-          {record.trustNote}
-        </div>
+        <HelpTip
+          helpId={
+            record.signatureStatus === 'valid-trusted'
+              ? 'content.trust.trusted'
+              : record.signatureStatus === 'valid-untrusted'
+                ? 'content.trust.untrusted'
+                : 'content.trust.none'
+          }
+        >
+          <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
+            {record.integrityStatus === 'match'
+              ? 'Integrity: declared content hash matched. '
+              : record.integrityStatus === 'undeclared'
+                ? 'Integrity: no declared content hash. '
+                : ''}
+            {record.trustNote}
+          </div>
+        </HelpTip>
       )}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          onClick={() => onSetEnabled(record.id, !record.enabled)}
-          style={chipButton(light)}
-        >
-          {record.enabled ? 'Disable' : 'Enable'}
-        </button>
+        <HelpTip helpId={record.enabled ? 'content.disable' : 'content.enable'}>
+          <button
+            type="button"
+            onClick={() => onSetEnabled(record.id, !record.enabled)}
+            style={chipButton(light)}
+          >
+            {record.enabled ? 'Disable' : 'Enable'}
+          </button>
+        </HelpTip>
         {confirmUninstall ? (
           <>
-            <button
-              type="button"
-              onClick={() => {
-                setConfirmUninstall(false)
-                onUninstall(record.id)
-              }}
-              style={dangerButton(light)}
-            >
-              Confirm uninstall
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmUninstall(false)}
-              style={chipButton(light)}
-            >
-              Cancel
-            </button>
+            <HelpTip helpId="content.confirmUninstall">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmUninstall(false)
+                  onUninstall(record.id)
+                }}
+                style={dangerButton(light)}
+              >
+                Confirm uninstall
+              </button>
+            </HelpTip>
+            <HelpTip helpId="content.cancelUninstall">
+              <button
+                type="button"
+                onClick={() => setConfirmUninstall(false)}
+                style={chipButton(light)}
+              >
+                Cancel
+              </button>
+            </HelpTip>
           </>
         ) : (
-          <button type="button" onClick={() => setConfirmUninstall(true)} style={chipButton(light)}>
-            Uninstall…
-          </button>
+          <HelpTip helpId="content.uninstall">
+            <button
+              type="button"
+              onClick={() => setConfirmUninstall(true)}
+              style={chipButton(light)}
+            >
+              Uninstall…
+            </button>
+          </HelpTip>
         )}
       </div>
     </div>
@@ -279,7 +316,9 @@ function CatalogCard({ entry, light }: { entry: ContentCatalogEntry; light: bool
     <div style={cardStyle(light)}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
         <strong>{entry.name}</strong>
-        <span style={{ color: dim, fontSize: 10, fontWeight: 700 }}>PLANNED · NOT INSTALLED</span>
+        <HelpTip helpId="content.badge.planned">
+          <span style={{ color: dim, fontSize: 10, fontWeight: 700 }}>PLANNED · NOT INSTALLED</span>
+        </HelpTip>
       </div>
       <div style={{ color: dim, marginTop: 4 }}>{entry.description}</div>
       <div style={{ color: dim, marginTop: 4, fontSize: 10 }}>

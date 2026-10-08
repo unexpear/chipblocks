@@ -530,6 +530,12 @@ export class Engine {
       const s = this.screen(act.open)
       for (const a of s.reach ?? []) await this.doAction(a, p)
       await this.waitReady(act.open, p)
+    } else if (act.hover) {
+      const l = this.locator(act.hover, p)
+      await l.waitFor({ state: 'visible', timeout: 5000 })
+      await l.hover({ force: true, timeout: 5000 })
+    } else if (act.mouseMove) {
+      await this.page.mouse.move(act.mouseMove.x ?? 0, act.mouseMove.y ?? 0)
     } else if (act.click) {
       await this.click(act.click, p)
     } else if (act.dblclick) {

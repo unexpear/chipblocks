@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react'
 import type { LensMode } from './lens.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { WIRE_GAUGES } from './wire-length.ts'
 import { CURVE_SIZES } from './wire-path.ts'
 import type { WorkspaceMode } from './workspace.ts'
@@ -224,6 +225,28 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
   },
 ]
 
+const ACTION_HELP: Record<ToolbarActionId, string> = {
+  addPart: 'toolbar.addPart',
+  newPart: 'toolbar.newPart',
+  newFootprint: 'toolbar.newFootprint',
+  scope: 'toolbar.scope',
+  timeline: 'toolbar.timeline',
+  bode: 'toolbar.bode',
+  reflection: 'toolbar.reflection',
+  distortion: 'toolbar.distortion',
+  sparam: 'toolbar.sparam',
+  pcb: 'toolbar.pcb',
+  plan: 'toolbar.plan',
+  verilog: 'toolbar.verilog',
+  trace: 'toolbar.trace',
+  stress: 'toolbar.stress',
+  workspace: 'toolbar.workspace',
+  group: 'toolbar.group',
+  clipboard: 'toolbar.clipboard',
+  math: 'toolbar.math',
+  margins: 'toolbar.margins',
+}
+
 /**
  * THE TOOL MODES — the canvas-tool buttons (Wire / Lasso / Meter), edited the same one-list
  * way as TOOLBAR_ACTIONS: reorder a line, rename `label`, restyle `icon` / `color`, delete to
@@ -402,21 +425,32 @@ export function ToolbarItems({
         const active = tool === mode.tool
         return (
           <Fragment key={mode.tool}>
-            <button
-              type="button"
-              onClick={() => onTool(active ? 'select' : mode.tool)}
-              title={mode.title}
-              style={{ ...toolButton(active), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+            <HelpTip
+              helpId={
+                mode.tool === 'wire'
+                  ? 'tool.wire'
+                  : mode.tool === 'connect'
+                    ? 'tool.connect'
+                    : mode.tool === 'lasso'
+                      ? 'tool.lasso'
+                      : 'tool.meter'
+              }
             >
-              {mode.device ? (
-                <DeviceGlyph definition={mode.device} />
-              ) : (
-                <span aria-hidden style={{ color: mode.color, fontSize: 13 }}>
-                  {mode.icon}
-                </span>
-              )}
-              <span style={{ fontSize: 11 }}>{mode.label}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onTool(active ? 'select' : mode.tool)}
+                style={{ ...toolButton(active), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+              >
+                {mode.device ? (
+                  <DeviceGlyph definition={mode.device} />
+                ) : (
+                  <span aria-hidden style={{ color: mode.color, fontSize: 13 }}>
+                    {mode.icon}
+                  </span>
+                )}
+                <span style={{ fontSize: 11 }}>{mode.label}</span>
+              </button>
+            </HelpTip>
             {/* Wire is the one tool with its own options (style + gauge), shown right under it while
                 it is on — the per-tool extra, like Group/Clipboard's extras in TOOLBAR_ACTIONS. */}
             {mode.tool === 'wire' && active ? (
@@ -443,50 +477,55 @@ export function ToolbarItems({
       })}
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
-        <button
-          type="button"
-          onClick={onSolve}
-          disabled={solveBlocked}
-          title={
+        <HelpTip
+          helpId="toolbar.solve"
+          detail={
             solveBlocked
               ? 'The design is still being drawn — there is no whole circuit to solve yet'
-              : "Run the physics now — recompute every wire's current, length, and resistance"
+              : undefined
           }
-          style={{
-            ...toolButton(false),
-            flexDirection: 'row',
-            gap: 6,
-            padding: '8px 12px',
-            opacity: solveBlocked ? 0.45 : 1,
-            cursor: solveBlocked ? 'not-allowed' : 'pointer',
-          }}
         >
-          <span aria-hidden style={{ color: THEME.accentBlue, fontSize: 13 }}>
-            ▶
-          </span>
-          <span style={{ fontSize: 11 }}>Solve</span>
-        </button>
-        <label
-          title="Re-solve the physics on every change. Turn off to save CPU on big circuits, then hit Solve."
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            color: THEME.textPrimary,
-            fontSize: 11,
-            fontFamily: 'system-ui, sans-serif',
-            cursor: 'pointer',
-            userSelect: 'none',
-            padding: '0 2px',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={alwaysOn}
-            onChange={(event) => onAlwaysOn(event.target.checked)}
-          />
-          Always on
-        </label>
+          <button
+            type="button"
+            onClick={onSolve}
+            disabled={solveBlocked}
+            style={{
+              ...toolButton(false),
+              flexDirection: 'row',
+              gap: 6,
+              padding: '8px 12px',
+              opacity: solveBlocked ? 0.45 : 1,
+              cursor: solveBlocked ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <span aria-hidden style={{ color: THEME.accentBlue, fontSize: 13 }}>
+              ▶
+            </span>
+            <span style={{ fontSize: 11 }}>Solve</span>
+          </button>
+        </HelpTip>
+        <HelpTip helpId="toolbar.alwaysOn">
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              color: THEME.textPrimary,
+              fontSize: 11,
+              fontFamily: 'system-ui, sans-serif',
+              cursor: 'pointer',
+              userSelect: 'none',
+              padding: '0 2px',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={alwaysOn}
+              onChange={(event) => onAlwaysOn(event.target.checked)}
+            />
+            Always on
+          </label>
+        </HelpTip>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '0 2px' }}>
@@ -501,17 +540,37 @@ export function ToolbarItems({
           >
             Ambient °C
           </span>
-          <input
-            type="number"
+          <HelpTip helpId="toolbar.ambient">
+            <input
+              type="number"
+              className="nodrag"
+              value={projectAmbientC}
+              onChange={(event) => {
+                const next = Number(event.target.value)
+                if (Number.isFinite(next)) onProjectAmbient(next)
+              }}
+              aria-label="Ambient temperature"
+              style={{
+                width: 46,
+                background: THEME.surfaceInput,
+                border: `1px solid ${THEME.borderStrong}`,
+                color: THEME.textPrimary,
+                borderRadius: 3,
+                fontSize: 10,
+                padding: '2px 3px',
+              }}
+            />
+          </HelpTip>
+        </div>
+        <HelpTip helpId="toolbar.ambientPreset">
+          <select
             className="nodrag"
-            value={projectAmbientC}
+            aria-label="Temperature preset"
+            value={AMBIENT_PRESETS.find((p) => p.c === projectAmbientC)?.c ?? ''}
             onChange={(event) => {
-              const next = Number(event.target.value)
-              if (Number.isFinite(next)) onProjectAmbient(next)
+              if (event.target.value !== '') onProjectAmbient(Number(event.target.value))
             }}
-            title="The whole board's ambient temperature (°C) — the environment every part sits in (a bench is 25 °C, a car's engine bay ~105 °C). Each part falls back to this unless you give it its own ambient_temperature. Drives R(T), junction-voltage drift, and the Temp lens."
             style={{
-              width: 46,
               background: THEME.surfaceInput,
               border: `1px solid ${THEME.borderStrong}`,
               color: THEME.textPrimary,
@@ -519,31 +578,15 @@ export function ToolbarItems({
               fontSize: 10,
               padding: '2px 3px',
             }}
-          />
-        </div>
-        <select
-          className="nodrag"
-          value={AMBIENT_PRESETS.find((p) => p.c === projectAmbientC)?.c ?? ''}
-          onChange={(event) => {
-            if (event.target.value !== '') onProjectAmbient(Number(event.target.value))
-          }}
-          title="Jump to a standard operating environment — the recognized JEDEC/AEC temperature grades (commercial, industrial, automotive). A value off the list reads ‘Custom’."
-          style={{
-            background: THEME.surfaceInput,
-            border: `1px solid ${THEME.borderStrong}`,
-            color: THEME.textPrimary,
-            borderRadius: 3,
-            fontSize: 10,
-            padding: '2px 3px',
-          }}
-        >
-          <option value="">Custom…</option>
-          {AMBIENT_PRESETS.map((p) => (
-            <option key={p.c} value={p.c}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+          >
+            <option value="">Custom…</option>
+            {AMBIENT_PRESETS.map((p) => (
+              <option key={p.c} value={p.c}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </HelpTip>
       </div>
 
       {/* The panel/tool buttons — rendered from TOOLBAR_ACTIONS (edit that list to
@@ -558,28 +601,32 @@ export function ToolbarItems({
             ? `${action.label} (${clipboardCount})`
             : action.label
         return (
-          <button
+          <HelpTip
             key={action.id}
-            type="button"
-            onClick={actionHandlers[action.id]}
-            disabled={disabled}
-            title={action.title}
-            style={{
-              ...toolButton(active),
-              flexDirection: 'row',
-              gap: 6,
-              padding: '8px 12px',
-              ...(disabled ? { opacity: 0.45, cursor: 'default' } : {}),
-            }}
+            helpId={ACTION_HELP[action.id]}
+            detail={disabled ? 'Select at least two parts first.' : undefined}
           >
-            <span
-              aria-hidden
-              style={{ fontSize: 13, ...(action.color ? { color: action.color } : {}) }}
+            <button
+              type="button"
+              onClick={actionHandlers[action.id]}
+              disabled={disabled}
+              style={{
+                ...toolButton(active),
+                flexDirection: 'row',
+                gap: 6,
+                padding: '8px 12px',
+                ...(disabled ? { opacity: 0.45, cursor: 'default' } : {}),
+              }}
             >
-              {action.icon}
-            </span>
-            <span style={{ fontSize: 11 }}>{label}</span>
-          </button>
+              <span
+                aria-hidden
+                style={{ fontSize: 13, ...(action.color ? { color: action.color } : {}) }}
+              >
+                {action.icon}
+              </span>
+              <span style={{ fontSize: 11 }}>{label}</span>
+            </button>
+          </HelpTip>
         )
       })}
 
@@ -666,60 +713,68 @@ function LensTool({
   })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        title="Lenses — overlay the solved physics on the schematic: voltage, power, temperature, magnetic field, energy flow, and the current-flow animation. Pick one view at a time."
-        style={{ ...toolButton(anyOn), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
-      >
-        <span aria-hidden style={{ color: active?.color ?? THEME.accentBlueSoft, fontSize: 13 }}>
-          {active?.icon ?? (flow ? '≫' : '◉')}
-        </span>
-        <span style={{ fontSize: 11 }}>
-          {active ? `Lens: ${active.label}` : flow ? 'Lens: Flow' : 'Lens'}
-        </span>
-        <span aria-hidden style={{ marginLeft: 'auto', fontSize: 9, color: THEME.textMuted }}>
-          {open ? '▾' : '▸'}
-        </span>
-      </button>
+      <HelpTip helpId="lens.menu">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          style={{ ...toolButton(anyOn), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+        >
+          <span aria-hidden style={{ color: active?.color ?? THEME.accentBlueSoft, fontSize: 13 }}>
+            {active?.icon ?? (flow ? '≫' : '◉')}
+          </span>
+          <span style={{ fontSize: 11 }}>
+            {active ? `Lens: ${active.label}` : flow ? 'Lens: Flow' : 'Lens'}
+          </span>
+          <span aria-hidden style={{ marginLeft: 'auto', fontSize: 9, color: THEME.textMuted }}>
+            {open ? '▾' : '▸'}
+          </span>
+        </button>
+      </HelpTip>
       {open ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
-          <button
-            type="button"
-            onClick={() => onLens('none')}
-            title="Turn the color lens off"
-            style={tab(lens === 'none')}
-          >
-            <span aria-hidden style={{ color: THEME.textMuted, fontSize: 13 }}>
-              ○
-            </span>
-            <span style={{ fontSize: 11 }}>Off</span>
-          </button>
-          {LENS_TABS.map((t) => (
-            <button
-              key={t.mode}
-              type="button"
-              onClick={() => onLens(lens === t.mode ? 'none' : t.mode)}
-              title={t.title}
-              style={tab(lens === t.mode)}
-            >
-              <span aria-hidden style={{ color: t.color, fontSize: 13 }}>
-                {t.icon}
+          <HelpTip helpId="lens.off">
+            <button type="button" onClick={() => onLens('none')} style={tab(lens === 'none')}>
+              <span aria-hidden style={{ color: THEME.textMuted, fontSize: 13 }}>
+                ○
               </span>
-              <span style={{ fontSize: 11 }}>{t.label}</span>
+              <span style={{ fontSize: 11 }}>Off</span>
             </button>
+          </HelpTip>
+          {LENS_TABS.map((t) => (
+            <HelpTip
+              key={t.mode}
+              helpId={
+                t.mode === 'voltage'
+                  ? 'lens.voltage'
+                  : t.mode === 'power'
+                    ? 'lens.power'
+                    : t.mode === 'temp'
+                      ? 'lens.temp'
+                      : t.mode === 'field'
+                        ? 'lens.field'
+                        : 'lens.energy'
+              }
+            >
+              <button
+                type="button"
+                onClick={() => onLens(lens === t.mode ? 'none' : t.mode)}
+                style={tab(lens === t.mode)}
+              >
+                <span aria-hidden style={{ color: t.color, fontSize: 13 }}>
+                  {t.icon}
+                </span>
+                <span style={{ fontSize: 11 }}>{t.label}</span>
+              </button>
+            </HelpTip>
           ))}
-          <button
-            type="button"
-            onClick={() => onFlow(!flow)}
-            title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size. Overlays on top of any color lens."
-            style={tab(flow)}
-          >
-            <span aria-hidden style={{ color: THEME.accentBlueSoft, fontSize: 13 }}>
-              ≫
-            </span>
-            <span style={{ fontSize: 11 }}>Flow{flow ? ' · on' : ''}</span>
-          </button>
+          <HelpTip helpId="lens.flow">
+            <button type="button" onClick={() => onFlow(!flow)} style={tab(flow)}>
+              <span aria-hidden style={{ color: THEME.accentBlueSoft, fontSize: 13 }}>
+                ≫
+              </span>
+              <span style={{ fontSize: 11 }}>Flow{flow ? ' · on' : ''}</span>
+            </button>
+          </HelpTip>
         </div>
       ) : null}
     </div>
@@ -748,64 +803,66 @@ function WireOptions({
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <button
-        type="button"
-        onClick={() => onWireStyle('line')}
-        title="Straight segments with sharp corners. Honest physics: at DC a corner itself doesn't change a wire's resistance — the route's LENGTH sets R = ρL/A, and the length follows exactly what you draw."
-        style={{
-          ...toolButton(wireStyle === 'line'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '4px 10px',
-        }}
-      >
-        <span aria-hidden style={{ fontSize: 12 }}>
-          ⌐
-        </span>
-        <span style={{ fontSize: 11 }}>Line</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onWireStyle('curve')}
-        title="The same route with rounded corners (fillets). Slightly shorter than sharp corners — it cuts the corner — so slightly less resistance, measured for real. Sharp-corner effects BEYOND length (radio-frequency reflections, high-voltage field crowding at points) are real but live at future solver stages; they are documented, not faked."
-        style={{
-          ...toolButton(wireStyle === 'curve'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '4px 10px',
-        }}
-      >
-        <span aria-hidden style={{ fontSize: 12 }}>
-          ◠
-        </span>
-        <span style={{ fontSize: 11 }}>Curve</span>
-      </button>
+      <HelpTip helpId="wire.straight">
+        <button
+          type="button"
+          onClick={() => onWireStyle('line')}
+          style={{
+            ...toolButton(wireStyle === 'line'),
+            flexDirection: 'row',
+            gap: 6,
+            padding: '4px 10px',
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 12 }}>
+            ⌐
+          </span>
+          <span style={{ fontSize: 11 }}>Line</span>
+        </button>
+      </HelpTip>
+      <HelpTip helpId="wire.curve">
+        <button
+          type="button"
+          onClick={() => onWireStyle('curve')}
+          style={{
+            ...toolButton(wireStyle === 'curve'),
+            flexDirection: 'row',
+            gap: 6,
+            padding: '4px 10px',
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 12 }}>
+            ◠
+          </span>
+          <span style={{ fontSize: 11 }}>Curve</span>
+        </button>
+      </HelpTip>
       {wireStyle === 'curve' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
           {CURVE_SIZES.map((size) => (
-            <button
-              key={size.label}
-              type="button"
-              onClick={() => onCurveRadius(size.radiusPx)}
-              title={`${size.hint} — the wire starts bending ${size.radiusPx} mm before each corner (clamped on short hops). A bigger sweep cuts more of the corner, so the wire is really shorter: less resistance, measured for real. Applies to wires drawn from now on; every wire keeps its own size.`}
-              style={{
-                ...toolButton(curveRadius === size.radiusPx),
-                flexDirection: 'row',
-                gap: 6,
-                padding: '3px 8px',
-              }}
-            >
-              {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative curve-size icon; the button's title carries the text */}
-              <svg aria-hidden width={22} height={14} viewBox="0 0 22 14">
-                <path
-                  d={`M 1 13 L ${11 - size.radiusPx / 7} 13 Q 11 13 11 ${13 - size.radiusPx / 7} L 11 1`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                />
-              </svg>
-              <span style={{ fontSize: 10 }}>{size.label}</span>
-            </button>
+            <HelpTip key={size.label} helpId="wire.curveSize" name={size.label}>
+              <button
+                type="button"
+                onClick={() => onCurveRadius(size.radiusPx)}
+                style={{
+                  ...toolButton(curveRadius === size.radiusPx),
+                  flexDirection: 'row',
+                  gap: 6,
+                  padding: '3px 8px',
+                }}
+              >
+                {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative curve-size icon; hover help names the control */}
+                <svg aria-hidden width={22} height={14} viewBox="0 0 22 14">
+                  <path
+                    d={`M 1 13 L ${11 - size.radiusPx / 7} 13 Q 11 13 11 ${13 - size.radiusPx / 7} L 11 1`}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                  />
+                </svg>
+                <span style={{ fontSize: 10 }}>{size.label}</span>
+              </button>
+            </HelpTip>
           ))}
         </div>
       ) : null}
@@ -820,26 +877,28 @@ function WireOptions({
         >
           Gauge
         </span>
-        <select
-          className="nodrag"
-          value={wireGauge}
-          onChange={(event) => onWireGauge(Number(event.target.value))}
-          title="The AWG gauge new wires are drawn at -- thinner wire is more resistance and heat. Each wire keeps its own gauge; change one later by selecting it."
-          style={{
-            background: THEME.surfaceInput,
-            border: `1px solid ${THEME.borderStrong}`,
-            color: THEME.textPrimary,
-            borderRadius: 3,
-            fontSize: 10,
-            padding: '2px 3px',
-          }}
-        >
-          {WIRE_GAUGES.map((g) => (
-            <option key={g.awg} value={g.awg}>
-              {g.awg} AWG
-            </option>
-          ))}
-        </select>
+        <HelpTip helpId="wire.gauge">
+          <select
+            className="nodrag"
+            aria-label="Wire gauge"
+            value={wireGauge}
+            onChange={(event) => onWireGauge(Number(event.target.value))}
+            style={{
+              background: THEME.surfaceInput,
+              border: `1px solid ${THEME.borderStrong}`,
+              color: THEME.textPrimary,
+              borderRadius: 3,
+              fontSize: 10,
+              padding: '2px 3px',
+            }}
+          >
+            {WIRE_GAUGES.map((g) => (
+              <option key={g.awg} value={g.awg}>
+                {g.awg} AWG
+              </option>
+            ))}
+          </select>
+        </HelpTip>
       </div>
     </div>
   )
@@ -872,64 +931,74 @@ function ConnectOptions({
   })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <button
-        type="button"
-        onClick={() => onConnectMode('single')}
-        title="Single — each wire routes the moment you pick its two endpoints. Best for one or a few connections."
-        style={{
-          ...toolButton(connectMode === 'single'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '4px 10px',
-        }}
-      >
-        <span aria-hidden style={{ fontSize: 12 }}>
-          •→•
-        </span>
-        <span style={{ fontSize: 11 }}>Single</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onConnectMode('batch')}
-        title="Batch — mark several start→end pairs first; nothing routes until you press Route all, so the auto-router can lay them all together for the cleanest, least-crossing result."
-        style={{
-          ...toolButton(connectMode === 'batch'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '4px 10px',
-        }}
-      >
-        <span aria-hidden style={{ fontSize: 12 }}>
-          ≣
-        </span>
-        <span style={{ fontSize: 11 }}>Batch</span>
-      </button>
+      <HelpTip helpId="connect.single">
+        <button
+          type="button"
+          onClick={() => onConnectMode('single')}
+          style={{
+            ...toolButton(connectMode === 'single'),
+            flexDirection: 'row',
+            gap: 6,
+            padding: '4px 10px',
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 12 }}>
+            •→•
+          </span>
+          <span style={{ fontSize: 11 }}>Single</span>
+        </button>
+      </HelpTip>
+      <HelpTip helpId="connect.batch">
+        <button
+          type="button"
+          onClick={() => onConnectMode('batch')}
+          style={{
+            ...toolButton(connectMode === 'batch'),
+            flexDirection: 'row',
+            gap: 6,
+            padding: '4px 10px',
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 12 }}>
+            ≣
+          </span>
+          <span style={{ fontSize: 11 }}>Batch</span>
+        </button>
+      </HelpTip>
       {connectMode === 'batch' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
-          <button
-            type="button"
-            onClick={onRouteQueue}
-            disabled={queueCount === 0}
-            title="Route every queued pair now — the auto-router lays them all in one pass."
-            style={queueButton(queueCount > 0)}
+          <HelpTip
+            helpId="connect.routeAll"
+            detail={queueCount === 0 ? 'Nothing is queued yet.' : undefined}
           >
-            <span aria-hidden style={{ color: THEME.accentBlue, fontSize: 12 }}>
-              ▶
-            </span>
-            <span style={{ fontSize: 11 }}>Route all ({queueCount})</span>
-          </button>
-          <button
-            type="button"
-            onClick={onClearQueue}
-            disabled={queueCount === 0}
-            title="Forget the queued pairs without routing them."
-            style={queueButton(queueCount > 0)}
+            <button
+              type="button"
+              onClick={onRouteQueue}
+              disabled={queueCount === 0}
+              style={queueButton(queueCount > 0)}
+            >
+              <span aria-hidden style={{ color: THEME.accentBlue, fontSize: 12 }}>
+                ▶
+              </span>
+              <span style={{ fontSize: 11 }}>Route all ({queueCount})</span>
+            </button>
+          </HelpTip>
+          <HelpTip
+            helpId="connect.clear"
+            detail={queueCount === 0 ? 'Nothing is queued yet.' : undefined}
           >
-            <span aria-hidden style={{ color: THEME.textMuted, fontSize: 12 }}>
-              ✕
-            </span>
-            <span style={{ fontSize: 11 }}>Clear</span>
-          </button>
+            <button
+              type="button"
+              onClick={onClearQueue}
+              disabled={queueCount === 0}
+              style={queueButton(queueCount > 0)}
+            >
+              <span aria-hidden style={{ color: THEME.textMuted, fontSize: 12 }}>
+                ✕
+              </span>
+              <span style={{ fontSize: 11 }}>Clear</span>
+            </button>
+          </HelpTip>
         </div>
       ) : null}
     </div>

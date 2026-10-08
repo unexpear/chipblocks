@@ -13,6 +13,7 @@ import {
 } from './simulation-test-runner.ts'
 import { type SavedSimulationTest, validateSimulationTests } from './simulation-test-suite.ts'
 import { simulationTestInputKey, simulationTestWorld } from './simulation-test-world.ts'
+import { HelpTip } from './tooltip.tsx'
 import { getUserPartsSnapshot, subscribeUserParts } from './user-parts.ts'
 
 const numeric = (value: string) => (value.trim() ? Number(value) : Number.NaN)
@@ -287,9 +288,11 @@ export function SimulationTestBench({
         borderRadius: 8,
       }}
     >
-      <button type="button" onClick={onClose} style={{ float: 'right' }}>
-        Close tests
-      </button>
+      <HelpTip helpId="tests.close">
+        <button type="button" onClick={onClose} style={{ float: 'right' }}>
+          Close tests
+        </button>
+      </HelpTip>
       <h2>Tests and preflight</h2>
       <p>
         Tests run on independent copies. They do not change your live circuit. Expected values need
@@ -309,19 +312,21 @@ export function SimulationTestBench({
         </label>
         <label>
           Analysis{' '}
-          <select
-            value={kind}
-            onChange={(event) => {
-              setKind(event.target.value as typeof kind)
-              setCoordinate(event.target.value === 'digital' ? '1' : '0')
-              setQuantity('voltage')
-            }}
-          >
-            <option value="dc">Steady voltage/current</option>
-            <option value="transient">Time response</option>
-            <option value="ac">Frequency response</option>
-            <option value="digital">Digital cycles</option>
-          </select>
+          <HelpTip helpId="tests.analysis">
+            <select
+              value={kind}
+              onChange={(event) => {
+                setKind(event.target.value as typeof kind)
+                setCoordinate(event.target.value === 'digital' ? '1' : '0')
+                setQuantity('voltage')
+              }}
+            >
+              <option value="dc">Steady voltage/current</option>
+              <option value="transient">Time response</option>
+              <option value="ac">Frequency response</option>
+              <option value="digital">Digital cycles</option>
+            </select>
+          </HelpTip>
         </label>
         {kind === 'digital' ? (
           <>
@@ -436,9 +441,11 @@ export function SimulationTestBench({
             placeholder="For example: divider formula, datasheet, or measured reference"
           />
         </label>
-        <button type="button" onClick={create}>
-          Save check
-        </button>
+        <HelpTip helpId="tests.save">
+          <button type="button" onClick={create}>
+            Save check
+          </button>
+        </HelpTip>
       </fieldset>
       {error ? <p role="alert">{error}</p> : null}
       {legacyTests.length > 0 ? (
@@ -448,17 +455,18 @@ export function SimulationTestBench({
             Copy a saved waveform into unified reports. The original block test stays unchanged.
           </p>
           {legacyTests.map(({ node, block, test }) => (
-            <button
-              key={JSON.stringify([node.id, test.id])}
-              type="button"
-              onClick={() => {
-                const imported = importBlockTest(block, node.id, test)
-                if (imported.ok) save(imported.test)
-                else setError(imported.reason)
-              }}
-            >
-              Import {node.id}: {test.name}
-            </button>
+            <HelpTip key={JSON.stringify([node.id, test.id])} helpId="tests.importWaveform">
+              <button
+                type="button"
+                onClick={() => {
+                  const imported = importBlockTest(block, node.id, test)
+                  if (imported.ok) save(imported.test)
+                  else setError(imported.reason)
+                }}
+              >
+                Import {node.id}: {test.name}
+              </button>
+            </HelpTip>
           ))}
         </fieldset>
       ) : null}
@@ -466,18 +474,24 @@ export function SimulationTestBench({
       {tests.map((test) => (
         <div key={test.id}>
           <strong>{test.name}</strong> — {test.run.kind}{' '}
-          <button type="button" onClick={() => execute(test)}>
-            Run {test.name}
-          </button>{' '}
-          <button type="button" onClick={() => setEditing(JSON.stringify(test, null, 2))}>
-            Advanced definition
-          </button>{' '}
-          <button
-            type="button"
-            onClick={() => onChange(tests.filter((item) => item.id !== test.id))}
-          >
-            Remove {test.name}
-          </button>
+          <HelpTip helpId="tests.run">
+            <button type="button" onClick={() => execute(test)}>
+              Run {test.name}
+            </button>
+          </HelpTip>{' '}
+          <HelpTip helpId="tests.advanced">
+            <button type="button" onClick={() => setEditing(JSON.stringify(test, null, 2))}>
+              Advanced definition
+            </button>
+          </HelpTip>{' '}
+          <HelpTip helpId="tests.remove">
+            <button
+              type="button"
+              onClick={() => onChange(tests.filter((item) => item.id !== test.id))}
+            >
+              Remove {test.name}
+            </button>
+          </HelpTip>
         </div>
       ))}
       {editing ? (
@@ -494,21 +508,25 @@ export function SimulationTestBench({
             onChange={(event) => setEditing(event.target.value)}
             style={{ width: '100%' }}
           />
-          <button
-            type="button"
-            onClick={() => {
-              try {
-                save(JSON.parse(editing))
-              } catch {
-                setError('Invalid test definition JSON.')
-              }
-            }}
-          >
-            Save definition
-          </button>
-          <button type="button" onClick={() => setEditing('')}>
-            Cancel edit
-          </button>
+          <HelpTip helpId="tests.saveDefinition">
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  save(JSON.parse(editing))
+                } catch {
+                  setError('Invalid test definition JSON.')
+                }
+              }}
+            >
+              Save definition
+            </button>
+          </HelpTip>
+          <HelpTip helpId="tests.cancelEdit">
+            <button type="button" onClick={() => setEditing('')}>
+              Cancel edit
+            </button>
+          </HelpTip>
         </fieldset>
       ) : null}
       {result ? (
@@ -530,13 +548,24 @@ export function SimulationTestBench({
             <div key={JSON.stringify(finding)}>
               <strong>{finding.code}</strong>: {finding.message}
               <p>{finding.repair}</p>
-              <button
-                type="button"
-                disabled={stale || finding.targets.length === 0}
-                onClick={() => select(finding.targets)}
+              <HelpTip
+                helpId="tests.selectAffected"
+                detail={
+                  stale
+                    ? 'The circuit or the check changed since this run. Run it again before selecting parts.'
+                    : finding.targets.length === 0
+                      ? 'This result does not point at a part on the sheet.'
+                      : undefined
+                }
               >
-                Select affected parts
-              </button>
+                <button
+                  type="button"
+                  disabled={stale || finding.targets.length === 0}
+                  onClick={() => select(finding.targets)}
+                >
+                  Select affected parts
+                </button>
+              </HelpTip>
             </div>
           ))}
           {result.run.reports.map((report) => (
@@ -564,13 +593,24 @@ export function SimulationTestBench({
               </p>
               <p>Formula: {report.formula || report.provenance?.formula || 'Unavailable'}</p>
               <p>Reference: {report.assertion.provenance.description}</p>
-              <button
-                type="button"
-                disabled={stale || report.targets.length === 0}
-                onClick={() => select(report.targets)}
+              <HelpTip
+                helpId="tests.selectAffected"
+                detail={
+                  stale
+                    ? 'The circuit or the check changed since this run. Run it again before selecting parts.'
+                    : report.targets.length === 0
+                      ? 'This result does not point at a part on the sheet.'
+                      : undefined
+                }
               >
-                Select affected parts
-              </button>
+                <button
+                  type="button"
+                  disabled={stale || report.targets.length === 0}
+                  onClick={() => select(report.targets)}
+                >
+                  Select affected parts
+                </button>
+              </HelpTip>
               <details>
                 <summary>Inputs and affected targets</summary>
                 <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>

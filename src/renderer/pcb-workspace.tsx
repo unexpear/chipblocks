@@ -7,6 +7,7 @@ import type { Stackup } from './pcb-stackup.ts'
 import { PcbView } from './pcb-view.tsx'
 import type { PlacedPadEdit } from './placement-pad-edit.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * Shared board-view pieces, used by BOTH the PCB dock panel and the full-size main-area board
@@ -38,67 +39,82 @@ export function PcbViewControls({
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       <span style={{ display: 'flex', gap: 0 }}>
         {modes.map((m, i) => (
-          <button
+          <HelpTip
             key={m}
-            type="button"
-            onClick={() => onMode(m)}
-            style={{
-              border: `1px solid ${THEME.borderStrong}`,
-              background: mode === m ? THEME.accentBlue : THEME.surfaceInput,
-              color: mode === m ? '#0b1220' : THEME.textSoft,
-              borderRadius: i === 0 ? '4px 0 0 4px' : i === modes.length - 1 ? '0 4px 4px 0' : '0',
-              borderLeft: i === 0 ? undefined : 'none',
-              fontSize: 11,
-              padding: '2px 10px',
-              cursor: 'pointer',
-            }}
+            helpId={
+              m === 'flat' ? 'pcb.viewFlat' : m === 'layers' ? 'pcb.viewLayers' : 'pcb.view3d'
+            }
           >
-            {m === 'flat' ? 'Flat' : m === 'layers' ? 'Layers' : '3D'}
-          </button>
+            <button
+              type="button"
+              onClick={() => onMode(m)}
+              style={{
+                border: `1px solid ${THEME.borderStrong}`,
+                background: mode === m ? THEME.accentBlue : THEME.surfaceInput,
+                color: mode === m ? '#0b1220' : THEME.textSoft,
+                borderRadius:
+                  i === 0 ? '4px 0 0 4px' : i === modes.length - 1 ? '0 4px 4px 0' : '0',
+                borderLeft: i === 0 ? undefined : 'none',
+                fontSize: 11,
+                padding: '2px 10px',
+                cursor: 'pointer',
+              }}
+            >
+              {m === 'flat' ? 'Flat' : m === 'layers' ? 'Layers' : '3D'}
+            </button>
+          </HelpTip>
         ))}
       </span>
       {mode === 'layers' && (
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button
-            type="button"
-            onClick={() => onStep(-1)}
-            disabled={activeLayerIndex <= 0}
-            title="Up a layer (toward the top of the stack)"
-            style={{
-              border: `1px solid ${THEME.borderStrong}`,
-              background: THEME.surfaceInput,
-              color: activeLayerIndex <= 0 ? THEME.textFaint : THEME.textSoft,
-              borderRadius: 4,
-              fontSize: 12,
-              padding: '0 8px',
-              cursor: activeLayerIndex <= 0 ? 'default' : 'pointer',
-            }}
+          <HelpTip
+            helpId="pcb.layerUp"
+            detail={activeLayerIndex <= 0 ? 'Already the top sheet.' : undefined}
           >
-            ▲
-          </button>
+            <button
+              type="button"
+              onClick={() => onStep(-1)}
+              disabled={activeLayerIndex <= 0}
+              style={{
+                border: `1px solid ${THEME.borderStrong}`,
+                background: THEME.surfaceInput,
+                color: activeLayerIndex <= 0 ? THEME.textFaint : THEME.textSoft,
+                borderRadius: 4,
+                fontSize: 12,
+                padding: '0 8px',
+                cursor: activeLayerIndex <= 0 ? 'default' : 'pointer',
+              }}
+            >
+              ▲
+            </button>
+          </HelpTip>
           <span style={{ fontSize: 11, color: THEME.textSoft, minWidth: 150 }}>
             {(() => {
               const l = layers[activeLayerIndex]
               return l ? layerLabel(l) : ''
             })()} · {Math.max(activeLayerIndex + 1, 1)}/{layers.length}
           </span>
-          <button
-            type="button"
-            onClick={() => onStep(1)}
-            disabled={activeLayerIndex >= layers.length - 1}
-            title="Down a layer (toward the bottom of the stack)"
-            style={{
-              border: `1px solid ${THEME.borderStrong}`,
-              background: THEME.surfaceInput,
-              color: activeLayerIndex >= layers.length - 1 ? THEME.textFaint : THEME.textSoft,
-              borderRadius: 4,
-              fontSize: 12,
-              padding: '0 8px',
-              cursor: activeLayerIndex >= layers.length - 1 ? 'default' : 'pointer',
-            }}
+          <HelpTip
+            helpId="pcb.layerDown"
+            detail={activeLayerIndex >= layers.length - 1 ? 'Already the bottom sheet.' : undefined}
           >
-            ▼
-          </button>
+            <button
+              type="button"
+              onClick={() => onStep(1)}
+              disabled={activeLayerIndex >= layers.length - 1}
+              style={{
+                border: `1px solid ${THEME.borderStrong}`,
+                background: THEME.surfaceInput,
+                color: activeLayerIndex >= layers.length - 1 ? THEME.textFaint : THEME.textSoft,
+                borderRadius: 4,
+                fontSize: 12,
+                padding: '0 8px',
+                cursor: activeLayerIndex >= layers.length - 1 ? 'default' : 'pointer',
+              }}
+            >
+              ▼
+            </button>
+          </HelpTip>
         </span>
       )}
     </div>
