@@ -1,0 +1,469 @@
+{
+  "name": "electron-content-packs",
+  "targets": ["electron"],
+  "title": "Content packs from a local file: signed install, badges, refusals, enable/disable, persistence, tamper detection, uninstall",
+  "covers": ["contentManager", "partPicker"],
+  "notes": "Packs are generated at test time with a throwaway ed25519 key held in memory (src/pack-fixture.mjs); no private key is written or committed. Only the local-file install path and the badges on master are exercised.",
+  "steps": [
+    {
+      "id": "make-packs",
+      "title": "Generate the fixtures; open Tools ▸ Plugin & Content Manager (fresh home: nothing installed)",
+      "screen": "contentManager",
+      "do": [
+        {
+          "makePack": {
+            "path": "{files}/uic_pack.json",
+            "id": "uic_pack",
+            "name": "UIC Pack"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/uic_badsig.json",
+            "id": "uic_badsig",
+            "name": "UIC Bad Signature",
+            "editAfterSigning": true
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/uic_gpl.json",
+            "id": "uic_gpl",
+            "name": "UIC GPL",
+            "license": "GPL-3.0"
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "none-installed"
+        }
+      ]
+    },
+    {
+      "id": "install-signed",
+      "title": "Install from local pack… → the signed pack installs ENABLED, signature valid but not pinned",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/uic_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "open",
+          "count": 1,
+          "titleRe": "^Install ChipBlocks content pack$",
+          "filtersInclude": ["ChipBlocks content pack"],
+          "id": "asked-which"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Installed \"UIC Pack\" v1\\.0\\.0 \\(MIT; declared content hash matched\\)\\. Enabled — 1 part\\(s\\), 0 footprint\\(s\\) registered",
+          "id": "status-installed"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "badge-enabled"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.packRow",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "Integrity: declared content hash matched\\..*cryptographically valid.*NOT in your trusted-publishers list",
+          "id": "trust-note"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/uic_pack/pack.json",
+          "matches": "\"UIC Pack Buffer\"",
+          "id": "pack-on-disk"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].id",
+              "eq": "uic_pack"
+            },
+            {
+              "at": "packs[0].enabled",
+              "eq": true
+            },
+            {
+              "at": "packs[0].integrityStatus",
+              "eq": "match"
+            },
+            {
+              "at": "packs[0].signatureStatus",
+              "eq": "valid-untrusted"
+            },
+            {
+              "at": "packs[0].contentHash",
+              "matches": "^[0-9a-f]{64}$"
+            }
+          ],
+          "id": "index-on-disk"
+        }
+      ]
+    },
+    {
+      "id": "bad-signature-refused",
+      "title": "A pack edited after signing is refused: the signature does not verify; nothing written",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/uic_badsig.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "signature does not verify over the canonical pack body.*Install refused",
+          "id": "status-refused"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "uic_badsig"
+          },
+          "eq": 0,
+          "id": "no-badge"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/uic_badsig",
+          "exists": false,
+          "id": "nothing-on-disk"
+        }
+      ]
+    },
+    {
+      "id": "copyleft-refused",
+      "title": "A GPL-3.0 pack is refused by the license gate",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/uic_gpl.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "License GPL-3\\.0 is refused",
+          "id": "status-refused"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "uic_gpl"
+          },
+          "eq": 0,
+          "id": "no-badge"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 1,
+          "id": "still-one-installed"
+        }
+      ]
+    },
+    {
+      "id": "disable",
+      "title": "Disable → DISABLED, written to the index",
+      "screen": "contentManager",
+      "do": {
+        "click": "contentManager.packButton",
+        "with": {
+          "pack": "uic_pack",
+          "button": "Disable"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "^DISABLED$",
+          "id": "badge-disabled"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Disabled \"uic_pack\" \\(pack stays on disk\\)\\.$",
+          "id": "status"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs[0].enabled",
+              "eq": false
+            }
+          ],
+          "id": "index-disabled"
+        }
+      ]
+    },
+    {
+      "id": "enable",
+      "title": "Enable → ENABLED",
+      "screen": "contentManager",
+      "do": {
+        "click": "contentManager.packButton",
+        "with": {
+          "pack": "uic_pack",
+          "button": "Enable"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "badge-enabled"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Enabled \"uic_pack\"\\.$",
+          "id": "status"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs[0].enabled",
+              "eq": true
+            }
+          ],
+          "id": "index-enabled"
+        }
+      ]
+    },
+    {
+      "id": "pack-part-in-picker",
+      "title": "The pack's part is offered by Add Part",
+      "screen": "partPicker",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplBlankCircuit"
+          }
+        },
+        {
+          "open": "partPicker"
+        },
+        {
+          "fill": "partPicker.search",
+          "value": "UIC Pack Buffer"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "text": "UIC Pack Buffer",
+            "exact": true,
+            "within": {
+              "role": "dialog",
+              "name": "Choose a part"
+            }
+          },
+          "id": "offered"
+        }
+      ]
+    },
+    {
+      "id": "survives-relaunch",
+      "title": "Quit and relaunch: still installed and ENABLED",
+      "screen": "contentManager",
+      "do": [
+        {
+          "press": "Escape"
+        },
+        {
+          "press": "Escape"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "badge-enabled"
+        }
+      ]
+    },
+    {
+      "id": "tampered-not-loaded",
+      "title": "Edit pack.json on disk, relaunch: ENABLED · NOT LOADED with the reason",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "editFile": {
+            "path": "{home}/.chipblocks/libraries/uic_pack/pack.json",
+            "replace": ["UIC Pack Buffer", "UIC Pack Buffer (edited)"]
+          }
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "^ENABLED · NOT LOADED$",
+          "id": "badge-not-loaded"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.packRow",
+          "with": {
+            "pack": "uic_pack"
+          },
+          "matches": "no longer matches the SHA-256 recorded at install",
+          "id": "row-says-why"
+        }
+      ]
+    },
+    {
+      "id": "uninstall",
+      "title": "Uninstall… → Confirm uninstall: row, folder and index entry gone",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.packButton",
+          "with": {
+            "pack": "uic_pack",
+            "button": "Uninstall…"
+          }
+        },
+        {
+          "click": "contentManager.packButton",
+          "with": {
+            "pack": "uic_pack",
+            "button": "Confirm uninstall"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "no-badges"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Uninstalled \"uic_pack\"\\.$",
+          "id": "status"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/uic_pack",
+          "exists": false,
+          "id": "folder-removed"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 0
+            }
+          ],
+          "id": "index-empty"
+        }
+      ]
+    }
+  ]
+}

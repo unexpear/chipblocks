@@ -1,0 +1,383 @@
+{
+  "name": "electron-save-open-projects",
+  "targets": ["electron"],
+  "title": "Save, Save As, My Projects list (scan + recent), open a saved project, reopen, refuse a broken file, survive a relaunch",
+  "covers": ["start", "workspace"],
+  "steps": [
+    {
+      "id": "new-project",
+      "title": "LED project named UicLed",
+      "screen": "workspace",
+      "do": {
+        "macro": "newNamedProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed",
+          "name": "UicLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        },
+        {
+          "type": "windowTitle",
+          "matches": "^ChipBlocks$",
+          "id": "untitled"
+        }
+      ]
+    },
+    {
+      "id": "first-save-asks",
+      "title": "File ▸ Save Circuit on a new project asks where (circuit.chipblocks) and writes it",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "save": "{home}/Documents/UicLed.chipblocks"
+          }
+        },
+        {
+          "menu": "File ▸ Save Circuit"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "defaultPathRe": "circuit\\.chipblocks$",
+          "filtersInclude": ["ChipBlocks Circuit"],
+          "id": "asked-where"
+        },
+        {
+          "type": "file",
+          "path": "{home}/Documents/UicLed.chipblocks",
+          "json": [
+            {
+              "at": "format",
+              "matches": "chipblocks"
+            },
+            {
+              "at": "nodes.length",
+              "eq": 4
+            },
+            {
+              "at": "wires.length",
+              "eq": 4
+            }
+          ],
+          "id": "file-written"
+        },
+        {
+          "type": "windowTitle",
+          "matches": "^ChipBlocks — UicLed\\.chipblocks$",
+          "id": "window-retitled"
+        }
+      ]
+    },
+    {
+      "id": "second-save-silent",
+      "title": "Add a resistor, Save again: no dialog, the same file now has 5 parts",
+      "screen": "workspace",
+      "do": [
+        {
+          "macro": "placePart",
+          "with": {
+            "query": "resistor"
+          }
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "workspace.status",
+            "matches": "— 5 components",
+            "id": "status-5c"
+          }
+        },
+        {
+          "menu": "File ▸ Save Circuit"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 0,
+          "id": "no-dialog"
+        },
+        {
+          "type": "file",
+          "path": "{home}/Documents/UicLed.chipblocks",
+          "json": [
+            {
+              "at": "nodes.length",
+              "eq": 5
+            }
+          ],
+          "id": "file-updated"
+        }
+      ]
+    },
+    {
+      "id": "save-as",
+      "title": "File ▸ Save Circuit As… always asks; the window follows the new file",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "save": "{home}/Desktop/UicLed-copy.chipblocks"
+          }
+        },
+        {
+          "menu": "File ▸ Save Circuit As"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "id": "asked"
+        },
+        {
+          "type": "file",
+          "path": "{home}/Desktop/UicLed-copy.chipblocks",
+          "json": [
+            {
+              "at": "nodes.length",
+              "eq": 5
+            }
+          ],
+          "id": "copy-written"
+        },
+        {
+          "type": "windowTitle",
+          "matches": "^ChipBlocks — UicLed-copy\\.chipblocks$",
+          "id": "window-follows"
+        }
+      ]
+    },
+    {
+      "id": "my-projects-lists-both",
+      "title": "My Projects lists both saved files (Documents + Desktop)",
+      "screen": "start",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myProjects"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "start.recentEntry",
+          "with": {
+            "pathRe": "Documents\\\\UicLed\\.chipblocks$"
+          },
+          "id": "documents-entry"
+        },
+        {
+          "type": "visible",
+          "sel": "start.recentEntry",
+          "with": {
+            "pathRe": "Desktop\\\\UicLed-copy\\.chipblocks$"
+          },
+          "id": "desktop-entry"
+        },
+        {
+          "type": "text",
+          "sel": "start.projectCount",
+          "matches": "· 2 projects\\b",
+          "id": "two-projects"
+        }
+      ]
+    },
+    {
+      "id": "open-saved-dialog",
+      "title": "Open a saved project… from somewhere the scan does not look: opens in a new tab",
+      "screen": "workspace",
+      "do": [
+        {
+          "writeFile": {
+            "path": "{files}/Elsewhere.chipblocks",
+            "copyFrom": "{home}/Documents/UicLed.chipblocks"
+          }
+        },
+        {
+          "dialog": {
+            "open": "{files}/Elsewhere.chipblocks"
+          }
+        },
+        {
+          "click": "start.openSaved"
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "open",
+          "count": 1,
+          "filtersInclude": ["ChipBlocks Circuit"],
+          "id": "asked-which"
+        },
+        {
+          "type": "visible",
+          "sel": "workspace.tab",
+          "with": {
+            "project": "Elsewhere"
+          },
+          "id": "tab-opened"
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 5 components",
+          "id": "status-5c"
+        }
+      ]
+    },
+    {
+      "id": "recent-remembers-opened",
+      "title": "My Projects now also lists the opened file",
+      "screen": "start",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myProjects"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "start.recentEntry",
+          "with": {
+            "pathRe": "files\\\\Elsewhere\\.chipblocks$"
+          },
+          "id": "elsewhere-entry"
+        },
+        {
+          "type": "text",
+          "sel": "start.projectCount",
+          "matches": "· 3 projects\\b",
+          "id": "three-projects"
+        }
+      ]
+    },
+    {
+      "id": "reopen-recent",
+      "title": "Click the Documents entry: it reopens in a new tab with its 5 parts",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "start.recentEntry",
+          "with": {
+            "pathRe": "Documents\\\\UicLed\\.chipblocks$"
+          }
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 5 components",
+          "id": "status-5c"
+        }
+      ]
+    },
+    {
+      "id": "broken-file-refused",
+      "title": "Opening a file that is not a circuit: main refuses it with an error box and no tab opens",
+      "screen": "start",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myProjects"
+        },
+        {
+          "writeFile": {
+            "path": "{files}/broken.chipblocks",
+            "text": "this is not a circuit"
+          }
+        },
+        {
+          "dialog": {
+            "open": "{files}/broken.chipblocks"
+          }
+        },
+        {
+          "click": "start.openSaved"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "errorBox",
+          "count": 1,
+          "titleRe": "^Could not open project$",
+          "id": "error-box"
+        },
+        {
+          "type": "visible",
+          "sel": "start.openSaved",
+          "id": "still-on-launcher"
+        },
+        {
+          "type": "absent",
+          "sel": "workspace.tab",
+          "with": {
+            "project": "broken"
+          },
+          "id": "no-tab"
+        }
+      ]
+    },
+    {
+      "id": "list-survives-relaunch",
+      "title": "Quit and relaunch: My Projects still lists all three",
+      "screen": "start",
+      "do": [
+        {
+          "relaunch": true
+        },
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myProjects"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "start.projectCount",
+          "matches": "· 3 projects\\b",
+          "id": "three-projects"
+        },
+        {
+          "type": "visible",
+          "sel": "start.recentEntry",
+          "with": {
+            "pathRe": "Documents\\\\UicLed\\.chipblocks$"
+          },
+          "id": "documents-entry"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,496 @@
+{
+  "name": "electron-native-menus",
+  "targets": ["electron"],
+  "title": "Real Electron app: sandboxed start, the native menu bar, and menu items that reach the renderer",
+  "covers": ["start", "workspace", "contentManager", "shortcuts"],
+  "notes": "Menu items are clicked through Menu.getApplicationMenu() in the main process (a disabled item is refused, as for a user).",
+  "steps": [
+    {
+      "id": "launch",
+      "title": "Starts on the project browser with the desktop bridge; the menu bar has File, Edit, View, Settings, Tools, Shortcuts",
+      "screen": "start",
+      "do": [
+        {
+          "waitReady": "start"
+        }
+      ],
+      "expect": [
+        {
+          "type": "windowTitle",
+          "matches": "^ChipBlocks$",
+          "id": "window-title"
+        },
+        {
+          "type": "menuItem",
+          "path": "File",
+          "id": "file-menu",
+          "submenuIncludes": [
+            "Open Circuit",
+            "Import Netlist",
+            "Read an FPGA Chip File",
+            "Save Circuit",
+            "Save Circuit As",
+            "Save as Template",
+            "Export Netlist",
+            "Export Verilog",
+            "Compile to iCE40",
+            "Exit"
+          ]
+        },
+        {
+          "type": "menuItem",
+          "path": "Edit",
+          "id": "edit-menu",
+          "submenuIncludes": [
+            "Undo",
+            "Redo",
+            "Cut Parts",
+            "Copy Parts",
+            "Paste Parts",
+            "Select All"
+          ]
+        },
+        {
+          "type": "menuItem",
+          "path": "View",
+          "id": "view-menu",
+          "submenuIncludes": [
+            "Reload",
+            "Developer Tools",
+            "Zoom In",
+            "Zoom Out",
+            "Actual Size",
+            "Full Screen",
+            "Minimize",
+            "Close Window"
+          ]
+        },
+        {
+          "type": "menuItem",
+          "path": "Settings",
+          "id": "settings-menu",
+          "submenuIncludes": ["Theme", "Symbol Style", "Grid color"]
+        },
+        {
+          "type": "menuItem",
+          "path": "Settings ▸ Theme",
+          "id": "theme-list",
+          "submenuIncludes": ["Midnight", "Daylight", "Slate", "Dusk", "Forest"],
+          "why": "The renderer registers its theme list with main at start-up."
+        },
+        {
+          "type": "menuItem",
+          "path": "Tools",
+          "id": "tools-menu",
+          "submenuIncludes": ["Plugin & Content Manager"]
+        },
+        {
+          "type": "menuItem",
+          "path": "File ▸ Save Circuit",
+          "id": "save-accel",
+          "accelerator": "Ctrl+S"
+        },
+        {
+          "type": "menuItem",
+          "path": "Shortcuts ▸ View / Change Shortcuts",
+          "id": "shortcuts-accel",
+          "accelerator": "Ctrl+K"
+        }
+      ]
+    },
+    {
+      "id": "canvas-items-grey-on-launcher",
+      "title": "No canvas on screen: Open Circuit, Import Netlist and Read an FPGA Chip File are greyed out",
+      "screen": "start",
+      "expect": [
+        {
+          "type": "menuItem",
+          "path": "File ▸ Open Circuit",
+          "id": "open-disabled",
+          "enabled": false
+        },
+        {
+          "type": "menuItem",
+          "path": "File ▸ Import Netlist",
+          "id": "import-disabled",
+          "enabled": false
+        },
+        {
+          "type": "menuItem",
+          "path": "File ▸ Read an FPGA Chip File",
+          "id": "fpga-disabled",
+          "enabled": false
+        }
+      ]
+    },
+    {
+      "id": "tools-content-manager",
+      "title": "Tools ▸ Plugin & Content Manager opens the dialog on the launcher (nothing installed in a fresh home)",
+      "screen": "contentManager",
+      "do": [
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "no-installed-badges"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "textRe": "^PLANNED · NOT INSTALLED$",
+            "all": true
+          },
+          "eq": 6,
+          "id": "six-catalog-rows"
+        }
+      ]
+    },
+    {
+      "id": "close-content-manager",
+      "title": "Close it",
+      "screen": "start",
+      "do": {
+        "click": "contentManager.close"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "role": "dialog",
+            "name": "Plugin and Content Manager"
+          },
+          "id": "closed"
+        }
+      ]
+    },
+    {
+      "id": "shortcuts-menu",
+      "title": "Shortcuts ▸ View / Change Shortcuts… opens the panel with the default keys",
+      "screen": "shortcuts",
+      "do": [
+        {
+          "menu": "Shortcuts ▸ View / Change Shortcuts"
+        },
+        {
+          "waitReady": "shortcuts"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+          },
+          "name": "data-binding",
+          "matches": "^Ctrl\\+K$",
+          "id": "panel-ctrl-k"
+        }
+      ]
+    },
+    {
+      "id": "close-shortcuts",
+      "title": "Close it",
+      "screen": "start",
+      "do": {
+        "click": "shortcuts.close"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": "shortcuts.reset",
+          "id": "closed"
+        }
+      ]
+    },
+    {
+      "id": "led-project",
+      "title": "LED project: the three canvas-loading items light up",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        },
+        {
+          "type": "menuItem",
+          "path": "File ▸ Open Circuit",
+          "id": "open-enabled",
+          "enabled": true
+        },
+        {
+          "type": "menuItem",
+          "path": "File ▸ Import Netlist",
+          "id": "import-enabled",
+          "enabled": true
+        },
+        {
+          "type": "menuItem",
+          "path": "File ▸ Read an FPGA Chip File",
+          "id": "fpga-enabled",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "edit-select-copy-paste",
+      "title": "Edit ▸ Select All, Copy Parts, Paste Parts: the pasted copy doubles the parts",
+      "screen": "workspace",
+      "do": [
+        {
+          "mouseClickAt": {
+            "sel": "workspace.canvasArea",
+            "dx": 60,
+            "dy": 60
+          }
+        },
+        {
+          "menu": "Edit ▸ Select All"
+        },
+        {
+          "menu": "Edit ▸ Copy Parts"
+        },
+        {
+          "menu": "Edit ▸ Paste Parts"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 8 components",
+          "id": "status-8c"
+        }
+      ]
+    },
+    {
+      "id": "edit-undo",
+      "title": "Edit ▸ Undo takes the paste back",
+      "screen": "workspace",
+      "do": {
+        "menu": "Edit ▸ Undo"
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-back-to-4c"
+        }
+      ]
+    },
+    {
+      "id": "edit-redo",
+      "title": "Edit ▸ Redo puts it back; Undo again",
+      "screen": "workspace",
+      "do": [
+        {
+          "menu": "Edit ▸ Redo"
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "workspace.status",
+            "matches": "— 8 components",
+            "id": "redo-8c"
+          }
+        },
+        {
+          "menu": "Edit ▸ Undo"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-again"
+        }
+      ]
+    },
+    {
+      "id": "export-netlist",
+      "title": "File ▸ Export Netlist… asks where (circuit.cir) and writes the SPICE netlist there",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "save": "{out}/led.cir"
+          }
+        },
+        {
+          "menu": "File ▸ Export Netlist"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "defaultPathRe": "circuit\\.cir$",
+          "filtersInclude": ["Schematic / netlist"],
+          "id": "asked-where"
+        },
+        {
+          "type": "file",
+          "path": "{out}/led.cir",
+          "minBytes": 20,
+          "matches": "^R\\S*\\s",
+          "flags": "m",
+          "id": "netlist-written",
+          "why": "A resistor element line."
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^Exported \\d+ parts? to a netlist"
+          },
+          "id": "report-card"
+        }
+      ]
+    },
+    {
+      "id": "dismiss-export-report",
+      "title": "Dismiss closes the export report card",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.dismissReport"
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Exported \\d+ parts? to a netlist"
+          },
+          "id": "card-gone"
+        }
+      ]
+    },
+    {
+      "id": "export-netlist-cancelled",
+      "title": "Cancelling the save dialog writes nothing and does not report an export",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "cancel": "save"
+          }
+        },
+        {
+          "menu": "File ▸ Export Netlist"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "id": "asked-where"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Exported \\d+ parts? to a netlist"
+          },
+          "id": "no-export-claim",
+          "why": "Nothing was written, so the card must not say Exported."
+        }
+      ],
+      "knownIssue": "export-report-ignores-cancel",
+      "continueOnFail": true,
+      "why": "App bug, recorded not fixed: src/renderer/App.tsx onExportNetlistRequest calls `void bridge.saveNetlistData?.(netlist)` and then setNetlistReport({kind:'export',…}) without awaiting the result, while electron/main.ts file:save-netlist returns {ok:false} on a cancelled dialog. So a cancelled export still shows “Exported N parts to a netlist”. Verilog/GDS/LEF/DEF/Liberty/OASIS use the same pattern (not exercised here)."
+    },
+    {
+      "id": "theme-slate",
+      "title": "Settings ▸ Theme ▸ Slate re-themes the window",
+      "screen": "workspace",
+      "do": {
+        "menu": "Settings ▸ Theme ▸ Slate"
+      },
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "html"
+          },
+          "name": "style",
+          "matches": "--surfaceBase:\\s*#0c1422",
+          "id": "slate-palette"
+        },
+        {
+          "type": "menuItem",
+          "path": "Settings ▸ Theme ▸ Slate",
+          "id": "slate-checked",
+          "checked": true
+        }
+      ]
+    },
+    {
+      "id": "theme-survives-relaunch",
+      "title": "Quit and relaunch on the same sandbox: still Slate (localStorage in userData)",
+      "screen": "start",
+      "do": [
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "html"
+          },
+          "name": "style",
+          "matches": "--surfaceBase:\\s*#0c1422",
+          "id": "still-slate"
+        },
+        {
+          "type": "menuItem",
+          "path": "Settings ▸ Theme ▸ Slate",
+          "id": "slate-still-checked",
+          "checked": true
+        }
+      ]
+    },
+    {
+      "id": "theme-back",
+      "title": "Settings ▸ Theme ▸ Midnight restores the default",
+      "screen": "start",
+      "do": {
+        "menu": "Settings ▸ Theme ▸ Midnight"
+      },
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "html"
+          },
+          "name": "style",
+          "matches": "--surfaceBase:\\s*#141417",
+          "id": "midnight-palette"
+        }
+      ]
+    }
+  ]
+}
