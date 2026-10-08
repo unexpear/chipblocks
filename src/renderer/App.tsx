@@ -11734,7 +11734,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                         }
                         setGerberCheck(manufacturingFileTexts(assembleFabInputs()).files)
                       }}
-                      title="Plot the Gerber and drill files this Export ZIP would write. plots ChipBlocks output only."
+                      title="Plot the Gerber and drill files this Export ZIP would write, in one shared frame. ChipBlocks output only."
                       style={{
                         border: `1px solid ${THEME.borderStrong}`,
                         background: gerberCheck !== null ? THEME.surfaceActive : THEME.surfaceInput,

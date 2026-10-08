@@ -64,6 +64,7 @@ describe('ChipBlocks Gerber dialect, Y flipped back to board-down', () => {
     expect(gerber).toContain('X9175000Y-10000000D03*')
     const plot = parseChipblocksPlot(gerber)
     expect(plot.kind).toBe('gerber')
+    expect(plot.complete).toBe(true)
     expect(plot.warnings).toEqual([])
     expect(plot.fileFunction).toBe('Copper,L1,Top')
     const flash = plot.draws.find(
@@ -117,8 +118,147 @@ describe('ChipBlocks Gerber dialect, Y flipped back to board-down', () => {
     expect(parseChipblocksPlot('X9175000Y-10000000D03*\n').draws).toEqual([])
     const bare = '%ADD10C,1.000000*%\nD10*\nX9175000Y-10000000D03*\n'
     const plot = parseChipblocksPlot(bare)
+    expect(plot.complete).toBe(false)
     expect(plot.draws).toEqual([])
     expect(plot.warnings.length).toBeGreaterThan(0)
+  })
+
+  test('an arc is not drawn, and the stroke after it is not attached to the old point', () => {
+    const plot = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%ADD10C,0.100000*%',
+        'D10*',
+        'X0Y0D02*',
+        'G03X10000000Y0I5000000J0D01*',
+        'X20000000Y0D01*',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(plot.complete).toBe(false)
+    expect(plot.draws).toEqual([])
+    expect(plot.warnings.join(' ')).toMatch(/arc/i)
+  })
+
+  test('a modal arc (G03* then a plain D01) is not stroked as a straight line', () => {
+    const plot = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%ADD10C,0.100000*%',
+        'D10*',
+        'X0Y0D02*',
+        'G03*',
+        'X10000000Y0D01*',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(plot.complete).toBe(false)
+    expect(plot.draws).toEqual([])
+  })
+
+  test('a region contour is not stroked with the aperture', () => {
+    const plot = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%ADD10C,0.100000*%',
+        'D10*',
+        'G36*',
+        'X0Y0D02*',
+        'X10000000Y0D01*',
+        'X10000000Y-10000000D01*',
+        'X0Y-10000000D01*',
+        'X0Y0D01*',
+        'G37*',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(plot.complete).toBe(false)
+    expect(plot.draws).toEqual([])
+    expect(plot.warnings.join(' ')).toMatch(/region/i)
+  })
+
+  test('clear polarity and step-and-repeat and mirror are not drawn as ordinary ink', () => {
+    const clear = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%LPC*%',
+        '%ADD10C,1.000000*%',
+        'D10*',
+        'X0Y0D03*',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(clear.draws).toEqual([])
+    expect(clear.warnings.join(' ')).toMatch(/clear|polarity/i)
+
+    const repeat = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%ADD10C,1.000000*%',
+        '%SRX2Y2I5.0J5.0*%',
+        'D10*',
+        'X0Y0D03*',
+        '%SR*%',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(repeat.draws).toEqual([])
+    expect(repeat.warnings.join(' ')).toMatch(/step-and-repeat/i)
+
+    const mirror = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%MIA1B0*%',
+        '%ADD10C,1.000000*%',
+        'D10*',
+        'X10000000Y0D03*',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(mirror.draws).toEqual([])
+    expect(mirror.warnings.join(' ')).toMatch(/mirror/i)
+  })
+
+  test('an aperture hole is not filled in as solid copper', () => {
+    const rect = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%ADD10R,1.600000X1.600000X0.800000*%',
+        'D10*',
+        'X0Y0D03*',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(rect.draws).toEqual([])
+    expect(rect.warnings.join(' ')).toMatch(/hole/i)
+
+    const circle = parseChipblocksPlot(
+      [
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%ADD10C,1.600000X0.800000*%',
+        'D10*',
+        'X0Y0D03*',
+        'M02*',
+        '',
+      ].join('\n'),
+    )
+    expect(circle.draws).toEqual([])
+    expect(circle.warnings.join(' ')).toMatch(/hole/i)
   })
 })
 
@@ -128,11 +268,21 @@ describe('ChipBlocks Excellon, Y flipped back to board-down', () => {
     expect(drill).toContain('X5.0Y-5.0')
     const plot = parseChipblocksPlot(drill)
     expect(plot.kind).toBe('excellon')
+    expect(plot.complete).toBe(true)
     expect(plot.warnings).toEqual([])
     expect(plot.fileFunction).toBe('Plated,1,2,PTH')
     const hit = plot.draws.find((d) => d.op === 'drill' && d.at.x === 5 && d.at.y === 5)
     expect(hit).toEqual({ op: 'drill', at: { x: 5, y: 5 }, diameterMm: 0.8 })
     expect(plot.draws.filter((d) => d.op === 'drill')).toHaveLength(12)
+  })
+
+  test('incremental drill hits are not read as absolute coordinates', () => {
+    const plot = parseChipblocksPlot(
+      ['M48', 'METRIC', 'T1C0.800', '%', 'G91', 'X1.0Y-1.0', 'M30', ''].join('\n'),
+    )
+    expect(plot.complete).toBe(false)
+    expect(plot.draws).toEqual([])
+    expect(plot.warnings.join(' ')).toMatch(/incremental/i)
   })
 })
 
