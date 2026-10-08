@@ -14,6 +14,7 @@ import type { Point } from './net-edge.tsx'
 import { type Box, type Dir, orthogonalRoute, routesOverlap } from './orthogonal-route.ts'
 import { nodeTypes } from './symbols.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { findWireCrossings, netColor, type WireMeta } from './wire-crossings.tsx'
 
 /**
@@ -345,14 +346,11 @@ export function BlockViewer({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         <div style={{ fontSize: 14, fontWeight: 700 }}>{current.name} — inside the block</div>
         {stack.length === 1 ? (
-          <button
-            type="button"
-            onClick={onUngroup}
-            title="Explode the block back into its parts on the canvas (edit, then group again)"
-            style={viewerButton(light)}
-          >
-            ⧉ Ungroup
-          </button>
+          <HelpTip helpId="viewer.ungroup">
+            <button type="button" onClick={onUngroup} style={viewerButton(light)}>
+              ⧉ Ungroup
+            </button>
+          </HelpTip>
         ) : null}
         <button
           type="button"
@@ -381,19 +379,24 @@ export function BlockViewer({
           </span>
         ) : (
           stack.map((b, i) => (
-            <button
+            <HelpTip
               key={stack
                 .slice(0, i + 1)
                 .map((x) => x.name)
                 .join('>')}
-              type="button"
-              onClick={() => setStack((s) => s.slice(0, i + 1))}
-              title={i < stack.length - 1 ? `Back to ${b.name}` : b.name}
-              style={crumbButton(light, i === stack.length - 1)}
+              helpId="viewer.crumb"
+              name={b.name}
+              detail={i < stack.length - 1 ? `Back to ${b.name}.` : undefined}
             >
-              {i > 0 ? '▸ ' : ''}
-              {b.name}
-            </button>
+              <button
+                type="button"
+                onClick={() => setStack((s) => s.slice(0, i + 1))}
+                style={crumbButton(light, i === stack.length - 1)}
+              >
+                {i > 0 ? '▸ ' : ''}
+                {b.name}
+              </button>
+            </HelpTip>
           ))
         )}
       </div>

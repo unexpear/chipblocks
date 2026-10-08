@@ -11,6 +11,7 @@
 
 import { type JSX, useEffect, useMemo, useRef, useState } from 'react'
 import type { BlockData } from './blocks.ts'
+import { HelpTip } from './tooltip.tsx'
 import { createDebugSession, type DebugSession, type DebugSignal } from './verilog-debug.ts'
 import { importVerilog } from './verilog-import.ts'
 
@@ -184,19 +185,20 @@ function SignalRow({
   })
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-      <span
-        style={{
-          width: 92,
-          color: 'var(--textSoft)',
-          fontFamily: 'monospace',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-        title={sig.name}
-      >
-        {sig.name}
-      </span>
+      <HelpTip helpId="verilog.signal" name={sig.name}>
+        <span
+          style={{
+            width: 92,
+            color: 'var(--textSoft)',
+            fontFamily: 'monospace',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {sig.name}
+        </span>
+      </HelpTip>
       <div style={{ display: 'flex', gap: 2 }}>
         {[...sig.bits].reverse().map((id) => {
           const hi = read(id) === true
@@ -453,6 +455,7 @@ export function VerilogEditor({
         <button
           type="button"
           onClick={onClose}
+          aria-label="Close Verilog"
           style={{
             background: 'transparent',
             border: 0,
@@ -727,43 +730,62 @@ export function VerilogEditor({
           )}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button
-            type="button"
-            disabled={!canDebug}
-            onClick={dbg ? () => setDbg(null) : startDebug}
-            title="Step the synthesized gates one clock at a time and watch every signal"
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: '1px solid var(--borderStrong)',
-              background: dbg ? 'var(--accentPurple)' : 'var(--surfaceRaised)',
-              color: canDebug ? (dbg ? 'var(--white)' : 'var(--textPrimary)') : 'var(--textFaint)',
-              cursor: canDebug ? 'pointer' : 'default',
-              fontSize: 12,
-              fontWeight: 600,
-            }}
+          <HelpTip
+            helpId="verilog.debug"
+            detail={
+              canDebug ? undefined : (diag.warnings[0] ?? 'Write a module that synthesizes first.')
+            }
           >
-            {dbg ? 'Debugging…' : '🐞 Debug'}
-          </button>
-          <button
-            type="button"
-            disabled={diag.block === null}
-            onClick={() => {
-              if (diag.block) onSynthesize(diag.block, diag.moduleName ?? 'module')
-            }}
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: '1px solid var(--borderStrong)',
-              background: diag.block ? 'var(--accentBlueDeep)' : 'var(--surfaceRaised)',
-              color: diag.block ? 'var(--white)' : 'var(--textFaint)',
-              cursor: diag.block ? 'pointer' : 'default',
-              fontSize: 12,
-              fontWeight: 600,
-            }}
+            <button
+              type="button"
+              disabled={!canDebug}
+              onClick={dbg ? () => setDbg(null) : startDebug}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 6,
+                border: '1px solid var(--borderStrong)',
+                background: dbg ? 'var(--accentPurple)' : 'var(--surfaceRaised)',
+                color: canDebug
+                  ? dbg
+                    ? 'var(--white)'
+                    : 'var(--textPrimary)'
+                  : 'var(--textFaint)',
+                cursor: canDebug ? 'pointer' : 'default',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              {dbg ? 'Debugging…' : '🐞 Debug'}
+            </button>
+          </HelpTip>
+          <HelpTip
+            helpId="verilog.synthesize"
+            detail={
+              diag.block === null
+                ? (diag.warnings[0] ?? 'Write a module that synthesizes first.')
+                : undefined
+            }
           >
-            Synthesize → canvas
-          </button>
+            <button
+              type="button"
+              disabled={diag.block === null}
+              onClick={() => {
+                if (diag.block) onSynthesize(diag.block, diag.moduleName ?? 'module')
+              }}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 6,
+                border: '1px solid var(--borderStrong)',
+                background: diag.block ? 'var(--accentBlueDeep)' : 'var(--surfaceRaised)',
+                color: diag.block ? 'var(--white)' : 'var(--textFaint)',
+                cursor: diag.block ? 'pointer' : 'default',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              Synthesize → canvas
+            </button>
+          </HelpTip>
         </div>
       </footer>
     </div>

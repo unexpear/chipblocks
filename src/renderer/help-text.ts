@@ -727,6 +727,672 @@ export const HELP: Record<string, HelpEntry> = {
     name: 'Reset all',
     summary: 'Put every shortcut back to the keys the app shipped with.',
   },
+  'meter.dc': {
+    name: 'DC volts',
+    summary: 'The steady voltage between the probes.',
+    detail: 'Both probes on one part also read the current through it.',
+  },
+  'meter.ac': {
+    name: 'AC volts',
+    summary: 'The changing part of the voltage, as true RMS, from a time-domain run.',
+    detail: 'Steady DC reads about zero. Frequency is counted from the wave’s own crossings.',
+  },
+  'meter.ohms': {
+    name: 'Ohms',
+    summary: 'Resistance between the probes, sources off, with a small test current.',
+    detail: 'Parallel paths count, as on a real meter. Under 20 Ω shows continuity.',
+  },
+  'meter.diode': {
+    name: 'Diode test',
+    summary: 'Pushes a small test current from red to black and reads the forward drop.',
+    detail: 'OL means nothing conducted: reversed, open, or an LED this test cannot light.',
+  },
+  'meter.cap': {
+    name: 'Capacitance',
+    summary: 'Charges the powered-off network and reads capacitance from that charge.',
+    detail: 'A resistor in parallel makes the reading impossible, and the meter says so.',
+  },
+  'meter.amps': {
+    name: 'DC amps',
+    summary: 'Inserts the meter in series, a shunt behind a fuse, so current flows through it.',
+    detail: 'Open the circuit and bridge the gap. Probes across a live source blow the fuse.',
+  },
+  'meter.temp': {
+    name: 'Temperature',
+    summary: 'Touch a terminal and read the junction temperature the solver computed.',
+    detail: 'A part with no thermal rating reads the ambient temperature.',
+  },
+  'meter.rel': {
+    name: 'REL',
+    summary: 'Store this resistance as zero, then measure relative to it.',
+    detail: 'Touch the probes together first so the leads’ own resistance is the zero.',
+  },
+  'meter.minmax': {
+    name: 'MIN/MAX',
+    summary: 'Record the lowest, highest, and average voltage over the settled record.',
+    detail: 'On steady DC the three numbers agree.',
+  },
+  'meter.jackMa': {
+    name: 'mA jack',
+    summary: 'The low-current jack: a 1.8 Ω shunt, fused at 440 mA.',
+    detail: 'Fine readings, and easy to blow. A cross means this jack’s fuse is open.',
+  },
+  'meter.jackAmp': {
+    name: '10 A jack',
+    summary: 'The high-current jack: a 0.03 Ω shunt, fused at 11 A.',
+    detail: 'The burden is tiny. A cross means this jack’s fuse is open.',
+  },
+  'meter.fuse': {
+    name: 'Replace fuse',
+    summary: 'Fit a new fuse in the jack that just blew.',
+  },
+  'meter.hold': {
+    name: 'HOLD',
+    summary: 'Freeze this reading on the display. The measurement keeps running underneath.',
+  },
+  'scope.timebase': {
+    name: 'Timebase',
+    summary: 'How much time one grid square spans. Changing it captures the wave again.',
+  },
+  'scope.cursors': {
+    name: 'Cursors',
+    summary: 'Two time lines. The strip reads the time and voltage between them.',
+    detail: 'Set them one cycle apart and 1/Δt is the frequency.',
+  },
+  'scope.measure': {
+    name: 'Measure',
+    summary: 'Live peak, average, RMS, frequency, period, duty, and rise and fall times.',
+    detail: 'A dash means that number cannot be read from what is on screen.',
+  },
+  'scope.fft': {
+    name: 'FFT',
+    summary: 'The frequencies in the trigger channel, plotted under the time view.',
+    detail: 'A sine is one spike. A square adds shrinking odd harmonics.',
+  },
+  'scope.db': {
+    name: 'dB',
+    summary: 'Show each frequency bin on a log scale, so small harmonics stay visible.',
+  },
+  'scope.triggerSource': {
+    name: 'Trigger source',
+    summary: 'Which signal the trigger watches. Auto picks the one swinging the most.',
+  },
+  'scope.triggerEdge': {
+    name: 'Trigger edge',
+    summary: 'Fire when the signal crosses the level going up, or going down.',
+  },
+  'scope.triggerLevel': {
+    name: 'Trigger level',
+    summary: 'The sweep lines up where the signal crosses this level.',
+    detail: 'Auto uses the middle of the swing.',
+  },
+  'scope.triggerMode': {
+    name: 'Trigger mode',
+    summary: 'Auto draws even with no trigger. Normal waits. Single holds one sweep.',
+  },
+  'scope.rearm': {
+    name: 'Re-arm',
+    summary: 'Drop the held sweep and wait for the next trigger.',
+  },
+  'scope.run': {
+    name: 'Run / stop',
+    summary: 'Stop freezes the picture. Run lets it follow the circuit again.',
+  },
+  'scope.math': {
+    name: 'Math',
+    summary: 'A−B is the voltage between two probes. A×B of volts and amps is watts.',
+  },
+  'scope.mathA': {
+    name: 'Channel A',
+    summary: 'Math’s first trace, and the horizontal axis in XY.',
+  },
+  'scope.mathB': {
+    name: 'Channel B',
+    summary: 'Math’s second trace, and the vertical axis in XY.',
+  },
+  'scope.xy': {
+    name: 'XY',
+    summary: 'Plot A against B, with time left off the axes.',
+    detail: 'In phase is a line. A phase shift opens it into an ellipse. Click again for time.',
+  },
+  'scope.persist': {
+    name: 'Persistence',
+    summary: 'Keep faded copies of the last few sweeps under the live trace.',
+    detail: 'The circuit re-runs the same way, so the ghosts show what an edit changed.',
+  },
+  'scope.ref': {
+    name: 'Reference',
+    summary: 'Keep this sweep on screen, dashed, while you edit. Click again to clear it.',
+  },
+  'scope.csv': {
+    name: 'CSV',
+    summary: 'Download the sweep: time from the trigger, then each channel and the math trace.',
+  },
+  'scope.familySource': {
+    name: 'Stepped source',
+    summary: 'Which source steps between runs. Everything else stays as drawn.',
+  },
+  'scope.familyStart': {
+    name: 'First step',
+    summary: 'The stepped source’s first voltage.',
+  },
+  'scope.familyStop': {
+    name: 'Last step',
+    summary: 'The stepped source’s last voltage.',
+  },
+  'scope.familySteps': {
+    name: 'Steps',
+    summary: 'How many steps, from 2 to 8, with the ends included.',
+  },
+  'scope.familyRun': {
+    name: 'Trace family',
+    summary: 'Run once per step and overlay the paths. The picture stays until you clear it.',
+    detail: 'A step that does not solve is named and skipped.',
+  },
+  'scope.familyClear': {
+    name: 'Clear family',
+    summary: 'Drop the traced family and go back to the live XY path.',
+  },
+  'scope.phase': {
+    name: 'Phase',
+    summary: 'This channel’s phase against channel 1, from their rising mid-level crossings.',
+    detail: 'Negative means this channel lags. A dash means there is no fixed phase.',
+  },
+  'scope.volts': {
+    name: 'Volts per division',
+    summary: 'How many volts, or amps, one grid square is for this channel.',
+    detail: 'Changing it redraws the same capture. It does not run the circuit again.',
+  },
+  'scope.position': {
+    name: 'Vertical position',
+    summary: 'Slide this trace up or down, in grid squares. The capture is unchanged.',
+  },
+  'scope.unclip': {
+    name: 'Unclip',
+    summary: 'Take this probe off the circuit.',
+  },
+  'scope.mathScale': {
+    name: 'Math scale',
+    summary: 'How many units one grid square is for the math trace.',
+  },
+  'scope.mathPosition': {
+    name: 'Math position',
+    summary: 'Slide the math trace up or down. The numbers underneath are unchanged.',
+  },
+  'timeline.start': {
+    name: 'To start',
+    summary: 'Jump to the first frame of this run.',
+  },
+  'timeline.back': {
+    name: 'Step back',
+    summary: 'Move one frame toward the start.',
+  },
+  'timeline.play': {
+    name: 'Play',
+    summary: 'Play the run, or pause it. The physics is not solved again.',
+  },
+  'timeline.forward': {
+    name: 'Step forward',
+    summary: 'Move one frame toward the end.',
+  },
+  'timeline.reverse': {
+    name: 'Reverse',
+    summary: 'Play backward instead of forward, or the other way.',
+  },
+  'timeline.slower': {
+    name: 'Slower',
+    summary: 'Play at half the speed, down to a quarter.',
+  },
+  'timeline.faster': {
+    name: 'Faster',
+    summary: 'Play at twice the speed, up to four times.',
+  },
+  'timeline.scrub': {
+    name: 'Scrub',
+    summary: 'Drag through the run. The sheet shows that instant.',
+  },
+  'timeline.front': {
+    name: 'Front',
+    summary: 'Watch the charge leave the source and reach each part in wire-length order.',
+    detail: 'Click again for the normal playback of the same run.',
+  },
+  'canvas.snap': {
+    name: 'Snap to grid',
+    summary: 'Line parts up with the grid, or leave them where you drop them.',
+  },
+  'canvas.autoroute': {
+    name: 'Auto-route wires',
+    summary: 'Draw plain wires as straight runs that go around the parts.',
+    detail: 'Off, a wire runs straight from end to end and you bend it yourself.',
+  },
+  'canvas.color': {
+    name: 'Colour wires',
+    summary: 'Give each wire its own dull shade so you can follow it. Looking only.',
+  },
+  'canvas.zoomSelection': {
+    name: 'Zoom to selection',
+    summary: 'Frame the selected parts. With nothing selected, frame the whole sheet.',
+  },
+  'project.close': {
+    name: 'Close project',
+    summary: 'Close this project tab. Anything you have not saved goes with it.',
+  },
+  'fpga.reopen': {
+    name: 'Report',
+    summary: 'Show the report you just closed.',
+  },
+  'browser.rescan': {
+    name: 'Scan again',
+    summary: 'Look through Documents, Desktop, and Downloads again for saved projects.',
+  },
+  'browser.removeRecent': {
+    name: 'Remove from the list',
+    summary: 'Ask to take this project off the list. The saved file stays where it is.',
+  },
+  'browser.deleteTemplate': {
+    name: 'Delete template',
+    summary: 'Ask to delete this template. It does not come back.',
+  },
+  'browser.hideStarter': {
+    name: 'Hide starter',
+    summary: 'Ask to hide this starter from the list. Restore brings it back.',
+  },
+  'verilog.debug': {
+    name: 'Debug',
+    summary: 'Step the synthesized gates one clock at a time, and watch every signal.',
+  },
+  'verilog.synthesize': {
+    name: 'Synthesize',
+    summary: 'Place the gates and flip-flops this text can build onto the sheet.',
+  },
+  'verilog.signal': {
+    name: 'Signal',
+    summary: 'This signal’s full name, when the row cuts it short.',
+  },
+  'footprint.addPad': {
+    name: 'Add pad',
+    summary: 'The next click on the canvas drops one pad.',
+  },
+  'footprint.fit': {
+    name: 'Fit',
+    summary: 'Fit the package in the view.',
+  },
+  'footprint.addRow': {
+    name: 'Add row',
+    summary: 'Stamp a row of pads from the count, pitch, and size above.',
+  },
+  'footprint.thermal': {
+    name: 'Thermal pad',
+    summary: 'The big pad under a power part, there to carry heat into a plane.',
+    detail: 'A via array on the same net is allowed, so the via-in-pad rule leaves it alone.',
+  },
+  'footprint.castellated': {
+    name: 'Castellated',
+    summary: 'A plated half-hole on the board edge, for a module that solders down.',
+    detail: 'It is meant to touch the outline, so the edge-clearance rules exempt it.',
+  },
+  'footprint.plated': {
+    name: 'Plated',
+    summary: 'Whether the hole is plated with copper.',
+    detail: 'Unplated is a mounting hole: no ring of copper, and a separate drill file.',
+  },
+  'footprint.save': {
+    name: 'Save footprint',
+    summary: 'Save this package so a part can be given it and land on a board.',
+  },
+  'userpart.designator': {
+    name: 'Designator',
+    summary: 'The reference letter, such as U for a chip or J for a connector.',
+  },
+  'userpart.pad': {
+    name: 'Pad',
+    summary: 'Which pad of the footprint this pin solders to, as the package labels it.',
+    detail: 'Blank matches the pin name, then the pin order.',
+  },
+  'userpart.side': {
+    name: 'Side',
+    summary: 'Which edge of the box this pin sits on.',
+  },
+  'userpart.role': {
+    name: 'Electrical role',
+    summary: 'What this pin is for. The note is documentation for now.',
+  },
+  'userpart.removePin': {
+    name: 'Remove pin',
+    summary: 'Take this pin off the part.',
+  },
+  'userpart.footprint': {
+    name: 'Footprint',
+    summary: 'The package this part solders to. Only packages with enough pads are listed.',
+    detail: 'Pins map to its pads from top to bottom, unless you name a pad on the pin.',
+  },
+  'userpart.behaviour': {
+    name: 'Behaviour',
+    summary: 'Make the part simulate as a built-in device, and map that device’s pins.',
+    detail: 'None leaves it a black box. The simulator does not invent the inside.',
+  },
+  'userpart.unit': {
+    name: 'Unit',
+    summary: 'The unit of this default, such as V or ohm. Blank means a plain number.',
+  },
+  'userpart.removeValue': {
+    name: 'Remove value',
+    summary: 'Take this default value off the part.',
+  },
+  'userpart.drawSymbol': {
+    name: 'Draw symbol',
+    summary: 'Open the drawing this part uses on a schematic.',
+  },
+  'inspector.pad': {
+    name: 'Pad',
+    summary: 'Which pad to edit. You can also click a pad on the board.',
+  },
+  'inspector.applyPad': {
+    name: 'Apply pad',
+    summary: 'Write this pad’s centre and size, in millimetres, onto the placement.',
+  },
+  'inspector.turnPad': {
+    name: 'Turn pad',
+    summary: 'Turn this pad a quarter turn about its centre. Width and height swap.',
+  },
+  'inspector.package': {
+    name: 'Package',
+    summary: 'Which footprint this part uses on the board.',
+  },
+  'inspector.editFootprint': {
+    name: 'Edit footprint',
+    summary: 'Open this package in the footprint editor.',
+    detail: 'Saving a package you own writes it back onto this part.',
+  },
+  'inspector.fromPlacement': {
+    name: 'Footprint from placement',
+    summary: 'Save the land as it sits on the board as a package you own.',
+    detail: 'A built-in package is copied under a new id. A pinout is not invented.',
+  },
+  'inspector.waveform': {
+    name: 'Waveform',
+    summary: 'The shape the source swings, around its offset, at the set frequency.',
+  },
+  'inspector.leads': {
+    name: 'Leads',
+    summary: 'How many leads this source brings out.',
+    detail: 'Two is a plain source. Three to six is a tapped stack. One returns through ground.',
+  },
+  'inspector.fewerLeads': {
+    name: 'Fewer leads',
+    summary: 'Remove one lead from this source.',
+  },
+  'inspector.moreLeads': {
+    name: 'More leads',
+    summary: 'Add one lead to this source.',
+  },
+  'inspector.addLoss': {
+    name: 'Add loss',
+    summary: 'Add this loss term at zero, so you can type the datasheet value.',
+    detail: 'The AC analyses read it. The DC and time solvers do not.',
+  },
+  'inspector.deriveR': {
+    name: 'Derive resistance',
+    summary: 'Recompute resistance from the material’s resistivity times length over area.',
+  },
+  'inspector.ledColor': {
+    name: 'LED colour',
+    summary: 'Set this LED’s colour, and the semiconductor and forward voltage that go with it.',
+  },
+  'inspector.portName': {
+    name: 'Pin',
+    summary: 'This pin’s full label, when the row cuts it short.',
+  },
+  'inspector.pinUp': {
+    name: 'Move pin up',
+    summary: 'Move this pin up along its edge.',
+  },
+  'inspector.pinDown': {
+    name: 'Move pin down',
+    summary: 'Move this pin down along its edge.',
+  },
+  'inspector.removePin': {
+    name: 'Remove pin',
+    summary: 'Remove this pin, and any wire attached to it.',
+  },
+  'inspector.pinKind': {
+    name: 'Pin kind',
+    summary: 'A power pin shows plus or minus. A signal pin is plain.',
+  },
+  'inspector.pinSide': {
+    name: 'Pin side',
+    summary: 'Which edge of the block this pin sits on.',
+  },
+  'inspector.drive': {
+    name: 'Drive',
+    summary: 'Whether this pin is an input or an output, and how an output drives.',
+    detail: 'The output-combining check uses this.',
+  },
+  'inspector.enable': {
+    name: 'Enable pin',
+    summary: 'Which pin turns this tri-state output on, so the check can count drivers.',
+  },
+  'inspector.enableLevel': {
+    name: 'Enable level',
+    summary: 'Whether the output is on when the enable pin is high or low.',
+  },
+  'inspector.addPin': {
+    name: 'Add pin',
+    summary: 'Expose an internal terminal as a pin, even before you wire to it.',
+  },
+  'bode.pick': {
+    name: 'Pick output',
+    summary: 'Click a terminal on the sheet to choose the output node.',
+  },
+  'distortion.pick': {
+    name: 'Pick output',
+    summary: 'Click a terminal on the sheet to choose the output node.',
+  },
+  'reflection.pick': {
+    name: 'Pick port',
+    summary: 'Click a source terminal on the sheet to choose the port.',
+  },
+  'stress.ambient': {
+    name: 'Ambient',
+    summary: 'Sweep the air temperature around the whole board.',
+  },
+  'stress.supply': {
+    name: 'Supply',
+    summary: 'Sweep the voltage of every source on the sheet.',
+  },
+  'stress.component': {
+    name: 'Component',
+    summary: 'Sweep one resistor’s value.',
+  },
+  'stress.sweep': {
+    name: 'Sweep',
+    summary: 'Run the real solver at each point and show where a part gives out.',
+  },
+  'stress.point': {
+    name: 'Sweep point',
+    summary: 'Whether every part is inside its limits at this point on the sweep.',
+  },
+  'stress.close': {
+    name: 'Close stress',
+    summary: 'Hide the stress bench. The sheet is unchanged.',
+  },
+  'clipboard.cut': {
+    name: 'Cut',
+    summary: 'Paste the parts you cut. They are only here until you paste them.',
+    detail: 'Cutting again replaces this one.',
+  },
+  'clipboard.copy': {
+    name: 'Copy',
+    summary: 'Paste this copy at the centre of the view.',
+  },
+  'clipboard.close': {
+    name: 'Close clipboard',
+    summary: 'Hide the clipboard. The copies stay until you quit.',
+  },
+  'symbol.select': {
+    name: 'Select',
+    summary: 'Click a shape, pin, or field to edit it, or drag it to move it.',
+    detail: 'Drag empty canvas to pan. The wheel zooms.',
+  },
+  'symbol.line': {
+    name: 'Line',
+    summary: 'Click each corner, then click the last corner again to finish.',
+    detail: 'Double-click or Enter also finishes. Click the first corner to close it.',
+  },
+  'symbol.rectangle': {
+    name: 'Rectangle',
+    summary: 'Drag from one corner to the opposite corner, or click both.',
+  },
+  'symbol.circle': {
+    name: 'Circle',
+    summary: 'Drag from the centre out to the edge, or click both points.',
+  },
+  'symbol.arc': {
+    name: 'Arc',
+    summary: 'Click the start, the end, then a point the arc bends through.',
+  },
+  'symbol.text': {
+    name: 'Text',
+    summary: 'Click where the text goes, then type it in the panel.',
+  },
+  'symbol.pin': {
+    name: 'Pin',
+    summary: 'Click where a wire should land. The pin points out of that side.',
+  },
+  'symbol.undo': {
+    name: 'Undo',
+    summary: 'Undo the last change to this drawing.',
+    shortcutText: 'Ctrl+Z',
+  },
+  'symbol.redo': {
+    name: 'Redo',
+    summary: 'Redo the drawing change you just undid.',
+    shortcutText: 'Ctrl+Y',
+    detail: 'Ctrl+Shift+Z does this too.',
+  },
+  'symbol.rotate': {
+    name: 'Rotate',
+    summary: 'Turn the selection a quarter turn.',
+    shortcutText: 'R',
+  },
+  'symbol.delete': {
+    name: 'Delete',
+    summary: 'Remove the selection. A pin leaves the drawing. A field is hidden.',
+    shortcutText: 'Del',
+    detail: 'Backspace does this too.',
+  },
+  'symbol.fit': {
+    name: 'Fit',
+    summary: 'Fit the drawing in the view.',
+  },
+  'symbol.snap': {
+    name: 'Snap to grid',
+    summary: 'Snap pin tips to the schematic grid, and shapes to the finer grid.',
+  },
+  'symbol.pad': {
+    name: 'Pad number',
+    summary: 'The pad this pin solders to, as the package labels it.',
+    detail: 'Blank matches the pin’s name, then its order.',
+  },
+  'symbol.type': {
+    name: 'Pin type',
+    summary: 'What this pin does electrically.',
+  },
+  'symbol.visible': {
+    name: 'Show field',
+    summary: 'Show this text on the schematic.',
+  },
+  'symbol.save': {
+    name: 'Save symbol',
+    summary: 'Save this drawing onto the part.',
+  },
+  'chip.ice40': {
+    name: 'iCE40 logic tile',
+    summary: 'Compile the sheet onto one iCE40 logic tile and show the report.',
+    detail: 'No bitstream file is written.',
+  },
+  'chip.replace': {
+    name: 'Regenerate placement',
+    summary: 'Place the cells again from the current schematic.',
+    detail: 'Cells you moved by hand go back.',
+  },
+  'pcb3d.explode': {
+    name: 'Explode',
+    summary: 'Pull the copper layers apart so you can see the vias between them.',
+    detail: 'You can route onto a layer while it is pulled out.',
+  },
+  'pcb3d.reset': {
+    name: 'Reset view',
+    summary: 'Put the camera back where it started.',
+  },
+  'viewer.ungroup': {
+    name: 'Ungroup',
+    summary: 'Put this block’s parts back on the sheet, so you can edit them.',
+  },
+  'viewer.crumb': {
+    name: 'Inside',
+    summary: 'Go back to this block.',
+  },
+  'replay.jump': {
+    name: 'Jump to frame',
+    summary: 'Move the timeline to the frame where this was recorded.',
+  },
+  'plan.status': {
+    name: 'Status',
+    summary: 'Click to cycle this item’s status.',
+  },
+  'hierarchy.row': {
+    name: 'Part',
+    summary: 'Click to select this part. Right-click for locate, copy, and delete.',
+  },
+  'crossing.joined': {
+    name: 'Joined',
+    summary: 'These wires are connected here. They are one net.',
+  },
+  'crossing.open': {
+    name: 'Crossing',
+    summary: 'These wires cross and are not connected.',
+  },
+  'crossing.join': {
+    name: 'Join wires',
+    summary: 'These wires cross and are not connected. Click to join them into one net.',
+  },
+  'connect.point': {
+    name: 'Connect',
+    summary: 'Click this dot to start or finish a connection.',
+  },
+  'device.pin': {
+    name: 'Terminal',
+    summary: 'A connection point on this part. Click it with the wire tool to attach a wire.',
+  },
+  'device.caveat': {
+    name: 'Warning',
+    summary: 'Something about this part the solve wants you to see.',
+  },
+  'block.body': {
+    name: 'Block',
+    summary: 'A circuit of its own. Double-click it to see the parts inside.',
+  },
+  'block.pin': {
+    name: 'Block pin',
+    summary: 'This pin is that terminal on the circuit inside the block.',
+  },
+  'junction.tie': {
+    name: 'Junction',
+    summary: 'Wires that meet here are connected.',
+  },
+  'keycap.press': {
+    name: 'Key',
+    summary: 'Click to press this calculator key.',
+  },
+  'wire.bend': {
+    name: 'Bend',
+    summary: 'Drag this dot. The wire bends through here.',
+  },
+  'hub.file': {
+    name: 'Project file',
+    summary: 'Open this file in the editor, when this window can open it.',
+  },
 }
 
 const PART_HELP: Record<string, HelpEntry> = {

@@ -4,6 +4,7 @@ import { compressionCurveView, SPECTRUM_FLOOR_DBC, spectrumView } from './distor
 import { gainCompression, largeSignalSpectrum } from './large-signal.ts'
 import { panelColors, panelFieldStyle, panelLabelStyle } from './panel-style.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 
 /**
@@ -170,31 +171,32 @@ export function DistortionPanel({
             <span style={{ ...fieldStyle, minWidth: 44, display: 'inline-block' }}>
               {outputNet || '—'}
             </span>
-            <button
-              type="button"
-              className="nodrag"
-              onClick={onPickToggle}
-              title={
-                picking
-                  ? 'Click a terminal on the canvas to choose the output net'
-                  : 'Pick the output by clicking a terminal on the canvas, like a scope probe'
-              }
-              style={{
-                background: picking
-                  ? THEME.surfaceActive
-                  : light
-                    ? THEME.white
-                    : THEME.surfaceInput,
-                border: `1px solid ${picking ? THEME.accentBlue : light ? THEME.textPrimary : THEME.borderStrong}`,
-                color: text,
-                borderRadius: 3,
-                fontSize: 12,
-                padding: '0 7px',
-                cursor: 'pointer',
-              }}
+            <HelpTip
+              helpId="distortion.pick"
+              detail={picking ? 'Click a terminal, or click here again to cancel.' : undefined}
             >
-              ⌖
-            </button>
+              <button
+                type="button"
+                className="nodrag"
+                onClick={onPickToggle}
+                aria-label="Pick distortion output"
+                style={{
+                  background: picking
+                    ? THEME.surfaceActive
+                    : light
+                      ? THEME.white
+                      : THEME.surfaceInput,
+                  border: `1px solid ${picking ? THEME.accentBlue : light ? THEME.textPrimary : THEME.borderStrong}`,
+                  color: text,
+                  borderRadius: 3,
+                  fontSize: 12,
+                  padding: '0 7px',
+                  cursor: 'pointer',
+                }}
+              >
+                ⌖
+              </button>
+            </HelpTip>
           </div>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

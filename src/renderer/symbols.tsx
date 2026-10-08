@@ -2,6 +2,7 @@ import { Handle, type NodeProps, Position } from '@xyflow/react'
 import { Fragment, useContext, useEffect, useSyncExternalStore } from 'react'
 import { SymbolStyleContext } from './symbol-style.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import './canvas-animations.css'
 import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
@@ -2715,29 +2716,32 @@ export function DeviceNode({ id, data }: NodeProps) {
           const hoverLabel = t.id.replace(/_/g, ' ') + (polarity ? ` (${polarity})` : '')
           return (
             <Fragment key={t.id}>
-              <Handle
-                id={t.id}
-                type="source"
-                position={t.position}
-                title={hoverLabel}
-                style={{
-                  background:
-                    polarity === '+'
-                      ? THEME.statusDanger
-                      : polarity === '−'
-                        ? THEME.accentBlueDeep
-                        : THEME.textMuted,
-                  width: polarity ? 9 : undefined,
-                  height: polarity ? 9 : undefined,
-                  ...(t.at !== undefined
-                    ? { left: t.at.x, top: t.at.y, transform: 'translate(-50%, -50%)' }
-                    : onSide
-                      ? { top: t.offset ?? MID }
-                      : t.offset !== undefined
-                        ? { left: t.offset }
-                        : {}),
-                }}
-              />
+              <HelpTip helpId="device.pin" name={hoverLabel}>
+                <Handle
+                  id={t.id}
+                  type="source"
+                  position={t.position}
+                  onPointerEnter={(event) => event.stopPropagation()}
+                  onMouseEnter={(event) => event.stopPropagation()}
+                  style={{
+                    background:
+                      polarity === '+'
+                        ? THEME.statusDanger
+                        : polarity === '−'
+                          ? THEME.accentBlueDeep
+                          : THEME.textMuted,
+                    width: polarity ? 9 : undefined,
+                    height: polarity ? 9 : undefined,
+                    ...(t.at !== undefined
+                      ? { left: t.at.x, top: t.at.y, transform: 'translate(-50%, -50%)' }
+                      : onSide
+                        ? { top: t.offset ?? MID }
+                        : t.offset !== undefined
+                          ? { left: t.offset }
+                          : {}),
+                  }}
+                />
+              </HelpTip>
               {polarity ? (
                 <div
                   style={{
@@ -2880,12 +2884,11 @@ export function DeviceNode({ id, data }: NodeProps) {
           {caveat ? (
             // The caption row is click-through so it never steals a drag; this one mark takes pointer events
             // back, because a warning nobody can hover is a warning that says nothing.
-            <span
-              title={caveat}
-              style={{ color: THEME.statusWarn, marginLeft: 5, pointerEvents: 'auto' }}
-            >
-              ⚠
-            </span>
+            <HelpTip helpId="device.caveat" detail={caveat}>
+              <span style={{ color: THEME.statusWarn, marginLeft: 5, pointerEvents: 'auto' }}>
+                ⚠
+              </span>
+            </HelpTip>
           ) : null}
         </div>
       )}
@@ -2901,24 +2904,23 @@ export function DeviceNode({ id, data }: NodeProps) {
  */
 function JunctionNode() {
   return (
-    <div
-      title="junction — wires meeting here are connected"
-      style={{ position: 'relative', width: 14, height: 14 }}
-    >
-      <Handle
-        id="tie"
-        type="source"
-        position={Position.Top}
-        style={{
-          left: 7,
-          top: 7,
-          width: 9,
-          height: 9,
-          background: THEME.textPrimary,
-          border: `1px solid ${THEME.textFaint}`,
-        }}
-      />
-    </div>
+    <HelpTip helpId="junction.tie">
+      <div style={{ position: 'relative', width: 14, height: 14 }}>
+        <Handle
+          id="tie"
+          type="source"
+          position={Position.Top}
+          style={{
+            left: 7,
+            top: 7,
+            width: 9,
+            height: 9,
+            background: THEME.textPrimary,
+            border: `1px solid ${THEME.textFaint}`,
+          }}
+        />
+      </div>
+    </HelpTip>
   )
 }
 
@@ -2929,29 +2931,30 @@ function KeycapNode({ data }: NodeProps) {
   const d = data as DeviceNodeData
   const isOp = d.calcKey !== undefined && ['+', '-', '*', '/', '='].includes(d.calcKey)
   return (
-    <div
-      className="cb-keycap"
-      title={`Calculator key ${d.label ?? ''} — click to press`}
-      style={{
-        width: 60,
-        height: 60,
-        borderRadius: 10,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: 28,
-        fontWeight: 700,
-        lineHeight: 1,
-        color: isOp ? THEME.surfaceDeep : THEME.textBright,
-        background: isOp ? THEME.accentBlue : THEME.surfaceRaised,
-        border: `2px solid ${isOp ? THEME.accentBlueDeep : THEME.borderStrong}`,
-        boxShadow: `0 4px 0 ${isOp ? THEME.accentBlueDeep : THEME.borderStrong}`,
-        cursor: 'pointer',
-        userSelect: 'none',
-      }}
-    >
-      {d.label}
-    </div>
+    <HelpTip helpId="keycap.press" name={d.label ? `Key ${d.label}` : 'Key'}>
+      <div
+        className="cb-keycap"
+        style={{
+          width: 60,
+          height: 60,
+          borderRadius: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 28,
+          fontWeight: 700,
+          lineHeight: 1,
+          color: isOp ? THEME.surfaceDeep : THEME.textBright,
+          background: isOp ? THEME.accentBlue : THEME.surfaceRaised,
+          border: `2px solid ${isOp ? THEME.accentBlueDeep : THEME.borderStrong}`,
+          boxShadow: `0 4px 0 ${isOp ? THEME.accentBlueDeep : THEME.borderStrong}`,
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+      >
+        {d.label}
+      </div>
+    </HelpTip>
   )
 }
 

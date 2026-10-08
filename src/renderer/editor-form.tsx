@@ -6,6 +6,7 @@
 
 import type React from 'react'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 export function Section({
   title,
@@ -59,21 +60,22 @@ export function CanvasButton({
   active,
   onClick,
   children,
-  title,
+  helpId,
+  detail,
   disabled = false,
 }: {
   active: boolean
   onClick: () => void
   children: React.ReactNode
-  title?: string
-  disabled?: boolean
+  helpId?: string | undefined
+  detail?: string | undefined
+  disabled?: boolean | undefined
 }) {
-  return (
+  const button = (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      {...(title !== undefined ? { title } : {})}
       style={{
         padding: '3px 9px',
         borderRadius: 6,
@@ -87,6 +89,12 @@ export function CanvasButton({
     >
       {children}
     </button>
+  )
+  if (helpId === undefined) return button
+  return (
+    <HelpTip helpId={helpId} detail={detail}>
+      {button}
+    </HelpTip>
   )
 }
 

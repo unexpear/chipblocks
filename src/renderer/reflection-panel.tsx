@@ -11,6 +11,7 @@ import {
 } from './panel-style.ts'
 import { RL_PLOT_MAX, reflectionView, VSWR_PLOT_MAX } from './reflection-view.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 
 /**
@@ -146,31 +147,34 @@ export function ReflectionPanel({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              className="nodrag"
-              onClick={onPickToggle}
-              title={
-                picking
-                  ? 'Click a source / port terminal on the canvas to choose the port'
-                  : 'Pick the port by clicking a source terminal on the canvas, like a scope probe'
+            <HelpTip
+              helpId="reflection.pick"
+              detail={
+                picking ? 'Click a source terminal, or click here again to cancel.' : undefined
               }
-              style={{
-                background: picking
-                  ? THEME.surfaceActive
-                  : light
-                    ? THEME.white
-                    : THEME.surfaceInput,
-                border: `1px solid ${picking ? THEME.accentBlue : light ? THEME.textPrimary : THEME.borderStrong}`,
-                color: text,
-                borderRadius: 3,
-                fontSize: 12,
-                padding: '0 7px',
-                cursor: 'pointer',
-              }}
             >
-              ⌖
-            </button>
+              <button
+                type="button"
+                className="nodrag"
+                onClick={onPickToggle}
+                aria-label="Pick reflection port"
+                style={{
+                  background: picking
+                    ? THEME.surfaceActive
+                    : light
+                      ? THEME.white
+                      : THEME.surfaceInput,
+                  border: `1px solid ${picking ? THEME.accentBlue : light ? THEME.textPrimary : THEME.borderStrong}`,
+                  color: text,
+                  borderRadius: 3,
+                  fontSize: 12,
+                  padding: '0 7px',
+                  cursor: 'pointer',
+                }}
+              >
+                ⌖
+              </button>
+            </HelpTip>
           </div>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

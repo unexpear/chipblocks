@@ -12,6 +12,7 @@ import { H_DIVISIONS, TIMEBASES, transformFor, V_DIVISIONS, VOLTS_PER_DIV } from
 import { smoothTrace } from './scope-smooth.ts'
 import { alignSweep, autoLevel, type TriggerEdge, type TriggerMode } from './scope-trigger.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 import { measureSeries, phaseBetweenDeg } from './waveform-measure.ts'
 import { WhyPanel } from './why-panel.tsx'
@@ -483,78 +484,87 @@ export function ScopePlot({
       style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, maxWidth: PLOT_W }}
     >
       <span style={{ fontSize: 10, color: textColor }}>Horiz</span>
-      <select
-        value={secPerDiv === 'auto' ? 'auto' : String(secPerDiv)}
-        onChange={(e) => {
-          const next = e.target.value
-          onSecPerDiv(next === 'auto' ? 'auto' : Number(next))
-          setHeld(null)
-          if (mode === 'single') setArmed(true)
-        }}
-        className="nodrag"
-        title={`How much time one grid square spans (10 squares across the screen) — zoom into one edge or out to many cycles. Auto fits a few cycles of the slowest source (now ${formatEng(autoSecPerDiv, 's')}/div). Changing it re-runs the capture at the new sample spacing, like a real scope re-acquiring.`}
-        style={controlStyle}
+      <HelpTip
+        helpId="scope.timebase"
+        detail={`Auto is ${formatEng(autoSecPerDiv, 's')} per division right now.`}
       >
-        <option value="auto">auto ({formatEng(autoSecPerDiv, 's')}/div)</option>
-        {TIMEBASES.map((t) => (
-          <option key={t} value={String(t)}>
-            {formatEng(t, 's')}/div
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        className="nodrag"
-        onClick={() => setCursorsOn((on) => !on)}
-        title="Cursors: two draggable time lines, A and B. Each reads the ▶ trigger-source channel where it crosses the trace; the strip under the plot gives Δt (B − A), 1/Δt (set them one full cycle apart and that IS the signal's frequency), and ΔV — measuring rise times, periods, and ripple straight off the trace."
-        style={{
-          ...controlStyle,
-          cursor: 'pointer',
-          ...(cursorsOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
-        }}
-      >
-        cursors
-      </button>
-      <button
-        type="button"
-        className="nodrag"
-        onClick={() => setMeasureOn((on) => !on)}
-        title="Auto-measurements: live numbers read off each channel's displayed sweep — peak-to-peak, DC level, AC true-RMS and counted frequency (the multimeter's own math, shared code), period, duty (time above the 50 % level), and 10–90 % rise ↑ / fall ↓ times. A dash means that number honestly can't be read from what's on screen (no countable cycle, no edge, flat line)."
-        style={{
-          ...controlStyle,
-          cursor: 'pointer',
-          ...(measureOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
-        }}
-      >
-        measure
-      </button>
-      <button
-        type="button"
-        className="nodrag"
-        onClick={() => setFftOn((on) => !on)}
-        title="FFT: the ▶ trigger-source signal broken into the frequencies it contains, plotted below the time view. A pure sine is ONE spike; a square wave is its fundamental plus shrinking odd harmonics (3rd at 1/3, 5th at 1/5 — why squares sound buzzy and sines pure). Analyzed over the settled record with a Hann window, mean removed (the dc number lives in the measure strip); Δf states the resolution honestly."
-        style={{
-          ...controlStyle,
-          cursor: 'pointer',
-          ...(fftOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
-        }}
-      >
-        fft
-      </button>
-      {fftOn ? (
+        <select
+          value={secPerDiv === 'auto' ? 'auto' : String(secPerDiv)}
+          onChange={(e) => {
+            const next = e.target.value
+            onSecPerDiv(next === 'auto' ? 'auto' : Number(next))
+            setHeld(null)
+            if (mode === 'single') setArmed(true)
+          }}
+          className="nodrag"
+          style={controlStyle}
+          aria-label="Time per division"
+        >
+          <option value="auto">auto ({formatEng(autoSecPerDiv, 's')}/div)</option>
+          {TIMEBASES.map((t) => (
+            <option key={t} value={String(t)}>
+              {formatEng(t, 's')}/div
+            </option>
+          ))}
+        </select>
+      </HelpTip>
+      <HelpTip helpId="scope.cursors">
         <button
           type="button"
           className="nodrag"
-          onClick={() => setFftDb((on) => !on)}
-          title="dB scale: each bin as 20·log10 of its RMS value relative to 1 V (dBV) or 1 A — the bench-scope FFT vertical. A log scale shows harmonics 100× smaller than the fundamental that vanish on the linear view; 80 dB of range, 10 dB per division."
+          onClick={() => setCursorsOn((on) => !on)}
           style={{
             ...controlStyle,
             cursor: 'pointer',
-            ...(fftDb ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
+            ...(cursorsOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
           }}
         >
-          dB
+          cursors
         </button>
+      </HelpTip>
+      <HelpTip helpId="scope.measure">
+        <button
+          type="button"
+          className="nodrag"
+          onClick={() => setMeasureOn((on) => !on)}
+          style={{
+            ...controlStyle,
+            cursor: 'pointer',
+            ...(measureOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
+          }}
+        >
+          measure
+        </button>
+      </HelpTip>
+      <HelpTip helpId="scope.fft">
+        <button
+          type="button"
+          className="nodrag"
+          onClick={() => setFftOn((on) => !on)}
+          style={{
+            ...controlStyle,
+            cursor: 'pointer',
+            ...(fftOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
+          }}
+        >
+          fft
+        </button>
+      </HelpTip>
+      {fftOn ? (
+        <HelpTip helpId="scope.db">
+          <button
+            type="button"
+            className="nodrag"
+            onClick={() => setFftDb((on) => !on)}
+            style={{
+              ...controlStyle,
+              cursor: 'pointer',
+              ...(fftDb ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
+            }}
+          >
+            dB
+          </button>
+        </HelpTip>
       ) : null}
     </div>
   )
@@ -571,12 +581,15 @@ export function ScopePlot({
   if (sweep === null) {
     if (solved && channels.length === 0) {
       return (
-        <div style={{ fontSize: 11, color: textColor, maxWidth: 320, fontFamily: 'system-ui' }}>
-          No probes attached. With the Scope open (and the plain select tool): CLICK a terminal dot
-          for that point's VOLTAGE, click a WIRE to clamp its CURRENT, or ALT+CLICK a part's body
-          for the part's own current — each becomes a colored channel, like clipping real leads
-          where you care. The same gesture again unclips it. Tip: a voltage channel as X and a part
-          current as Y in XY mode draws the part's I-V curve — the curve tracer.
+        <div style={{ fontFamily: 'system-ui, sans-serif' }}>
+          {horizRow}
+          <div style={{ fontSize: 11, color: textColor, maxWidth: 320 }}>
+            No probes attached. With the Scope open (and the plain select tool): CLICK a terminal
+            dot for that point's VOLTAGE, click a WIRE to clamp its CURRENT, or ALT+CLICK a part's
+            body for the part's own current — each becomes a colored channel, like clipping real
+            leads where you care. The same gesture again unclips it. Tip: a voltage channel as X and
+            a part current as Y in XY mode draws the part's I-V curve — the curve tracer.
+          </div>
         </div>
       )
     }
@@ -903,86 +916,99 @@ export function ScopePlot({
         }}
       >
         <span style={{ fontSize: 10, color: textColor }}>Trig</span>
-        <select
-          value={trigSource}
-          onChange={(e) => {
-            setTrigSource(e.target.value)
-            setHeld(null)
-          }}
-          className="nodrag"
-          title="Which signal the trigger watches. Auto picks the one swinging the most."
-          style={{ ...controlStyle, maxWidth: 110 }}
-        >
-          <option value="auto">
-            auto{sourceChannel !== null ? ` (${sourceChannel.label})` : ''}
-          </option>
-          {channels.map((c) => (
-            <option key={c.key} value={c.key}>
-              {c.label}
+        <HelpTip helpId="scope.triggerSource">
+          <select
+            value={trigSource}
+            onChange={(e) => {
+              setTrigSource(e.target.value)
+              setHeld(null)
+            }}
+            className="nodrag"
+            style={{ ...controlStyle, maxWidth: 110 }}
+            aria-label="Trigger source"
+          >
+            <option value="auto">
+              auto{sourceChannel !== null ? ` (${sourceChannel.label})` : ''}
             </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="nodrag"
-          onClick={() => {
-            setEdge(edge === 'rising' ? 'falling' : 'rising')
-            setHeld(null)
-          }}
-          title="Trigger edge: fire when the signal crosses the level going up (↗) or down (↘)"
-          style={{ ...controlStyle, cursor: 'pointer' }}
-        >
-          {edge === 'rising' ? '↗' : '↘'}
-        </button>
-        <input
-          value={levelText}
-          onChange={(e) => {
-            setLevelText(e.target.value)
-            setHeld(null)
-          }}
-          className="nodrag"
-          title={`Trigger level in the source channel's unit (${sourceUnit}) — the sweep aligns where the signal crosses it. "auto" = the midpoint of the swing (now ${formatEng(level, sourceUnit, { signed: true })}).`}
-          style={{ ...controlStyle, width: 44 }}
-        />
-        <select
-          value={mode}
-          onChange={(e) => {
-            const next = e.target.value as TriggerMode
-            setMode(next)
-            setHeld(null)
-            setArmed(next === 'single')
-          }}
-          className="nodrag"
-          title="Auto: free-run when nothing triggers. Normal: draw only when triggered. Single: capture the next triggered sweep and hold it (the sim re-runs from t = 0 on every edit; Single freezes the first sweep whose trigger fires)."
-          style={controlStyle}
-        >
-          <option value="auto">Auto</option>
-          <option value="normal">Normal</option>
-          <option value="single">Single</option>
-        </select>
-        {mode === 'single' && held !== null ? (
+            {channels.map((c) => (
+              <option key={c.key} value={c.key}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </HelpTip>
+        <HelpTip helpId="scope.triggerEdge">
           <button
             type="button"
             className="nodrag"
             onClick={() => {
+              setEdge(edge === 'rising' ? 'falling' : 'rising')
               setHeld(null)
-              setArmed(true)
             }}
-            title="Drop the captured sweep and wait for the next trigger"
             style={{ ...controlStyle, cursor: 'pointer' }}
+            aria-label="Trigger edge"
           >
-            re-arm
+            {edge === 'rising' ? '↗' : '↘'}
           </button>
-        ) : (
-          <button
-            type="button"
+        </HelpTip>
+        <HelpTip
+          helpId="scope.triggerLevel"
+          detail={`Auto is the middle of the swing, ${formatEng(level, sourceUnit, { signed: true })} right now.`}
+        >
+          <input
+            value={levelText}
+            onChange={(e) => {
+              setLevelText(e.target.value)
+              setHeld(null)
+            }}
             className="nodrag"
-            onClick={() => setHeld(held !== null ? null : sweep)}
-            title="Stop freezes the display exactly as it is; Run lets it follow the circuit live again"
-            style={{ ...controlStyle, cursor: 'pointer' }}
+            style={{ ...controlStyle, width: 44 }}
+            aria-label="Trigger level"
+          />
+        </HelpTip>
+        <HelpTip helpId="scope.triggerMode">
+          <select
+            value={mode}
+            onChange={(e) => {
+              const next = e.target.value as TriggerMode
+              setMode(next)
+              setHeld(null)
+              setArmed(next === 'single')
+            }}
+            className="nodrag"
+            style={controlStyle}
+            aria-label="Trigger mode"
           >
-            {held !== null ? 'run' : 'stop'}
-          </button>
+            <option value="auto">Auto</option>
+            <option value="normal">Normal</option>
+            <option value="single">Single</option>
+          </select>
+        </HelpTip>
+        {mode === 'single' && held !== null ? (
+          <HelpTip helpId="scope.rearm">
+            <button
+              type="button"
+              className="nodrag"
+              onClick={() => {
+                setHeld(null)
+                setArmed(true)
+              }}
+              style={{ ...controlStyle, cursor: 'pointer' }}
+            >
+              re-arm
+            </button>
+          </HelpTip>
+        ) : (
+          <HelpTip helpId="scope.run">
+            <button
+              type="button"
+              className="nodrag"
+              onClick={() => setHeld(held !== null ? null : sweep)}
+              style={{ ...controlStyle, cursor: 'pointer' }}
+            >
+              {held !== null ? 'run' : 'stop'}
+            </button>
+          </HelpTip>
         )}
         <span style={{ fontSize: 10, color: statusColor, marginLeft: 'auto' }}>{status}</span>
       </div>
@@ -1000,45 +1026,51 @@ export function ScopePlot({
         }}
       >
         <span style={{ fontSize: 10, color: textColor }}>Math</span>
-        <select
-          value={mathOp}
-          onChange={(e) => setMathOp(e.target.value as 'off' | 'sub' | 'mul')}
-          className="nodrag"
-          title="A−B subtracts trace B from trace A point-by-point — a DIFFERENTIAL measurement, the voltage ACROSS a part (clip A and B on its two terminals; units must match). A×B multiplies them — and a VOLTAGE channel × a CURRENT clamp is WATTS, the real instantaneous power flowing in that branch (volts × volts stays V·V, honestly)."
-          style={controlStyle}
-        >
-          <option value="off">off</option>
-          <option value="sub">A − B</option>
-          <option value="mul">A × B</option>
-        </select>
+        <HelpTip helpId="scope.math">
+          <select
+            value={mathOp}
+            onChange={(e) => setMathOp(e.target.value as 'off' | 'sub' | 'mul')}
+            className="nodrag"
+            style={controlStyle}
+            aria-label="Math"
+          >
+            <option value="off">off</option>
+            <option value="sub">A − B</option>
+            <option value="mul">A × B</option>
+          </select>
+        </HelpTip>
         {mathOp !== 'off' || displayMode === 'xy' ? (
           <>
-            <select
-              value={mathAKey ?? ''}
-              onChange={(e) => setMathA(e.target.value)}
-              className="nodrag"
-              title="Which channel is A (math's first operand; XY's horizontal axis)"
-              style={{ ...controlStyle, maxWidth: 110 }}
-            >
-              {sweep.channels.map((c) => (
-                <option key={c.key} value={c.key}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={mathBKey ?? ''}
-              onChange={(e) => setMathB(e.target.value)}
-              className="nodrag"
-              title="Which channel is B (math's second operand; XY's vertical axis)"
-              style={{ ...controlStyle, maxWidth: 110 }}
-            >
-              {sweep.channels.map((c) => (
-                <option key={c.key} value={c.key}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+            <HelpTip helpId="scope.mathA">
+              <select
+                value={mathAKey ?? ''}
+                onChange={(e) => setMathA(e.target.value)}
+                className="nodrag"
+                style={{ ...controlStyle, maxWidth: 110 }}
+                aria-label="Channel A"
+              >
+                {sweep.channels.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
+            <HelpTip helpId="scope.mathB">
+              <select
+                value={mathBKey ?? ''}
+                onChange={(e) => setMathB(e.target.value)}
+                className="nodrag"
+                style={{ ...controlStyle, maxWidth: 110 }}
+                aria-label="Channel B"
+              >
+                {sweep.channels.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
             {mathUnitsClash ? (
               <span style={{ fontSize: 10, color: textColor }}>
                 A − B needs matching units (volts minus amps is not a quantity) — A × B of these
@@ -1049,57 +1081,61 @@ export function ScopePlot({
             ) : null}
           </>
         ) : null}
-        <button
-          type="button"
-          className="nodrag"
-          onClick={() => setDisplayMode(displayMode === 'yt' ? 'xy' : 'yt')}
-          title="XY mode: plot A against B with time implicit — the phase-pattern view (Lissajous figures). Two in-phase signals draw a straight LINE whose slope is their ratio; a phase shift between them opens the line into an ELLIPSE (add a capacitor and watch). Each axis keeps its channel's volts/div knob. Click again for the normal voltage-vs-time view."
-          style={{
-            ...controlStyle,
-            cursor: 'pointer',
-            ...(xyOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
-          }}
-        >
-          XY
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          onClick={() => {
-            setPersistOn(!persistOn)
-            if (persistOn) setGhosts([])
-          }}
-          title="Persistence: keep faded ghosts of the last 7 sweeps under the live trace. A simulated circuit re-runs IDENTICALLY, so the ghosts show what your EDITS changed — tweak a value and compare before/after in one picture (a real scope's persistence only catches jitter; ours catches intent)."
-          style={{
-            ...controlStyle,
-            cursor: 'pointer',
-            ...(persistOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
-          }}
-        >
-          persist
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          onClick={() => setReference(reference === null ? sweep : null)}
-          title="Reference: save the displayed sweep as a REF trace — it stays on screen (dashed, grey) while you edit the circuit, so before and after sit in one picture. A bench scope's REF memory; and because the simulator is deterministic, any difference between REF and live IS your edit, not noise. Drawn through the current knobs. Click again to clear."
-          style={{
-            ...controlStyle,
-            cursor: 'pointer',
-            ...(reference !== null ? { borderColor: REF_COLOR, color: REF_COLOR } : {}),
-          }}
-        >
-          ref
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          onClick={downloadCsv}
-          title="Download the displayed sweep as a CSV file: a time column (t = 0 at the trigger, matching the axis) plus one column per channel and the math trace — ready for a spreadsheet or any plotting tool."
-          style={{ ...controlStyle, cursor: 'pointer' }}
-        >
-          csv
-        </button>
+        <HelpTip helpId="scope.xy">
+          <button
+            type="button"
+            className="nodrag"
+            onClick={() => setDisplayMode(displayMode === 'yt' ? 'xy' : 'yt')}
+            style={{
+              ...controlStyle,
+              cursor: 'pointer',
+              ...(xyOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
+            }}
+          >
+            XY
+          </button>
+        </HelpTip>
+        <HelpTip helpId="scope.persist">
+          <button
+            type="button"
+            className="nodrag"
+            onClick={() => {
+              setPersistOn(!persistOn)
+              if (persistOn) setGhosts([])
+            }}
+            style={{
+              ...controlStyle,
+              cursor: 'pointer',
+              ...(persistOn ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
+            }}
+          >
+            persist
+          </button>
+        </HelpTip>
+        <HelpTip helpId="scope.ref">
+          <button
+            type="button"
+            className="nodrag"
+            onClick={() => setReference(reference === null ? sweep : null)}
+            style={{
+              ...controlStyle,
+              cursor: 'pointer',
+              ...(reference !== null ? { borderColor: REF_COLOR, color: REF_COLOR } : {}),
+            }}
+          >
+            ref
+          </button>
+        </HelpTip>
+        <HelpTip helpId="scope.csv">
+          <button
+            type="button"
+            className="nodrag"
+            onClick={downloadCsv}
+            style={{ ...controlStyle, cursor: 'pointer' }}
+          >
+            csv
+          </button>
+        </HelpTip>
       </div>
       {/* The family sweep (S20-v3-4): step one source across N values, run the
           simulation once per step, overlay every run's (X, Y) path — the
@@ -1116,70 +1152,80 @@ export function ScopePlot({
           }}
         >
           <span style={{ fontSize: 10, color: textColor }}>Family</span>
-          <select
-            value={famSource !== '' ? famSource : (familySources[0] ?? '')}
-            onChange={(e) => setFamSource(e.target.value)}
-            className="nodrag"
-            title="Which source to STEP between runs — the gate drive for a transistor family. Everything else in the circuit stays exactly as drawn."
-            style={{ ...controlStyle, maxWidth: 110 }}
-          >
-            {familySources.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </select>
-          <input
-            value={famFrom}
-            onChange={(e) => setFamFrom(e.target.value)}
-            className="nodrag"
-            title="The stepped source's FIRST voltage"
-            style={{ ...controlStyle, width: 34 }}
-          />
+          <HelpTip helpId="scope.familySource">
+            <select
+              value={famSource !== '' ? famSource : (familySources[0] ?? '')}
+              onChange={(e) => setFamSource(e.target.value)}
+              className="nodrag"
+              style={{ ...controlStyle, maxWidth: 110 }}
+              aria-label="Stepped source"
+            >
+              {familySources.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </HelpTip>
+          <HelpTip helpId="scope.familyStart">
+            <input
+              value={famFrom}
+              onChange={(e) => setFamFrom(e.target.value)}
+              className="nodrag"
+              style={{ ...controlStyle, width: 34 }}
+              aria-label="First step"
+            />
+          </HelpTip>
           <span style={{ fontSize: 10, color: textColor }}>to</span>
-          <input
-            value={famTo}
-            onChange={(e) => setFamTo(e.target.value)}
-            className="nodrag"
-            title="The stepped source's LAST voltage"
-            style={{ ...controlStyle, width: 34 }}
-          />
+          <HelpTip helpId="scope.familyStop">
+            <input
+              value={famTo}
+              onChange={(e) => setFamTo(e.target.value)}
+              className="nodrag"
+              style={{ ...controlStyle, width: 34 }}
+              aria-label="Last step"
+            />
+          </HelpTip>
           <span style={{ fontSize: 10, color: textColor }}>×</span>
-          <input
-            value={famCount}
-            onChange={(e) => setFamCount(e.target.value)}
-            className="nodrag"
-            title="How many steps (2–8), evenly spaced, endpoints included"
-            style={{ ...controlStyle, width: 26 }}
-          />
-          <button
-            type="button"
-            className="nodrag"
-            onClick={() => {
-              if (!xyReady || xyXChannel === undefined || xyYChannel === undefined) return
-              const from = Number.parseFloat(famFrom)
-              const to = Number.parseFloat(famTo)
-              const count = Number.parseFloat(famCount)
-              if (Number.isNaN(from) || Number.isNaN(to) || Number.isNaN(count)) return
-              const sourceId = famSource !== '' ? famSource : (familySources[0] ?? '')
-              if (sourceId === '') return
-              onTraceFamily(xyXChannel, xyYChannel, sourceId, from, to, count)
-            }}
-            title="Run the simulation once per step (the chosen source's voltage overridden, nothing else touched) and overlay every run's X-vs-Y path. The picture FREEZES until you trace again or clear — N runs per edit would not be live, it would be lag. A step that fails to solve is named and skipped, never faked."
-            style={{ ...controlStyle, cursor: 'pointer' }}
-          >
-            trace
-          </button>
-          {family !== null ? (
+          <HelpTip helpId="scope.familySteps">
+            <input
+              value={famCount}
+              onChange={(e) => setFamCount(e.target.value)}
+              className="nodrag"
+              style={{ ...controlStyle, width: 26 }}
+              aria-label="Steps"
+            />
+          </HelpTip>
+          <HelpTip helpId="scope.familyRun">
             <button
               type="button"
               className="nodrag"
-              onClick={onClearFamily}
-              title="Drop the traced family and go back to the live XY path"
+              onClick={() => {
+                if (!xyReady || xyXChannel === undefined || xyYChannel === undefined) return
+                const from = Number.parseFloat(famFrom)
+                const to = Number.parseFloat(famTo)
+                const count = Number.parseFloat(famCount)
+                if (Number.isNaN(from) || Number.isNaN(to) || Number.isNaN(count)) return
+                const sourceId = famSource !== '' ? famSource : (familySources[0] ?? '')
+                if (sourceId === '') return
+                onTraceFamily(xyXChannel, xyYChannel, sourceId, from, to, count)
+              }}
               style={{ ...controlStyle, cursor: 'pointer' }}
             >
-              clear
+              trace
             </button>
+          </HelpTip>
+          {family !== null ? (
+            <HelpTip helpId="scope.familyClear">
+              <button
+                type="button"
+                className="nodrag"
+                onClick={onClearFamily}
+                style={{ ...controlStyle, cursor: 'pointer' }}
+              >
+                clear
+              </button>
+            </HelpTip>
           ) : null}
           {familyNote !== null ? (
             <span style={{ fontSize: 10, color: textColor }}>{familyNote}</span>
@@ -1742,12 +1788,9 @@ export function ScopePlot({
               <span>↑ {m.riseS !== null ? formatEng(m.riseS, 's') : '—'}</span>
               <span>↓ {m.fallS !== null ? formatEng(m.fallS, 's') : '—'}</span>
               {phi !== undefined ? (
-                <span
-                  title="Phase relative to CH1: φ = −360°·Δt/T, with Δt measured between the two signals' rising mid-level crossings (hysteresis-gated, like the frequency counter) and T their shared period. NEGATIVE = this channel LAGS CH1 — an RC low-pass output reads −atan(2πfRC), the same sign convention as the Bode plot. A dash: no countable cycle, or the two frequencies differ (no fixed phase exists)."
-                  data-phase={key}
-                >
-                  φ {phi !== null ? `${phi.toFixed(1)}°` : '—'} vs CH1
-                </span>
+                <HelpTip helpId="scope.phase">
+                  <span data-phase={key}>φ {phi !== null ? `${phi.toFixed(1)}°` : '—'} vs CH1</span>
+                </HelpTip>
               ) : null}
             </div>
           ))}
@@ -1768,81 +1811,87 @@ export function ScopePlot({
             }}
           >
             {channel.key === sweep.sourceKey ? '▶' : '—'} CH{i + 1} {channel.label}
-            <select
-              value={
-                vdivSettings[channel.key] === undefined || vdivSettings[channel.key] === 'auto'
-                  ? 'auto'
-                  : String(vdivSettings[channel.key])
-              }
-              onChange={(e) => {
-                const next = e.target.value
-                setVdivSettings((current) => ({
-                  ...current,
-                  [channel.key]: next === 'auto' ? 'auto' : Number(next),
-                }))
-              }}
-              className="nodrag"
-              title={`CH${i + 1} vertical scale: ${channel.unit === 'A' ? 'amps' : 'volts'} per grid square (8 squares tall). Auto fits this channel's swing. Each channel centers on its own midpoint — the ▸ arrow at the left edge marks where ITS zero sits. The axis numbers follow the ▶ trigger-source channel. Rescaling redraws the same captured data (a vertical knob, not a re-acquire).`}
-              style={{
-                fontSize: 9,
-                background: light ? THEME.white : THEME.surfaceRaised,
-                color: 'inherit',
-                border: `1px solid ${THEME.borderSubtle}`,
-                borderRadius: 3,
-                padding: '0 2px',
-              }}
-            >
-              <option value="auto">
-                auto ({formatEng(transforms.get(channel.key)?.voltsPerDiv ?? 0, channel.unit)}
-                /div)
-              </option>
-              {VOLTS_PER_DIV.map((v) => (
-                <option key={v} value={String(v)}>
-                  {formatEng(v, channel.unit)}/div
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              step={0.5}
-              value={posSettings[channel.key] ?? 0}
-              onChange={(e) => {
-                const next = Number(e.target.value)
-                setPosSettings((current) => ({
-                  ...current,
-                  [channel.key]: Number.isFinite(next) ? next : 0,
-                }))
-              }}
-              className="nodrag"
-              title={`CH${i + 1} vertical position, in grid squares: + slides the trace up, − down. Separates same-shape traces that auto-fit on top of each other; the ▸ zero marker moves with it. Display placement only — the captured data is untouched.`}
-              style={{
-                width: 34,
-                fontSize: 9,
-                background: light ? THEME.white : THEME.surfaceRaised,
-                color: 'inherit',
-                border: `1px solid ${THEME.borderSubtle}`,
-                borderRadius: 3,
-                padding: '0 2px',
-              }}
-            />
-            {held === null ? (
-              <button
-                type="button"
+            <HelpTip helpId="scope.volts" name={`CH${i + 1} scale`}>
+              <select
+                value={
+                  vdivSettings[channel.key] === undefined || vdivSettings[channel.key] === 'auto'
+                    ? 'auto'
+                    : String(vdivSettings[channel.key])
+                }
+                onChange={(e) => {
+                  const next = e.target.value
+                  setVdivSettings((current) => ({
+                    ...current,
+                    [channel.key]: next === 'auto' ? 'auto' : Number(next),
+                  }))
+                }}
                 className="nodrag"
-                onClick={() => onRemoveChannel(channel.key)}
-                title="Unclip this probe"
+                aria-label={`CH${i + 1} scale`}
                 style={{
-                  background: 'none',
-                  border: 'none',
+                  fontSize: 9,
+                  background: light ? THEME.white : THEME.surfaceRaised,
                   color: 'inherit',
-                  cursor: 'pointer',
-                  fontSize: 10,
-                  padding: 0,
-                  opacity: 0.7,
+                  border: `1px solid ${THEME.borderSubtle}`,
+                  borderRadius: 3,
+                  padding: '0 2px',
                 }}
               >
-                ×
-              </button>
+                <option value="auto">
+                  auto ({formatEng(transforms.get(channel.key)?.voltsPerDiv ?? 0, channel.unit)}
+                  /div)
+                </option>
+                {VOLTS_PER_DIV.map((v) => (
+                  <option key={v} value={String(v)}>
+                    {formatEng(v, channel.unit)}/div
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
+            <HelpTip helpId="scope.position" name={`CH${i + 1} position`}>
+              <input
+                type="number"
+                step={0.5}
+                value={posSettings[channel.key] ?? 0}
+                onChange={(e) => {
+                  const next = Number(e.target.value)
+                  setPosSettings((current) => ({
+                    ...current,
+                    [channel.key]: Number.isFinite(next) ? next : 0,
+                  }))
+                }}
+                className="nodrag"
+                aria-label={`CH${i + 1} position`}
+                style={{
+                  width: 34,
+                  fontSize: 9,
+                  background: light ? THEME.white : THEME.surfaceRaised,
+                  color: 'inherit',
+                  border: `1px solid ${THEME.borderSubtle}`,
+                  borderRadius: 3,
+                  padding: '0 2px',
+                }}
+              />
+            </HelpTip>
+            {held === null ? (
+              <HelpTip helpId="scope.unclip">
+                <button
+                  type="button"
+                  className="nodrag"
+                  onClick={() => onRemoveChannel(channel.key)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    fontSize: 10,
+                    padding: 0,
+                    opacity: 0.7,
+                  }}
+                  aria-label="Unclip"
+                >
+                  ×
+                </button>
+              </HelpTip>
             ) : null}
           </span>
         ))}
@@ -1857,62 +1906,66 @@ export function ScopePlot({
             }}
           >
             — M {mathLabel}
-            <select
-              value={
-                vdivSettings[MATH_KEY] === undefined || vdivSettings[MATH_KEY] === 'auto'
-                  ? 'auto'
-                  : String(vdivSettings[MATH_KEY])
-              }
-              onChange={(e) => {
-                const next = e.target.value
-                setVdivSettings((current) => ({
-                  ...current,
-                  [MATH_KEY]: next === 'auto' ? 'auto' : Number(next),
-                }))
-              }}
-              className="nodrag"
-              title={`The math trace's vertical scale, in ${mathUnit ?? ''} per grid square. Auto fits its swing; its ▸ zero mark sits at the left edge like the channels'.`}
-              style={{
-                fontSize: 9,
-                background: light ? THEME.white : THEME.surfaceRaised,
-                color: 'inherit',
-                border: `1px solid ${THEME.borderSubtle}`,
-                borderRadius: 3,
-                padding: '0 2px',
-              }}
-            >
-              <option value="auto">
-                auto ({formatEng(transforms.get(MATH_KEY)?.voltsPerDiv ?? 0, mathUnit ?? '')}/div)
-              </option>
-              {VOLTS_PER_DIV.map((v) => (
-                <option key={v} value={String(v)}>
-                  {formatEng(v, mathUnit ?? '')}/div
+            <HelpTip helpId="scope.mathScale">
+              <select
+                value={
+                  vdivSettings[MATH_KEY] === undefined || vdivSettings[MATH_KEY] === 'auto'
+                    ? 'auto'
+                    : String(vdivSettings[MATH_KEY])
+                }
+                onChange={(e) => {
+                  const next = e.target.value
+                  setVdivSettings((current) => ({
+                    ...current,
+                    [MATH_KEY]: next === 'auto' ? 'auto' : Number(next),
+                  }))
+                }}
+                className="nodrag"
+                style={{
+                  fontSize: 9,
+                  background: light ? THEME.white : THEME.surfaceRaised,
+                  color: 'inherit',
+                  border: `1px solid ${THEME.borderSubtle}`,
+                  borderRadius: 3,
+                  padding: '0 2px',
+                }}
+                aria-label="Math scale"
+              >
+                <option value="auto">
+                  auto ({formatEng(transforms.get(MATH_KEY)?.voltsPerDiv ?? 0, mathUnit ?? '')}/div)
                 </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              step={0.5}
-              value={posSettings[MATH_KEY] ?? 0}
-              onChange={(e) => {
-                const next = Number(e.target.value)
-                setPosSettings((current) => ({
-                  ...current,
-                  [MATH_KEY]: Number.isFinite(next) ? next : 0,
-                }))
-              }}
-              className="nodrag"
-              title="M vertical position, in grid squares: + slides the math trace up, − down. Display placement only."
-              style={{
-                width: 34,
-                fontSize: 9,
-                background: light ? THEME.white : THEME.surfaceRaised,
-                color: 'inherit',
-                border: `1px solid ${THEME.borderSubtle}`,
-                borderRadius: 3,
-                padding: '0 2px',
-              }}
-            />
+                {VOLTS_PER_DIV.map((v) => (
+                  <option key={v} value={String(v)}>
+                    {formatEng(v, mathUnit ?? '')}/div
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
+            <HelpTip helpId="scope.mathPosition">
+              <input
+                type="number"
+                step={0.5}
+                value={posSettings[MATH_KEY] ?? 0}
+                onChange={(e) => {
+                  const next = Number(e.target.value)
+                  setPosSettings((current) => ({
+                    ...current,
+                    [MATH_KEY]: Number.isFinite(next) ? next : 0,
+                  }))
+                }}
+                className="nodrag"
+                style={{
+                  width: 34,
+                  fontSize: 9,
+                  background: light ? THEME.white : THEME.surfaceRaised,
+                  color: 'inherit',
+                  border: `1px solid ${THEME.borderSubtle}`,
+                  borderRadius: 3,
+                  padding: '0 2px',
+                }}
+                aria-label="Math position"
+              />
+            </HelpTip>
           </span>
         ) : null}
       </div>

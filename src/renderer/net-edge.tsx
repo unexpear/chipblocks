@@ -31,6 +31,7 @@ import {
 import { type Dir, orthogonalRoute } from './orthogonal-route.ts'
 import { THEME } from './theme.ts'
 import type { FrameEdge } from './timeline.ts'
+import { HelpTip } from './tooltip.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { formatEng } from './units.ts'
 import { formatLength, gaugeAreaM2 } from './wire-length.ts'
@@ -839,23 +840,23 @@ export function NetEdge({
             </>
           ) : null}
           {waypoints.map((w, i) => (
-            <div
-              key={w.id}
-              className="nodrag nopan"
-              onPointerDown={dragWaypoint(i)}
-              title="Drag to route — the wire bends through here"
-              style={{
-                position: 'absolute',
-                transform: `translate(-50%, -50%) translate(${w.x}px, ${w.y}px)`,
-                width: 9,
-                height: 9,
-                borderRadius: '50%',
-                background: THEME.accentBlue,
-                border: `1px solid ${THEME.surfaceDeep}`,
-                cursor: 'grab',
-                pointerEvents: 'all',
-              }}
-            />
+            <HelpTip key={w.id} helpId="wire.bend">
+              <div
+                className="nodrag nopan"
+                onPointerDown={dragWaypoint(i)}
+                style={{
+                  position: 'absolute',
+                  transform: `translate(-50%, -50%) translate(${w.x}px, ${w.y}px)`,
+                  width: 9,
+                  height: 9,
+                  borderRadius: '50%',
+                  background: THEME.accentBlue,
+                  border: `1px solid ${THEME.surfaceDeep}`,
+                  cursor: 'grab',
+                  pointerEvents: 'all',
+                }}
+              />
+            </HelpTip>
           ))}
         </EdgeLabelPortal>
       ) : null}

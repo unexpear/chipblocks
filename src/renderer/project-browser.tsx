@@ -10,6 +10,7 @@ import {
 } from './recent-projects.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { useContentManager } from './use-content-manager.tsx'
 import { useShortcuts } from './use-shortcuts.tsx'
 import {
@@ -916,19 +917,20 @@ export function ProjectBrowser({
                 {scanning
                   ? 'Scanning your folders for saved projects…'
                   : `Found in Documents / Desktop / Downloads · ${recents.length} project${recents.length === 1 ? '' : 's'}`}
-                <button
-                  type="button"
-                  onClick={() => refreshProjects()}
-                  title="Scan again"
-                  style={{
-                    all: 'unset',
-                    cursor: 'pointer',
-                    color: ACCENT_TEXT,
-                    textDecoration: 'underline',
-                  }}
-                >
-                  rescan
-                </button>
+                <HelpTip helpId="browser.rescan">
+                  <button
+                    type="button"
+                    onClick={() => refreshProjects()}
+                    style={{
+                      all: 'unset',
+                      cursor: 'pointer',
+                      color: ACCENT_TEXT,
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    rescan
+                  </button>
+                </HelpTip>
               </div>
               {recents.length === 0 ? (
                 <div style={{ color: MUTED, fontSize: 13, padding: '20px 4px' }}>
@@ -985,27 +987,29 @@ export function ProjectBrowser({
                           {rp.path}
                         </div>
                       </button>
-                      <button
-                        type="button"
-                        title="Remove from the list"
-                        onClick={() =>
-                          setConfirmDelete({
-                            name: rp.name,
-                            detail: 'It comes off this list — the saved file itself is kept.',
-                            label: 'Remove',
-                            onConfirm: () => dropRecent(rp.path),
-                          })
-                        }
-                        style={{
-                          all: 'unset',
-                          cursor: 'pointer',
-                          color: MUTED,
-                          fontSize: 15,
-                          padding: '0 4px',
-                        }}
-                      >
-                        ×
-                      </button>
+                      <HelpTip helpId="browser.removeRecent">
+                        <button
+                          type="button"
+                          aria-label="Remove from the list"
+                          onClick={() =>
+                            setConfirmDelete({
+                              name: rp.name,
+                              detail: 'It comes off this list — the saved file itself is kept.',
+                              label: 'Remove',
+                              onConfirm: () => dropRecent(rp.path),
+                            })
+                          }
+                          style={{
+                            all: 'unset',
+                            cursor: 'pointer',
+                            color: MUTED,
+                            fontSize: 15,
+                            padding: '0 4px',
+                          }}
+                        >
+                          ×
+                        </button>
+                      </HelpTip>
                     </div>
                   ))}
                 </div>
@@ -1056,27 +1060,30 @@ export function ProjectBrowser({
                           {t.workspace}
                         </div>
                       </button>
-                      <button
-                        type="button"
-                        title="Delete this template"
-                        onClick={() =>
-                          setConfirmDelete({
-                            name: t.name,
-                            detail: 'This removes it from My templates for good.',
-                            label: 'Delete',
-                            onConfirm: () => deleteTemplate(t.id),
-                          })
-                        }
-                        style={{
-                          all: 'unset',
-                          cursor: 'pointer',
-                          color: MUTED,
-                          fontSize: 15,
-                          padding: '0 4px',
-                        }}
-                      >
-                        ×
-                      </button>
+                      <HelpTip helpId="browser.deleteTemplate">
+                        <button
+                          type="button"
+                          data-action="delete-template"
+                          aria-label="Delete this template"
+                          onClick={() =>
+                            setConfirmDelete({
+                              name: t.name,
+                              detail: 'This removes it from My templates for good.',
+                              label: 'Delete',
+                              onConfirm: () => deleteTemplate(t.id),
+                            })
+                          }
+                          style={{
+                            all: 'unset',
+                            cursor: 'pointer',
+                            color: MUTED,
+                            fontSize: 15,
+                            padding: '0 4px',
+                          }}
+                        >
+                          ×
+                        </button>
+                      </HelpTip>
                     </div>
                   ))}
                 </div>
@@ -1140,34 +1147,36 @@ export function ProjectBrowser({
                         </span>
                       </button>
                       {hideable ? (
-                        <button
-                          type="button"
-                          title="Remove this starter"
-                          onClick={() =>
-                            setConfirmDelete({
-                              name: t.name,
-                              detail: 'It’s hidden from your starters — Restore brings it back.',
-                              label: 'Hide',
-                              onConfirm: () => hideTemplate(t.id),
-                            })
-                          }
-                          style={{
-                            position: 'absolute',
-                            top: 6,
-                            right: 6,
-                            zIndex: 1,
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: MUTED,
-                            fontSize: 15,
-                            lineHeight: 1,
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                          }}
-                        >
-                          ×
-                        </button>
+                        <HelpTip helpId="browser.hideStarter">
+                          <button
+                            type="button"
+                            aria-label="Hide this starter"
+                            onClick={() =>
+                              setConfirmDelete({
+                                name: t.name,
+                                detail: 'It’s hidden from your starters — Restore brings it back.',
+                                label: 'Hide',
+                                onConfirm: () => hideTemplate(t.id),
+                              })
+                            }
+                            style={{
+                              position: 'absolute',
+                              top: 6,
+                              right: 6,
+                              zIndex: 1,
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              color: MUTED,
+                              fontSize: 15,
+                              lineHeight: 1,
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                            }}
+                          >
+                            ×
+                          </button>
+                        </HelpTip>
                       ) : null}
                     </div>
                   )

@@ -817,24 +817,25 @@ function ProjectTabBar({
           {label}
         </button>
         {closable && (
-          <button
-            type="button"
-            title="Close project"
-            onClick={(e) => {
-              e.stopPropagation()
-              onClose(id)
-            }}
-            style={{
-              all: 'unset',
-              cursor: 'pointer',
-              color: '#6b7c93',
-              fontSize: 14,
-              lineHeight: 1,
-              padding: '0 2px',
-            }}
-          >
-            ×
-          </button>
+          <HelpTip helpId="project.close">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onClose(id)
+              }}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                color: '#6b7c93',
+                fontSize: 14,
+                lineHeight: 1,
+                padding: '0 2px',
+              }}
+            >
+              ×
+            </button>
+          </HelpTip>
         )}
       </div>
     )
@@ -10327,57 +10328,91 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                 {/* Coordinate-graph axes through the origin + the four quadrants. */}
                                 <CoordinateAxes light={light} />
                                 <Controls>
-                                  <ControlButton
-                                    onClick={() => setSnapToGrid((s) => !s)}
-                                    title={
+                                  <HelpTip
+                                    helpId="canvas.snap"
+                                    detail={
                                       snapToGrid
-                                        ? 'Snap to grid: ON — parts align to the grid (click for free placement)'
-                                        : 'Snap to grid: OFF — free placement (click to snap parts to the grid)'
-                                    }
-                                    style={
-                                      snapToGrid
-                                        ? { background: THEME.accentBlue, color: THEME.textBright }
-                                        : undefined
+                                        ? 'On. Parts line up with the grid.'
+                                        : 'Off. Parts stay where you drop them.'
                                     }
                                   >
-                                    #
-                                  </ControlButton>
-                                  <ControlButton
-                                    onClick={() => setAutoRouteWires((v) => !v)}
-                                    title={
+                                    <span>
+                                      <ControlButton
+                                        onClick={() => setSnapToGrid((s) => !s)}
+                                        aria-label="Snap to grid"
+                                        style={
+                                          snapToGrid
+                                            ? {
+                                                background: THEME.accentBlue,
+                                                color: THEME.textBright,
+                                              }
+                                            : undefined
+                                        }
+                                      >
+                                        #
+                                      </ControlButton>
+                                    </span>
+                                  </HelpTip>
+                                  <HelpTip
+                                    helpId="canvas.autoroute"
+                                    detail={
                                       autoRouteWires
-                                        ? 'Auto-route wires: ON — plain wires route as straight lines around the parts (click for straight point-to-point wires)'
-                                        : 'Auto-route wires: OFF — wires run straight, you route them by hand (click to auto-route them around the parts)'
-                                    }
-                                    style={
-                                      autoRouteWires
-                                        ? { background: THEME.accentBlue, color: THEME.textBright }
-                                        : undefined
+                                        ? 'On. Plain wires go around the parts.'
+                                        : 'Off. A wire runs straight, and you bend it yourself.'
                                     }
                                   >
-                                    ∟
-                                  </ControlButton>
-                                  <ControlButton
-                                    onClick={() => setColorWires((v) => !v)}
-                                    title={
+                                    <span>
+                                      <ControlButton
+                                        onClick={() => setAutoRouteWires((v) => !v)}
+                                        aria-label="Auto-route wires"
+                                        style={
+                                          autoRouteWires
+                                            ? {
+                                                background: THEME.accentBlue,
+                                                color: THEME.textBright,
+                                              }
+                                            : undefined
+                                        }
+                                      >
+                                        ∟
+                                      </ControlButton>
+                                    </span>
+                                  </HelpTip>
+                                  <HelpTip
+                                    helpId="canvas.color"
+                                    detail={
                                       colorWires
-                                        ? 'Colour wires for tracing: ON — each wire has its own dull shade so you can follow it end to end (visual only; click for plain wires)'
-                                        : 'Colour wires for tracing: OFF — plain wires (click to give each wire its own dull shade so you can trace it, visual only)'
-                                    }
-                                    style={
-                                      colorWires
-                                        ? { background: THEME.accentBlue, color: THEME.textBright }
-                                        : undefined
+                                        ? 'On. Each wire has its own dull shade.'
+                                        : 'Off. Wires stay plain.'
                                     }
                                   >
-                                    🎨
-                                  </ControlButton>
-                                  <ControlButton
-                                    onClick={zoomToSelection}
-                                    title="Zoom to selection — frames the selected parts (fits all if none selected)"
-                                  >
-                                    ⊙
-                                  </ControlButton>
+                                    <span>
+                                      <ControlButton
+                                        onClick={() => setColorWires((v) => !v)}
+                                        aria-label="Colour wires"
+                                        style={
+                                          colorWires
+                                            ? {
+                                                background: THEME.accentBlue,
+                                                color: THEME.textBright,
+                                              }
+                                            : undefined
+                                        }
+                                      >
+                                        🎨
+                                      </ControlButton>
+                                    </span>
+                                  </HelpTip>
+                                  <HelpTip helpId="canvas.zoomSelection">
+                                    <span>
+                                      <ControlButton
+                                        onClick={zoomToSelection}
+                                        aria-label="Zoom to selection"
+                                      >
+                                        ⊙
+                                      </ControlButton>
+                                    </span>
+                                  </HelpTip>
                                 </Controls>
                                 <MeterProbes red={redProbe} black={blackProbe} />
                                 {/* Scope channel probes (S19-v3-77): one colored clip per
@@ -10554,34 +10589,41 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           />
         ) : null}
         {fpgaPanel === null && fpgaPanelDismissed !== null ? (
-          <button
-            type="button"
-            data-testid="fpga-report-reopen"
-            onClick={() => {
-              setFpgaPanel(fpgaPanelDismissed)
-              if (fpgaPanelDismissed.kind === 'read') fitDesign(true)
-            }}
-            title={
-              fpgaPanelDismissed.kind === 'compile'
-                ? 'Show the iCE40 compile report again'
-                : 'Show again what was read out of the chip file, and what could not be'
+          <HelpTip
+            helpId="fpga.reopen"
+            name={
+              fpgaPanelDismissed.kind === 'compile' ? 'iCE40 compile report' : 'Chip-file report'
             }
-            style={{
-              position: 'absolute',
-              top: REPORT_MARGIN,
-              right: REPORT_MARGIN,
-              zIndex: 1000,
-              padding: '5px 10px',
-              borderRadius: 6,
-              border: `1px solid ${THEME.borderStrong}`,
-              background: THEME.surfaceRaised,
-              color: THEME.textPrimary,
-              cursor: 'pointer',
-              fontSize: 11,
-            }}
+            detail={
+              fpgaPanelDismissed.kind === 'compile'
+                ? 'The compile report you just closed.'
+                : 'What was read out of the chip file, and what could not be.'
+            }
           >
-            {fpgaPanelDismissed.kind === 'compile' ? 'iCE40 compile report' : 'Chip-file report'}
-          </button>
+            <button
+              type="button"
+              data-testid="fpga-report-reopen"
+              onClick={() => {
+                setFpgaPanel(fpgaPanelDismissed)
+                if (fpgaPanelDismissed.kind === 'read') fitDesign(true)
+              }}
+              style={{
+                position: 'absolute',
+                top: REPORT_MARGIN,
+                right: REPORT_MARGIN,
+                zIndex: 1000,
+                padding: '5px 10px',
+                borderRadius: 6,
+                border: `1px solid ${THEME.borderStrong}`,
+                background: THEME.surfaceRaised,
+                color: THEME.textPrimary,
+                cursor: 'pointer',
+                fontSize: 11,
+              }}
+            >
+              {fpgaPanelDismissed.kind === 'compile' ? 'iCE40 compile report' : 'Chip-file report'}
+            </button>
+          </HelpTip>
         ) : null}
         {templateSaved !== null ? (
           <div
@@ -10790,123 +10832,98 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             }}
           >
             <span style={{ display: 'flex', gap: 3 }}>
-              <button
-                type="button"
-                onClick={() => setMeterMode('volts')}
-                title="DC volts — the steady voltage between the probes (both probes on one part also reads its current)"
-                style={meterDialStyle(meterMode === 'volts', light)}
-              >
-                V⎓
-              </button>
-              <button
-                type="button"
-                onClick={() => setMeterMode('acvolts')}
-                title="AC volts — true-RMS of the changing part of the voltage between the probes, from a real time-domain run. AC-coupled like a real V~ range: steady DC reads ~0. Frequency is counted from the waveform's own zero crossings."
-                style={meterDialStyle(meterMode === 'acvolts', light)}
-              >
-                V~
-              </button>
-              <button
-                type="button"
-                onClick={() => setMeterMode('ohms')}
-                title="Ohms — resistance between the probes, measured the real powered-off way: source EMFs zeroed (internal resistance stays), small test current, R = V/I. In-circuit readings include parallel paths, just like a real meter. Under 20 Ω shows ● continuity."
-                style={meterDialStyle(meterMode === 'ohms', light)}
-              >
-                Ω
-              </button>
-              <button
-                type="button"
-                onClick={() => setMeterMode('diode')}
-                title="Diode test — pushes a small real test current (3 V behind 2 kΩ, circuit powered off) from red to black and reads the junction's forward voltage drop. OL = no conduction: reversed probes, open junction, or an LED above the 3 V test (blue/UV)."
-                style={meterDialStyle(meterMode === 'diode', light)}
-              >
-                ⏵
-              </button>
-              <button
-                type="button"
-                onClick={() => setMeterMode('cap')}
-                title="Capacitance — charges the powered-off network between the probes with a small known source (0.5 V behind 10 kΩ, below junction turn-on), starting discharged like the real procedure, and counts the actual charge: C = Q/V. Autoranges its window like a real meter. A resistive parallel path makes the reading impossible — real meters refuse too: free one leg first."
-                style={meterDialStyle(meterMode === 'cap', light)}
-              >
-                ⊣⊢
-              </button>
-              <button
-                type="button"
-                onClick={() => setMeterMode('amps')}
-                title="DC amps, the SERIES way — the meter inserts itself between the probes as a real shunt resistance behind a fuse, and current flows THROUGH it. Correct use: open the circuit (flip a switch off) and bridge the gap with the probes. The shunt drops a real burden voltage — the price the clamp (touch a wire) doesn't pay. Probes across a live source = the classic mistake: the near-short blows the fuse."
-                style={meterDialStyle(meterMode === 'amps', light)}
-              >
-                A⎓
-              </button>
-              <button
-                type="button"
-                onClick={() => setMeterMode('tempc')}
-                title="Temperature — the red probe becomes a thermocouple: touch any terminal of a part and read its real junction temperature, the same number the electro-thermal loop solved (25 °C ambient + its actual dissipation × its θ rating). Parts with no thermal rating honestly read ambient."
-                style={meterDialStyle(meterMode === 'tempc', light)}
-              >
-                °C
-              </button>
+              {(
+                [
+                  ['volts', 'meter.dc', 'V⎓'],
+                  ['acvolts', 'meter.ac', 'V~'],
+                  ['ohms', 'meter.ohms', 'Ω'],
+                  ['diode', 'meter.diode', '⏵'],
+                  ['cap', 'meter.cap', '⊣⊢'],
+                  ['amps', 'meter.amps', 'A⎓'],
+                  ['tempc', 'meter.temp', '°C'],
+                ] as const
+              ).map(([mode, helpId, label]) => (
+                <HelpTip key={mode} helpId={helpId}>
+                  <button
+                    type="button"
+                    onClick={() => setMeterMode(mode)}
+                    style={meterDialStyle(meterMode === mode, light)}
+                  >
+                    {label}
+                  </button>
+                </HelpTip>
+              ))}
             </span>
             {meterMode === 'ohms' ? (
-              <button
-                type="button"
-                onClick={() => setRelOhms(relOhms !== null ? null : ohmsReading)}
-                disabled={relOhms === null && ohmsReading === null}
-                title="REL / zero — the real lead-zeroing workflow: touch the probes together (they read the leads' own 0.2 Ω), press REL to store that as zero, then measure relative to it. Press again to clear."
-                style={{
-                  ...meterDialStyle(relOhms !== null, light),
-                  fontSize: 9,
-                  letterSpacing: 0.5,
-                }}
+              <HelpTip
+                helpId="meter.rel"
+                detail={
+                  relOhms === null && ohmsReading === null
+                    ? 'Nothing to zero yet. Touch the probes together, or onto a resistor, first.'
+                    : undefined
+                }
               >
-                REL
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setRelOhms(relOhms !== null ? null : ohmsReading)}
+                  disabled={relOhms === null && ohmsReading === null}
+                  style={{
+                    ...meterDialStyle(relOhms !== null, light),
+                    fontSize: 9,
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  REL
+                </button>
+              </HelpTip>
             ) : null}
             {meterMode === 'volts' ? (
-              <button
-                type="button"
-                onClick={() => setMinMaxOn((on) => !on)}
-                title="MIN MAX — record the lowest, highest, and average instantaneous voltage over the settled record instead of one number: ripple floor and ceiling, swing extremes. On steady DC all three agree."
-                style={{
-                  ...meterDialStyle(minMaxOn, light),
-                  fontSize: 9,
-                  letterSpacing: 0.5,
-                }}
-              >
-                MIN/MAX
-              </button>
+              <HelpTip helpId="meter.minmax">
+                <button
+                  type="button"
+                  onClick={() => setMinMaxOn((on) => !on)}
+                  style={{
+                    ...meterDialStyle(minMaxOn, light),
+                    fontSize: 9,
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  MIN/MAX
+                </button>
+              </HelpTip>
             ) : null}
             {meterMode === 'amps' ? (
               <span style={{ display: 'flex', gap: 3 }}>
                 {(['milliamp', 'amp'] as const).map((jack) => (
-                  <button
+                  <HelpTip
                     key={jack}
-                    type="button"
-                    onClick={() => setMeterJack(jack)}
-                    title={
-                      jack === 'milliamp'
-                        ? 'mA jack — 1.8 Ω shunt (the Fluke 87V’s published 1.8 mV/mA burden), fused at 440 mA. The electronics jack: fine readings, easy to blow.'
-                        : '10 A jack — 0.03 Ω shunt, fused at 11 A (the Fluke 11 A/1000 V fuse). The high-current jack: tiny burden, survives what kills the mA fuse.'
-                    }
-                    style={{
-                      ...meterDialStyle(meterJack === jack, light),
-                      fontSize: 9,
-                      ...(blownFuses[jack] !== null ? { color: THEME.statusDanger } : {}),
-                    }}
+                    helpId={jack === 'milliamp' ? 'meter.jackMa' : 'meter.jackAmp'}
+                    detail={blownFuses[jack] !== null ? 'This jack’s fuse is open.' : undefined}
                   >
-                    {AMMETER_JACKS[jack].label}
-                    {blownFuses[jack] !== null ? ' ✕' : ''}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setMeterJack(jack)}
+                      style={{
+                        ...meterDialStyle(meterJack === jack, light),
+                        fontSize: 9,
+                        ...(blownFuses[jack] !== null ? { color: THEME.statusDanger } : {}),
+                      }}
+                    >
+                      {AMMETER_JACKS[jack].label}
+                      {blownFuses[jack] !== null ? ' ✕' : ''}
+                    </button>
+                  </HelpTip>
                 ))}
                 {blownFuses[meterJack] !== null ? (
-                  <button
-                    type="button"
-                    onClick={() => setBlownFuses((fuses) => ({ ...fuses, [meterJack]: null }))}
-                    title="Fit a fresh fuse in this jack — the real meters keep a spare in the battery compartment for exactly this moment."
-                    style={{ ...meterDialStyle(false, light), fontSize: 9 }}
-                  >
-                    replace fuse
-                  </button>
+                  <HelpTip helpId="meter.fuse">
+                    <button
+                      type="button"
+                      onClick={() => setBlownFuses((fuses) => ({ ...fuses, [meterJack]: null }))}
+                      style={{ ...meterDialStyle(false, light), fontSize: 9 }}
+                    >
+                      replace fuse
+                    </button>
+                  </HelpTip>
                 ) : null}
               </span>
             ) : null}
@@ -10921,19 +10938,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 </>
               )
             })()}
-            <button
-              type="button"
-              onClick={() => setHeldReadout(heldReadout === null ? meterReadout : null)}
-              title="HOLD — freeze this reading on the display so you can probe somewhere else and compare. The measurement keeps running underneath, like a real meter."
-              style={{
-                ...meterDialStyle(heldReadout !== null, light),
-                marginLeft: 2,
-                fontSize: 9,
-                letterSpacing: 0.5,
-              }}
-            >
-              HOLD
-            </button>
+            <HelpTip helpId="meter.hold">
+              <button
+                type="button"
+                onClick={() => setHeldReadout(heldReadout === null ? meterReadout : null)}
+                style={{
+                  ...meterDialStyle(heldReadout !== null, light),
+                  marginLeft: 2,
+                  fontSize: 9,
+                  letterSpacing: 0.5,
+                }}
+              >
+                HOLD
+              </button>
+            </HelpTip>
           </div>
         ) : null}
         {meterReadout?.why !== undefined ? (
@@ -11645,36 +11663,38 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   replay={timelineReplay}
                   onReplayIndex={setTimelineIndex}
                 />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFrontMode((m) => !m)
-                    setTimelineIndex(0)
-                  }}
-                  className="nodrag"
-                  title="Front mode — watch the charge propagate: it leaves the source and sweeps down the wires at finite speed (~2/3 c), reaching each part in the order the wire lengths set, slowed so you can see it. Play / scrub as usual; toggle off for the normal transient playback."
-                  style={{
-                    background: frontMode ? THEME.surfaceActive : 'none',
-                    border: frontMode
-                      ? `1px solid ${THEME.accentBlue}`
-                      : light
-                        ? `1px solid ${THEME.textPrimary}`
-                        : `1px solid ${THEME.borderStrong}`,
-                    color: frontMode
-                      ? THEME.accentBlueSoft
-                      : light
-                        ? THEME.borderStrong
-                        : THEME.textSoft,
-                    borderRadius: 3,
-                    padding: '2px 8px',
-                    fontSize: 11,
-                    cursor: 'pointer',
-                    marginTop: 6,
-                    marginRight: 6,
-                  }}
-                >
-                  ⚡ Front{frontMode ? ' · on' : ''}
-                </button>
+                <HelpTip helpId="timeline.front">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFrontMode((m) => !m)
+                      setTimelineIndex(0)
+                    }}
+                    className="nodrag"
+                    aria-label="Front mode"
+                    style={{
+                      background: frontMode ? THEME.surfaceActive : 'none',
+                      border: frontMode
+                        ? `1px solid ${THEME.accentBlue}`
+                        : light
+                          ? `1px solid ${THEME.textPrimary}`
+                          : `1px solid ${THEME.borderStrong}`,
+                      color: frontMode
+                        ? THEME.accentBlueSoft
+                        : light
+                          ? THEME.borderStrong
+                          : THEME.textSoft,
+                      borderRadius: 3,
+                      padding: '2px 8px',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      marginTop: 6,
+                      marginRight: 6,
+                    }}
+                  >
+                    ⚡ Front{frontMode ? ' · on' : ''}
+                  </button>
+                </HelpTip>
                 <button
                   type="button"
                   onClick={() => setTimelineOpen(false)}

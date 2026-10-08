@@ -1,5 +1,6 @@
 import type { ClipboardItem, ClipboardState } from './clipboard.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * Clipboard panel (S19-v3-69) — the Win+V idea for parts: every slot the
@@ -42,13 +43,16 @@ export function ClipboardPanel({
         <span style={{ fontSize: 12, fontWeight: 600 }}>
           📋 Clipboard — click an item to paste it
         </span>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{ ...slotButton(light), marginLeft: 'auto', width: 'auto', padding: '2px 8px' }}
-        >
-          ✕
-        </button>
+        <HelpTip helpId="clipboard.close">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close clipboard"
+            style={{ ...slotButton(light), marginLeft: 'auto', width: 'auto', padding: '2px 8px' }}
+          >
+            ✕
+          </button>
+        </HelpTip>
       </div>
 
       {empty ? (
@@ -59,32 +63,29 @@ export function ClipboardPanel({
       ) : null}
 
       {clipboard.cut !== null ? (
-        <button
-          type="button"
-          onClick={() => onPaste(clipboard.cut as ClipboardItem)}
-          title="The one cut at a time — these parts were removed from the canvas and live only here until pasted (cutting again replaces them)"
-          style={{ ...slotButton(light), borderColor: THEME.statusWarn }}
-        >
-          <span style={{ color: THEME.statusWarn, marginRight: 6 }}>✂</span>
-          {clipboard.cut.label}
-          <span style={{ marginLeft: 'auto', opacity: 0.6, fontSize: 10 }}>cut</span>
-        </button>
+        <HelpTip helpId="clipboard.cut">
+          <button
+            type="button"
+            onClick={() => onPaste(clipboard.cut as ClipboardItem)}
+            style={{ ...slotButton(light), borderColor: THEME.statusWarn }}
+          >
+            <span style={{ color: THEME.statusWarn, marginRight: 6 }}>✂</span>
+            {clipboard.cut.label}
+            <span style={{ marginLeft: 'auto', opacity: 0.6, fontSize: 10 }}>cut</span>
+          </button>
+        </HelpTip>
       ) : null}
 
       {clipboard.copies.map((item, index) => (
-        <button
-          key={item.stamp}
-          type="button"
-          onClick={() => onPaste(item)}
-          title="Paste this copy at the canvas center"
-          style={slotButton(light)}
-        >
-          <span style={{ opacity: 0.55, marginRight: 6 }}>{index + 1}.</span>
-          {item.label}
-          <span style={{ marginLeft: 'auto', opacity: 0.6, fontSize: 10 }}>
-            {item.nodes.length} part{item.nodes.length === 1 ? '' : 's'}
-          </span>
-        </button>
+        <HelpTip key={item.stamp} helpId="clipboard.copy">
+          <button type="button" onClick={() => onPaste(item)} style={slotButton(light)}>
+            <span style={{ opacity: 0.55, marginRight: 6 }}>{index + 1}.</span>
+            {item.label}
+            <span style={{ marginLeft: 'auto', opacity: 0.6, fontSize: 10 }}>
+              {item.nodes.length} part{item.nodes.length === 1 ? '' : 's'}
+            </span>
+          </button>
+        </HelpTip>
       ))}
     </div>
   )

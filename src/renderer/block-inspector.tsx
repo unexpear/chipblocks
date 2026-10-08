@@ -5,6 +5,7 @@ import type { BlockData, BlockPort, DriveKind, PinKind, PinSide } from './blocks
 import { characterizeBlock } from './logic-sim.ts'
 import type { Fidelity } from './symbols.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * Block pinout editor (Properties panel) — edit a circuit block's external pins like a chip's pinout:
@@ -161,43 +162,50 @@ export function BlockInspector({
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4 }}>
-            <span
-              style={{
-                fontSize: 9,
-                color: THEME.textFaint,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-              title={port.label}
-            >
-              {port.label}
-            </span>
+            <HelpTip helpId="inspector.portName" name={port.label}>
+              <span
+                style={{
+                  fontSize: 9,
+                  color: THEME.textFaint,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {port.label}
+              </span>
+            </HelpTip>
             <span style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-              <button
-                type="button"
-                style={arrow}
-                title="Move up on this edge"
-                onClick={() => onReorderPort(port.id, -1)}
-              >
-                ▲
-              </button>
-              <button
-                type="button"
-                style={arrow}
-                title="Move down on this edge"
-                onClick={() => onReorderPort(port.id, 1)}
-              >
-                ▼
-              </button>
-              <button
-                type="button"
-                style={remove}
-                title="Remove this pin (deletes any wire attached to it)"
-                onClick={() => onRemovePort(port.id)}
-              >
-                ×
-              </button>
+              <HelpTip helpId="inspector.pinUp">
+                <button
+                  type="button"
+                  style={arrow}
+                  aria-label="Move pin up"
+                  onClick={() => onReorderPort(port.id, -1)}
+                >
+                  ▲
+                </button>
+              </HelpTip>
+              <HelpTip helpId="inspector.pinDown">
+                <button
+                  type="button"
+                  style={arrow}
+                  aria-label="Move pin down"
+                  onClick={() => onReorderPort(port.id, 1)}
+                >
+                  ▼
+                </button>
+              </HelpTip>
+              <HelpTip helpId="inspector.removePin">
+                <button
+                  type="button"
+                  style={remove}
+                  aria-label="Remove pin"
+                  onClick={() => onRemovePort(port.id)}
+                >
+                  ×
+                </button>
+              </HelpTip>
             </span>
           </div>
           <input
@@ -207,45 +215,50 @@ export function BlockInspector({
             style={field}
           />
           <div style={{ display: 'flex', gap: 4 }}>
-            <select
-              value={port.kind ?? 'signal'}
-              onChange={(e) => onEditPort(port.id, { kind: e.target.value as PinKind })}
-              style={{ ...field, flex: 1 }}
-              title="A power pin shows +/− (red/blue); a signal pin is plain"
-            >
-              <option value="signal">signal</option>
-              <option value="power_positive">+ power</option>
-              <option value="power_negative">− power</option>
-            </select>
-            <select
-              value={port.side}
-              onChange={(e) => onEditPort(port.id, { side: e.target.value as PinSide })}
-              style={{ ...field, flex: 1 }}
-              title="Which edge of the block this pin sits on"
-            >
-              <option value="left">left</option>
-              <option value="right">right</option>
-              <option value="top">top</option>
-              <option value="bottom">bottom</option>
-            </select>
+            <HelpTip helpId="inspector.pinKind">
+              <select
+                value={port.kind ?? 'signal'}
+                onChange={(e) => onEditPort(port.id, { kind: e.target.value as PinKind })}
+                style={{ ...field, flex: 1 }}
+                aria-label="Pin kind"
+              >
+                <option value="signal">signal</option>
+                <option value="power_positive">+ power</option>
+                <option value="power_negative">− power</option>
+              </select>
+            </HelpTip>
+            <HelpTip helpId="inspector.pinSide">
+              <select
+                value={port.side}
+                onChange={(e) => onEditPort(port.id, { side: e.target.value as PinSide })}
+                style={{ ...field, flex: 1 }}
+                aria-label="Pin side"
+              >
+                <option value="left">left</option>
+                <option value="right">right</option>
+                <option value="top">top</option>
+                <option value="bottom">bottom</option>
+              </select>
+            </HelpTip>
           </div>
-          <select
-            aria-label={`${port.name ?? port.label} drive type`}
-            value={port.drive ?? ''}
-            onChange={(e) =>
-              onEditPort(port.id, {
-                drive: e.target.value === '' ? undefined : (e.target.value as DriveKind),
-              })
-            }
-            style={{ ...field, width: '100%' }}
-            title="Signal direction / drive type — the basis of the output-combining (driver-contention) checks"
-          >
-            <option value="">drive not declared</option>
-            <option value="input">input</option>
-            <option value="push_pull">output: push-pull (normal)</option>
-            <option value="open_collector">output: open-collector / drain</option>
-            <option value="tristate">output: tri-state</option>
-          </select>
+          <HelpTip helpId="inspector.drive">
+            <select
+              aria-label={`${port.name ?? port.label} drive type`}
+              value={port.drive ?? ''}
+              onChange={(e) =>
+                onEditPort(port.id, {
+                  drive: e.target.value === '' ? undefined : (e.target.value as DriveKind),
+                })
+              }
+              style={{ ...field, width: '100%' }}
+            >
+              <option value="">drive not declared</option>
+              <option value="input">input</option>
+              <option value="push_pull">output: push-pull (normal)</option>
+              <option value="open_collector">output: open-collector / drain</option>
+              <option value="tristate">output: tri-state</option>
+            </select>
+          </HelpTip>
           <details>
             <summary>Port contract</summary>
             <div style={{ fontSize: 9, color: THEME.textFaint, margin: '4px 0' }}>
@@ -287,63 +300,72 @@ export function BlockInspector({
           ))}
           {port.drive === 'tristate' ? (
             <div style={{ display: 'flex', gap: 4 }}>
-              <select
-                value={port.enable?.pin ?? ''}
-                onChange={(e) =>
-                  onEditPort(port.id, {
-                    enable: { pin: e.target.value, activeHigh: port.enable?.activeHigh ?? true },
-                  })
-                }
-                style={{ ...field, flex: 1 }}
-                title="Which pin enables this tri-state output — lets the live check count how many drive the bus at once"
-              >
-                <option value="">(no enable set)</option>
-                {ports
-                  .filter((p) => p.id !== port.id)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      en: {p.name ?? p.label}
-                    </option>
-                  ))}
-              </select>
-              <select
-                value={port.enable?.activeHigh === false ? 'low' : 'high'}
-                onChange={(e) => {
-                  if (port.enable) {
+              <HelpTip helpId="inspector.enable">
+                <select
+                  value={port.enable?.pin ?? ''}
+                  onChange={(e) =>
                     onEditPort(port.id, {
-                      enable: { pin: port.enable.pin, activeHigh: e.target.value === 'high' },
+                      enable: { pin: e.target.value, activeHigh: port.enable?.activeHigh ?? true },
                     })
                   }
-                }}
-                disabled={port.enable === undefined}
-                style={{ ...field, width: 64 }}
-                title="Is the output enabled when the enable pin is HIGH or LOW?"
+                  style={{ ...field, flex: 1 }}
+                  aria-label="Enable pin"
+                >
+                  <option value="">(no enable set)</option>
+                  {ports
+                    .filter((p) => p.id !== port.id)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        en: {p.name ?? p.label}
+                      </option>
+                    ))}
+                </select>
+              </HelpTip>
+              <HelpTip
+                helpId="inspector.enableLevel"
+                detail={port.enable === undefined ? 'Choose the enable pin first.' : undefined}
               >
-                <option value="high">on=hi</option>
-                <option value="low">on=lo</option>
-              </select>
+                <select
+                  value={port.enable?.activeHigh === false ? 'low' : 'high'}
+                  onChange={(e) => {
+                    if (port.enable) {
+                      onEditPort(port.id, {
+                        enable: { pin: port.enable.pin, activeHigh: e.target.value === 'high' },
+                      })
+                    }
+                  }}
+                  disabled={port.enable === undefined}
+                  style={{ ...field, width: 64 }}
+                  aria-label="Enable level"
+                >
+                  <option value="high">on=hi</option>
+                  <option value="low">on=lo</option>
+                </select>
+              </HelpTip>
             </div>
           ) : null}
         </div>
       ))}
       {available.length > 0 ? (
-        <select
-          value=""
-          onChange={(e) => {
-            const sep = e.target.value.indexOf('::')
-            if (sep < 0) return
-            onAddPort(e.target.value.slice(0, sep), e.target.value.slice(sep + 2))
-          }}
-          style={{ ...field, marginTop: 8, width: '100%' }}
-          title="Expose an internal terminal as a pin — even before you wire to it"
-        >
-          <option value="">+ Add pin (expose a terminal)…</option>
-          {available.map((t) => (
-            <option key={`${t.nodeId}::${t.handleId}`} value={`${t.nodeId}::${t.handleId}`}>
-              {t.label}
-            </option>
-          ))}
-        </select>
+        <HelpTip helpId="inspector.addPin">
+          <select
+            value=""
+            onChange={(e) => {
+              const sep = e.target.value.indexOf('::')
+              if (sep < 0) return
+              onAddPort(e.target.value.slice(0, sep), e.target.value.slice(sep + 2))
+            }}
+            style={{ ...field, marginTop: 8, width: '100%' }}
+            aria-label="Add pin"
+          >
+            <option value="">+ Add pin (expose a terminal)…</option>
+            {available.map((t) => (
+              <option key={`${t.nodeId}::${t.handleId}`} value={`${t.nodeId}::${t.handleId}`}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </HelpTip>
       ) : null}
       {onSaveAsPart ? <SaveAsPart onSave={onSaveAsPart} /> : null}
     </div>

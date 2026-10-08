@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ContextMenu } from './context-menu.tsx'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * Schematic Hierarchy panel (KiCad's, our version) — an outline of the circuit: a Root with every
@@ -58,52 +59,53 @@ export function SchematicHierarchy({
         </div>
       ) : (
         nodes.map((node) => (
-          // biome-ignore lint/a11y/noStaticElementInteractions: a selectable outline row
-          // biome-ignore lint/a11y/useKeyWithClickEvents: mouse-driven outline row; keyboard nav is future work
-          <div
-            key={node.id}
-            onClick={() => onSelect(node.id)}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              onSelect(node.id)
-              setMenu({ x: e.clientX, y: e.clientY, id: node.id })
-            }}
-            title={`${node.id} — click to select, right-click for actions`}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 7,
-              padding: '3px 6px 3px 18px',
-              cursor: 'pointer',
-              borderRadius: 4,
-              background: node.selected ? THEME.surfaceActive : 'transparent',
-            }}
-          >
-            <span
-              aria-hidden
+          <HelpTip key={node.id} helpId="hierarchy.row" name={node.id}>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: a selectable outline row */}
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: mouse-driven outline row; keyboard nav is future work */}
+            <div
+              data-definition={node.definition}
+              onClick={() => onSelect(node.id)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                onSelect(node.id)
+                setMenu({ x: e.clientX, y: e.clientY, id: node.id })
+              }}
               style={{
-                width: 22,
-                height: 13,
-                flex: 'none',
-                overflow: 'hidden',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
+                gap: 7,
+                padding: '3px 6px 3px 18px',
+                cursor: 'pointer',
+                borderRadius: 4,
+                background: node.selected ? THEME.surfaceActive : 'transparent',
               }}
             >
-              {node.blockName !== undefined ? (
-                <span style={{ color: THEME.accentPurple, fontSize: 12 }}>⧉</span>
-              ) : (
-                <span style={{ transform: 'scale(0.3)' }}>
-                  <DeviceGlyph definition={node.definition} />
-                </span>
-              )}
-            </span>
-            <span style={{ color: THEME.textPrimary }}>{node.id}</span>
-            <span style={{ marginLeft: 'auto', color: THEME.textFaint, fontSize: 10 }}>
-              {node.blockName ?? node.definition}
-            </span>
-          </div>
+              <span
+                aria-hidden
+                style={{
+                  width: 22,
+                  height: 13,
+                  flex: 'none',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {node.blockName !== undefined ? (
+                  <span style={{ color: THEME.accentPurple, fontSize: 12 }}>⧉</span>
+                ) : (
+                  <span style={{ transform: 'scale(0.3)' }}>
+                    <DeviceGlyph definition={node.definition} />
+                  </span>
+                )}
+              </span>
+              <span style={{ color: THEME.textPrimary }}>{node.id}</span>
+              <span style={{ marginLeft: 'auto', color: THEME.textFaint, fontSize: 10 }}>
+                {node.blockName ?? node.definition}
+              </span>
+            </div>
+          </HelpTip>
         ))
       )}
 

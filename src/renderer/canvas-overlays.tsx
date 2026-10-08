@@ -10,6 +10,7 @@
 import { useInternalNode } from '@xyflow/react'
 import { FlowViewportPortal } from './flow-portals.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { roundedPathD } from './wire-path.ts'
 /**
  * The wire-in-progress (click-by-click drawing): a dashed route from the start
@@ -182,29 +183,29 @@ function NodeConnectPoints({
         const y = node.internals.positionAbsolute.y + h.y + h.height / 2
         const isStart = start?.nodeId === nodeId && start?.handleId === handleId
         return (
-          <button
-            type="button"
-            key={handleId}
-            className="nodrag nopan"
-            title={`Connect: ${nodeId} · ${handleId}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onPick(nodeId, handleId)
-            }}
-            style={{
-              position: 'absolute',
-              left: x - 7,
-              top: y - 7,
-              width: 14,
-              height: 14,
-              padding: 0,
-              borderRadius: '50%',
-              background: isStart ? THEME.accentBlue : 'rgba(56,139,253,0.22)',
-              border: `2px solid ${isStart ? THEME.accentBlueBright : THEME.accentBlue}`,
-              cursor: 'pointer',
-              boxShadow: isStart ? '0 0 0 3px rgba(56,139,253,0.35)' : 'none',
-            }}
-          />
+          <HelpTip key={handleId} helpId="connect.point" name={`${nodeId} · ${handleId}`}>
+            <button
+              type="button"
+              className="nodrag nopan"
+              onClick={(event) => {
+                event.stopPropagation()
+                onPick(nodeId, handleId)
+              }}
+              style={{
+                position: 'absolute',
+                left: x - 7,
+                top: y - 7,
+                width: 14,
+                height: 14,
+                padding: 0,
+                borderRadius: '50%',
+                background: isStart ? THEME.accentBlue : 'rgba(56,139,253,0.22)',
+                border: `2px solid ${isStart ? THEME.accentBlueBright : THEME.accentBlue}`,
+                cursor: 'pointer',
+                boxShadow: isStart ? '0 0 0 3px rgba(56,139,253,0.35)' : 'none',
+              }}
+            />
+          </HelpTip>
         )
       })}
     </>

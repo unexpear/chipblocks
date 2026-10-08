@@ -42,7 +42,7 @@ function referencedHelpIds(): string[] {
   walk(join(process.cwd(), 'src/renderer'), files)
   const ids = new Set<string>()
   const idInText =
-    /['"]((?:tool|toolbar|lens|wire|connect|status|crumb|dock|palette|picker|math|tests|pcb|board|gerber|content|shortcuts)(?:\.[A-Za-z0-9_-]+)+)['"]/g
+    /['"]((?:tool|toolbar|lens|wire|connect|status|crumb|dock|palette|picker|math|tests|pcb|board|gerber|content|shortcuts|meter|scope|timeline|canvas|project|fpga|browser|verilog|footprint|userpart|inspector|bode|distortion|reflection|stress|clipboard|symbol|chip|pcb3d|viewer|replay|plan|hierarchy|crossing|device|block|junction|keycap|hub)(?:\.[A-Za-z0-9_-]+)+)['"]/g
   for (const file of files) {
     const source = readFileSync(file, 'utf8')
     for (const match of source.matchAll(idInText)) {
@@ -68,6 +68,45 @@ describe('hover help registry', () => {
       expect(entry?.name.trim().length).toBeGreaterThan(0)
       expect(entry?.summary.trim().length).toBeGreaterThan(0)
     }
+  })
+
+  test('the screens that used a browser tip now name a help id', () => {
+    const referenced = referencedHelpIds()
+    const screens = [
+      'meter',
+      'scope',
+      'timeline',
+      'canvas',
+      'project',
+      'fpga',
+      'browser',
+      'verilog',
+      'footprint',
+      'userpart',
+      'inspector',
+      'bode',
+      'distortion',
+      'reflection',
+      'stress',
+      'clipboard',
+      'symbol',
+      'chip',
+      'pcb3d',
+      'viewer',
+      'replay',
+      'plan',
+      'hierarchy',
+      'crossing',
+      'device',
+      'block',
+      'junction',
+      'keycap',
+      'hub',
+    ]
+    const missing = screens.filter(
+      (screen) => !referenced.some((id) => id.startsWith(`${screen}.`)),
+    )
+    expect(missing).toEqual([])
   })
 
   test('every built-in part, catalog part, picker section, and Gerber role has its own sentence', () => {

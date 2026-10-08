@@ -13,6 +13,7 @@ import type { Board, PadBox, Recess } from './pcb-board.ts'
 import { hitCopper, hitPad } from './pcb-pick.ts'
 import type { BoardRouting, CopperLayer } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * The route + via tool state threaded from App into the 3-D view — the SAME contract the flat view
@@ -416,40 +417,49 @@ export function Pcb3DView({
           alignItems: 'center',
         }}
       >
-        <label
-          style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#9fb0c3' }}
-          title="Explode the layers apart in space — separate the copper planes so you can see the vias bridging between them, and route directly onto the exposed layers"
-        >
-          Explode
-          <input
-            type="range"
-            min={0}
-            max={maxExplode}
-            step={maxExplode / 100}
-            value={explode}
-            onChange={(e) => setExplode(Number(e.target.value))}
-            style={{ width: 90 }}
-          />
-        </label>
+        <HelpTip helpId="pcb3d.explode">
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              fontSize: 10,
+              color: '#9fb0c3',
+            }}
+          >
+            Explode
+            <input
+              type="range"
+              min={0}
+              max={maxExplode}
+              step={maxExplode / 100}
+              value={explode}
+              onChange={(e) => setExplode(Number(e.target.value))}
+              style={{ width: 90 }}
+            />
+          </label>
+        </HelpTip>
         <span style={{ fontSize: 10, color: '#9fb0c3' }}>
           {routing3d ? 'click to route · drag to orbit' : 'drag to orbit · scroll to zoom'}
         </span>
-        <button
-          type="button"
-          onClick={resetView}
-          title="Reset the view"
-          style={{
-            border: '1px solid #33415c',
-            background: '#141f33',
-            color: '#c4d0de',
-            borderRadius: 4,
-            fontSize: 11,
-            padding: '2px 8px',
-            cursor: 'pointer',
-          }}
-        >
-          Reset
-        </button>
+        <HelpTip helpId="pcb3d.reset">
+          <button
+            type="button"
+            onClick={resetView}
+            aria-label="Reset the view"
+            style={{
+              border: '1px solid #33415c',
+              background: '#141f33',
+              color: '#c4d0de',
+              borderRadius: 4,
+              fontSize: 11,
+              padding: '2px 8px',
+              cursor: 'pointer',
+            }}
+          >
+            Reset
+          </button>
+        </HelpTip>
       </div>
     </div>
   )

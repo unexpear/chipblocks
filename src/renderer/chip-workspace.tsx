@@ -22,6 +22,7 @@ import { type CellLvsReport, summarizeLvs } from './lvs.ts'
 import { ANNOTATION_DEFINITIONS } from './part-defaults.ts'
 import { THEME } from './theme.ts'
 import { TimingPanel } from './timing-panel.tsx'
+import { HelpTip } from './tooltip.tsx'
 import { extractTopNetlist } from './top-netlist.ts'
 
 type Tally = { label: string; count: number }
@@ -344,22 +345,23 @@ export function ChipView({
           >
             Standard cells
           </button>
-          <button
-            type="button"
-            onClick={() => setTarget('ice40')}
-            title="Compile the canvas onto one iCE40 logic tile and show the report. Does not write a .bin."
-            style={{
-              border: `1px solid ${THEME.borderStrong}`,
-              background: target === 'ice40' ? THEME.accentBlue : THEME.surfaceInput,
-              color: target === 'ice40' ? '#0b1220' : THEME.textSoft,
-              borderRadius: 4,
-              fontSize: 11,
-              padding: '2px 10px',
-              cursor: 'pointer',
-            }}
-          >
-            iCE40 logic tile
-          </button>
+          <HelpTip helpId="chip.ice40">
+            <button
+              type="button"
+              onClick={() => setTarget('ice40')}
+              style={{
+                border: `1px solid ${THEME.borderStrong}`,
+                background: target === 'ice40' ? THEME.accentBlue : THEME.surfaceInput,
+                color: target === 'ice40' ? '#0b1220' : THEME.textSoft,
+                borderRadius: 4,
+                fontSize: 11,
+                padding: '2px 10px',
+                cursor: 'pointer',
+              }}
+            >
+              iCE40 logic tile
+            </button>
+          </HelpTip>
         </span>
         <span style={{ fontSize: 11, color: THEME.textFaint }}>
           {chip.isEmpty
@@ -498,22 +500,23 @@ export function ChipView({
                     flexWrap: 'wrap',
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={onReplace}
-                    title="Regenerate the placement from the current schematic (clears manual cell moves)"
-                    style={{
-                      border: `1px solid ${THEME.borderStrong}`,
-                      borderRadius: 4,
-                      background: drift ? THEME.statusWarn : THEME.surfaceInput,
-                      color: drift ? '#0b1220' : THEME.textSoft,
-                      fontSize: 11,
-                      padding: '3px 10px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ↻ Re-place from schematic
-                  </button>
+                  <HelpTip helpId="chip.replace">
+                    <button
+                      type="button"
+                      onClick={onReplace}
+                      style={{
+                        border: `1px solid ${THEME.borderStrong}`,
+                        borderRadius: 4,
+                        background: drift ? THEME.statusWarn : THEME.surfaceInput,
+                        color: drift ? '#0b1220' : THEME.textSoft,
+                        fontSize: 11,
+                        padding: '3px 10px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ↻ Re-place from schematic
+                    </button>
+                  </HelpTip>
                   {drift && (
                     <span style={{ fontSize: 12, color: THEME.statusWarn }}>
                       The schematic changed since this was laid out — re-place to sync.

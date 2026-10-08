@@ -51,6 +51,7 @@ import {
 } from './footprint-draft.ts'
 import { type Bounds, clientToView, fitView, panByPx, type View, zoomAt } from './pcb-viewport.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { footprintProblems } from './user-footprint-validate.ts'
 import { isBuiltinFootprintId, isUserFootprint, registerUserFootprint } from './user-footprints.ts'
 
@@ -608,10 +609,14 @@ export function FootprintEditor({
                 alignItems: 'center',
               }}
             >
-              <CanvasButton active={tool === 'add'} onClick={() => setTool('add')}>
+              <CanvasButton
+                active={tool === 'add'}
+                onClick={() => setTool('add')}
+                helpId="footprint.addPad"
+              >
                 + Pad
               </CanvasButton>
-              <CanvasButton active={false} onClick={fitToDraft}>
+              <CanvasButton active={false} onClick={fitToDraft} helpId="footprint.fit">
                 Fit
               </CanvasButton>
               <span style={{ fontSize: 10.5, color: THEME.textFaint }}>
@@ -781,9 +786,11 @@ export function FootprintEditor({
                   count backwards
                 </label>
               </div>
-              <button type="button" style={primaryButton} onClick={addRow}>
-                Add row of {Math.max(0, Math.floor(rowSpec.count))}
-              </button>
+              <HelpTip helpId="footprint.addRow">
+                <button type="button" style={primaryButton} onClick={addRow}>
+                  Add row of {Math.max(0, Math.floor(rowSpec.count))}
+                </button>
+              </HelpTip>
               {rowNote !== null ? (
                 <span style={{ fontSize: 10.5, lineHeight: 1.45, color: THEME.statusWarn }}>
                   {rowNote}
@@ -894,7 +901,7 @@ export function FootprintEditor({
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                   <PadFlag
                     label="thermal"
-                    title="The big pad under a power part, there to carry heat into a plane. A same-net via array inside it is by design, so the board's via-in-pad rule leaves it alone."
+                    helpId="footprint.thermal"
                     checked={selectedPad.thermal === true}
                     onChange={(on) =>
                       updatePad(selectedPadIndex, (p) => withFlag(p, 'thermal', on))
@@ -904,7 +911,7 @@ export function FootprintEditor({
                     <>
                       <PadFlag
                         label="castellated"
-                        title="A plated half-hole on the board EDGE — the notched pads of a solder-down module. It is MEANT to touch the outline, so the edge-clearance rules exempt it and the larger half-hole minimums apply instead."
+                        helpId="footprint.castellated"
                         checked={selectedPad.castellated === true}
                         onChange={(on) =>
                           updatePad(selectedPadIndex, (p) => withFlag(p, 'castellated', on))
@@ -912,7 +919,7 @@ export function FootprintEditor({
                       />
                       <PadFlag
                         label="plated"
-                        title="Whether the hole is copper-plated. Unplated is a mounting or tooling hole: no plating, no ring of copper needed, and the fab drills it in a separate file."
+                        helpId="footprint.plated"
                         checked={selectedPad.plated !== false}
                         onChange={(on) =>
                           updatePad(selectedPadIndex, (p) =>
@@ -1082,14 +1089,20 @@ export function FootprintEditor({
           <button type="button" style={subtleButton} onClick={onClose}>
             Cancel
           </button>
-          <button
-            type="button"
-            style={{ ...primaryButton, opacity: problems.length === 0 ? 1 : 0.45 }}
-            disabled={problems.length > 0}
-            onClick={save}
+          <HelpTip
+            helpId="footprint.save"
+            name={confirmReplace ? 'Replace it' : 'Save footprint'}
+            detail={problems.length > 0 ? problems[0] : undefined}
           >
-            {confirmReplace ? 'Replace it' : 'Save footprint'}
-          </button>
+            <button
+              type="button"
+              style={{ ...primaryButton, opacity: problems.length === 0 ? 1 : 0.45 }}
+              disabled={problems.length > 0}
+              onClick={save}
+            >
+              {confirmReplace ? 'Replace it' : 'Save footprint'}
+            </button>
+          </HelpTip>
         </div>
       </div>
     </div>
@@ -1117,30 +1130,30 @@ function withFlag(
 /** A small labelled tick for a pad's optional flags. */
 function PadFlag({
   label,
-  title,
+  helpId,
   checked,
   onChange,
 }: {
   label: string
-  title: string
+  helpId: string
   checked: boolean
   onChange: (checked: boolean) => void
 }) {
   return (
-    <label
-      title={title}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 5,
-        fontSize: 11,
-        color: THEME.textMuted,
-        cursor: 'help',
-      }}
-    >
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      {label}
-    </label>
+    <HelpTip helpId={helpId}>
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          fontSize: 11,
+          color: THEME.textMuted,
+        }}
+      >
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        {label}
+      </label>
+    </HelpTip>
   )
 }
 
