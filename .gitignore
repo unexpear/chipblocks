@@ -68,3 +68,6 @@ tests/_probe/
 # Allow these in case wildcard catches them
 !docs/build/
 !.gitkeep
+
+# ui-checks output (reports, screenshots, DOM snippets)
+ui-checks/runs/

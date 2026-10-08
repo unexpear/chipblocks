@@ -1,0 +1,245 @@
+{
+  "name": "shortcuts",
+  "title": "Shortcuts panel: Ctrl+K opens, defaults, rebinding rules, new binding takes effect, reset",
+  "covers": ["shortcuts", "workspace"],
+  "steps": [
+    {
+      "id": "blank",
+      "title": "Blank circuit",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplBlankCircuit"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "ctrl-k-opens",
+      "title": "Ctrl+K opens Shortcuts & controls with the default keys",
+      "screen": "shortcuts",
+      "laya": true,
+      "do": [
+        {
+          "mouseClickAt": {
+            "sel": "workspace.focusCanvas",
+            "dx": 4,
+            "dy": 4
+          }
+        },
+        {
+          "open": "shortcuts"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"undo\"]"
+          },
+          "name": "data-binding",
+          "matches": "^Ctrl\\+Z$",
+          "id": "undo-ctrl-z"
+        },
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+          },
+          "name": "data-binding",
+          "matches": "^Ctrl\\+K$",
+          "id": "panel-ctrl-k"
+        },
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"rotate\"]"
+          },
+          "name": "data-binding",
+          "matches": "^R$",
+          "id": "rotate-r"
+        },
+        {
+          "type": "count",
+          "sel": "shortcuts.fixedRows",
+          "min": 5,
+          "id": "fixed-controls-listed"
+        }
+      ]
+    },
+    {
+      "id": "bare-key-refused",
+      "title": "Rebinding the panel shortcut to a bare key is refused",
+      "screen": "shortcuts",
+      "do": [
+        {
+          "click": "shortcuts.changeRow",
+          "with": {
+            "action": "shortcutsPanel"
+          }
+        },
+        {
+          "press": "j"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "text": "Menu shortcuts need Ctrl or Alt — a bare key would steal typing."
+          },
+          "id": "needs-modifier"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+          },
+          "matches": "press a key…",
+          "id": "still-capturing"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-refused",
+      "title": "Ctrl+Z is refused as already used by Undo",
+      "screen": "shortcuts",
+      "do": {
+        "press": "Control+z"
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^Already used by “Undo"
+          },
+          "id": "already-used"
+        }
+      ]
+    },
+    {
+      "id": "accept-ctrl-j",
+      "title": "Ctrl+J is accepted and shown",
+      "screen": "shortcuts",
+      "do": {
+        "press": "Control+j"
+      },
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+          },
+          "name": "data-binding",
+          "matches": "^Ctrl\\+J$",
+          "id": "now-ctrl-j"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Already used by"
+          },
+          "id": "problem-cleared"
+        }
+      ]
+    },
+    {
+      "id": "new-binding-works",
+      "title": "Close; Ctrl+K no longer opens the panel, Ctrl+J does",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "shortcuts.close"
+        },
+        {
+          "mouseClickAt": {
+            "sel": "workspace.focusCanvas",
+            "dx": 4,
+            "dy": 4
+          }
+        },
+        {
+          "press": "Control+K"
+        },
+        {
+          "waitFor": {
+            "type": "absent",
+            "sel": "shortcuts.reset"
+          },
+          "timeoutMs": 800
+        },
+        {
+          "press": "Control+J"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "shortcuts.reset",
+          "id": "opened-by-ctrl-j"
+        }
+      ]
+    },
+    {
+      "id": "esc-cancels-capture",
+      "title": "Esc cancels a capture without changing the key",
+      "screen": "shortcuts",
+      "do": [
+        {
+          "click": "shortcuts.changeRow",
+          "with": {
+            "action": "rotate"
+          }
+        },
+        {
+          "press": "Escape"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"rotate\"]"
+          },
+          "name": "data-binding",
+          "matches": "^R$",
+          "id": "rotate-unchanged"
+        }
+      ]
+    },
+    {
+      "id": "reset",
+      "title": "Reset all to defaults restores Ctrl+K",
+      "screen": "shortcuts",
+      "do": {
+        "click": "shortcuts.reset"
+      },
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+          },
+          "name": "data-binding",
+          "matches": "^Ctrl\\+K$",
+          "id": "back-to-ctrl-k"
+        }
+      ]
+    },
+    {
+      "id": "persist",
+      "title": "Rebinds persist across restarts / update native menu accelerators",
+      "requires": ["electron:keybindPersistence"],
+      "independent": true
+    }
+  ]
+}

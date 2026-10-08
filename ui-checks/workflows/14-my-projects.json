@@ -1,0 +1,45 @@
+{
+  "name": "my-projects",
+  "title": "My Projects / templates: what the browser can and cannot show",
+  "covers": ["start"],
+  "steps": [
+    {
+      "id": "category",
+      "title": "My Projects category opens with the Open-a-saved-project action",
+      "screen": "start",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myProjects"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "start.openSaved",
+          "id": "open-saved-button"
+        }
+      ]
+    },
+    {
+      "id": "open-saved",
+      "title": "Open a saved project (native dialog)",
+      "requires": ["electron:projects"],
+      "independent": true
+    },
+    {
+      "id": "templates",
+      "title": "My templates list",
+      "requires": ["electron:templates"],
+      "independent": true
+    },
+    {
+      "id": "chip-description",
+      "title": "AI chip description",
+      "requires": ["electron:chipDescription"],
+      "independent": true
+    }
+  ]
+}

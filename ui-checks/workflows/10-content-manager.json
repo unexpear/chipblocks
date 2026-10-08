@@ -1,0 +1,170 @@
+{
+  "name": "content-manager",
+  "title": "Plugin & Content Manager: catalog rows and badges, honesty notes, bridge-less install, close paths",
+  "covers": ["contentManager", "start", "workspace"],
+  "steps": [
+    {
+      "id": "open-on-start",
+      "title": "Opens from the start screen (window event from the native Tools menu)",
+      "screen": "contentManager",
+      "laya": true,
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "open": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "count",
+          "sel": {
+            "textRe": "^PLANNED · NOT INSTALLED$"
+          },
+          "eq": 6,
+          "id": "six-planned-rows"
+        },
+        {
+          "type": "text",
+          "region": "contentManager",
+          "matches": "chipblocks-audio[\\s\\S]*chipblocks-peripherals[\\s\\S]*chipblocks-cpus[\\s\\S]*chipblocks-radios[\\s\\S]*chipblocks-video[\\s\\S]*chipblocks-experimental",
+          "id": "catalog-ids"
+        },
+        {
+          "type": "text",
+          "region": "contentManager",
+          "notMatches": "ENABLED · NOT LOADED|\\bENABLED\\b|\\bDISABLED\\b",
+          "id": "no-installed-badges"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "no-installed-badge-testids"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "role": "dialog",
+            "name": "Plugin and Content Manager",
+            "all": true
+          },
+          "eq": 1,
+          "id": "exactly-one-dialog"
+        },
+        {
+          "type": "noAlarms",
+          "region": "contentManager",
+          "id": "no-unexplained-alarms"
+        }
+      ]
+    },
+    {
+      "id": "install-without-bridge",
+      "title": "Install from local pack explains it needs the desktop bridge",
+      "screen": "contentManager",
+      "do": {
+        "click": "contentManager.install"
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Install from local pack needs the desktop app bridge",
+          "id": "bridge-needed-status"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "textRe": "^PLANNED · NOT INSTALLED$"
+          },
+          "eq": 6,
+          "id": "still-six"
+        }
+      ]
+    },
+    {
+      "id": "close-button",
+      "title": "Close closes it",
+      "screen": "start",
+      "do": {
+        "click": "contentManager.close"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "role": "dialog",
+            "name": "Plugin and Content Manager"
+          },
+          "id": "closed"
+        }
+      ]
+    },
+    {
+      "id": "open-in-workspace",
+      "title": "Opens inside a project too; backdrop click closes",
+      "screen": "workspace",
+      "do": [
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplBlankCircuit"
+          }
+        },
+        {
+          "open": "contentManager"
+        },
+        {
+          "mouseClickAt": {
+            "sel": "contentManager.backdrop",
+            "dx": 10,
+            "dy": 10
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "role": "dialog",
+            "name": "Plugin and Content Manager"
+          },
+          "id": "closed-by-backdrop"
+        }
+      ]
+    },
+    {
+      "id": "no-stray-dialog-on-home",
+      "title": "After closing it inside the project, the start screen has no Content Manager left open (regression for #4 BUG-2)",
+      "screen": "start",
+      "do": [
+        {
+          "click": "workspace.homeTab"
+        },
+        {
+          "waitReady": "start"
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "role": "dialog",
+            "name": "Plugin and Content Manager"
+          },
+          "id": "no-stray-dialog",
+          "timeoutMs": 1000
+        }
+      ]
+    },
+    {
+      "id": "installed-packs",
+      "title": "Installed pack badges, Enable/Disable, Uninstall",
+      "requires": ["electron:contentPacks"],
+      "independent": true
+    }
+  ]
+}

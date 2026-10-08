@@ -1,0 +1,686 @@
+{
+  "name": "gerber-layers",
+  "title": "Gerber check: every layer tab (aria-pressed + its own counts line and FileFunction), Stack, zoom, toggle off",
+  "covers": ["pcbPanel", "gerberCheck"],
+  "steps": [
+    {
+      "id": "create-led",
+      "title": "LED + resistor template",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    },
+    {
+      "id": "open-gerber",
+      "title": "Check Gerbers (tall window)",
+      "screen": ["pcbPanel", "gerberCheck"],
+      "do": {
+        "open": "gerberCheck"
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "gerberCheck.plot",
+          "id": "plot-drawn"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-F_Cu.gtl",
+      "title": "board-F_Cu.gtl: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-F_Cu.gtl"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-F_Cu.gtl"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$1",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Copper,L1,Top · Positive",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-B_Cu.gbl",
+      "title": "board-B_Cu.gbl: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-B_Cu.gbl"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-B_Cu.gbl"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "ge",
+              "a": "$1",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Copper,L2,Bot · Positive",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-F_Mask.gts",
+      "title": "board-F_Mask.gts: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-F_Mask.gts"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-F_Mask.gts"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$1",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Soldermask,Top · Negative",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-B_Mask.gbs",
+      "title": "board-B_Mask.gbs: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-B_Mask.gbs"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-B_Mask.gbs"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$1",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Soldermask,Bot · Negative",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-F_Paste.gtp",
+      "title": "board-F_Paste.gtp: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-F_Paste.gtp"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-F_Paste.gtp"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$1",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Paste,Top · Positive",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-F_Silkscreen.gto",
+      "title": "board-F_Silkscreen.gto: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-F_Silkscreen.gto"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-F_Silkscreen.gto"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$2",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Legend,Top · Positive",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-F_Fab.gbr",
+      "title": "board-F_Fab.gbr: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-F_Fab.gbr"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-F_Fab.gbr"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$2",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "AssemblyDrawing,Top · Positive",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board-Edge_Cuts.gm1",
+      "title": "board-Edge_Cuts.gm1: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board-Edge_Cuts.gm1"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board-Edge_Cuts.gm1"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$2",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Profile,NP",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "tab-board.drl",
+      "title": "board.drl: tab shows its own counts line and FileFunction",
+      "screen": "gerberCheck",
+      "continueOnFail": true,
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board.drl"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board.drl"
+          },
+          "value": "true",
+          "id": "tab-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 1,
+          "id": "exactly-one-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "^(\\d+) flash(?:es)? · (\\d+) strokes? · (\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$3",
+              "b": 0
+            }
+          ],
+          "id": "counts-line"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck.counts",
+          "matches": "Plated,1,2,PTH",
+          "id": "file-function"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        }
+      ]
+    },
+    {
+      "id": "stack",
+      "title": "Stack returns to all layers in one frame",
+      "screen": "gerberCheck",
+      "do": {
+        "click": "gerberCheck.stack"
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "gerberCheck",
+          "matches": "All plotted layers, one frame\\.",
+          "id": "stack-mode"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "testid": "gerber-board"
+          },
+          "id": "board-drawn-in-stack"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 0,
+          "id": "no-tab-pressed"
+        }
+      ]
+    },
+    {
+      "id": "zoom-in",
+      "title": "+ zooms in (plot gets wider)",
+      "screen": "gerberCheck",
+      "do": [
+        {
+          "capture": {
+            "name": "w0",
+            "sel": "gerberCheck.plot",
+            "attr": "width"
+          }
+        },
+        {
+          "click": "gerberCheck.zoomIn"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "gerberCheck.plot",
+          "name": "width",
+          "check": [
+            {
+              "op": "gt",
+              "b": "@w0"
+            }
+          ],
+          "id": "wider"
+        }
+      ]
+    },
+    {
+      "id": "zoom-out",
+      "title": "− zooms back out",
+      "screen": "gerberCheck",
+      "do": [
+        {
+          "capture": {
+            "name": "w1",
+            "sel": "gerberCheck.plot",
+            "attr": "width"
+          }
+        },
+        {
+          "click": "gerberCheck.zoomOut"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "gerberCheck.plot",
+          "name": "width",
+          "check": [
+            {
+              "op": "lt",
+              "b": "@w1"
+            }
+          ],
+          "id": "narrower"
+        }
+      ]
+    },
+    {
+      "id": "fit",
+      "title": "+ twice then Fit restores the fitted width",
+      "screen": "gerberCheck",
+      "do": [
+        {
+          "click": "gerberCheck.zoomIn"
+        },
+        {
+          "click": "gerberCheck.zoomIn"
+        },
+        {
+          "click": "gerberCheck.fit"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "gerberCheck.plot",
+          "name": "width",
+          "check": [
+            {
+              "op": "eq",
+              "b": "@w0"
+            }
+          ],
+          "id": "fit-width"
+        }
+      ]
+    },
+    {
+      "id": "toggle-off",
+      "title": "Check Gerbers again closes the check",
+      "screen": "pcbPanel",
+      "do": {
+        "click": "pcbPanel.checkGerbers"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": "gerberCheck.plot",
+          "id": "plot-gone"
+        },
+        {
+          "type": "pressed",
+          "sel": "pcbPanel.checkGerbers",
+          "value": "false",
+          "id": "unpressed"
+        }
+      ]
+    }
+  ]
+}

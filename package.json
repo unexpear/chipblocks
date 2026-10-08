@@ -21,7 +21,9 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder",
-    "package:dir": "electron-vite build && electron-builder --dir"
+    "package:dir": "electron-vite build && electron-builder --dir",
+    "ui-checks": "node ui-checks/src/run.mjs",
+    "ui-checks:fast": "node ui-checks/src/run.mjs --no-laya"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -36,6 +38,7 @@
     "electron-vite": "^5.0.0",
     "jsdom": "^29.1.1",
     "mathjs": "^15.2.0",
+    "playwright": "^1.64.0",
     "typescript": "^6.0.3",
     "vite": "^7.3.5",
     "vitest": "^4.1.8",
