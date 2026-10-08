@@ -178,7 +178,7 @@
           "type": "visible",
           "sel": "start.recentEntry",
           "with": {
-            "pathRe": "Documents\\\\UicLed\\.chipblocks$"
+            "pathRe": "Documents[/\\\\]UicLed\\.chipblocks$"
           },
           "id": "documents-entry"
         },
@@ -186,7 +186,7 @@
           "type": "visible",
           "sel": "start.recentEntry",
           "with": {
-            "pathRe": "Desktop\\\\UicLed-copy\\.chipblocks$"
+            "pathRe": "Desktop[/\\\\]UicLed-copy\\.chipblocks$"
           },
           "id": "desktop-entry"
         },
@@ -262,7 +262,7 @@
           "type": "visible",
           "sel": "start.recentEntry",
           "with": {
-            "pathRe": "files\\\\Elsewhere\\.chipblocks$"
+            "pathRe": "files[/\\\\]Elsewhere\\.chipblocks$"
           },
           "id": "elsewhere-entry"
         },
@@ -282,7 +282,7 @@
         {
           "click": "start.recentEntry",
           "with": {
-            "pathRe": "Documents\\\\UicLed\\.chipblocks$"
+            "pathRe": "Documents[/\\\\]UicLed\\.chipblocks$"
           }
         },
         {
@@ -373,7 +373,7 @@
           "type": "visible",
           "sel": "start.recentEntry",
           "with": {
-            "pathRe": "Documents\\\\UicLed\\.chipblocks$"
+            "pathRe": "Documents[/\\\\]UicLed\\.chipblocks$"
           },
           "id": "documents-entry"
         }
