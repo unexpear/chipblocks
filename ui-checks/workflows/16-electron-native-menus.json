@@ -396,6 +396,9 @@
         },
         {
           "menu": "File ▸ Export Netlist"
+        },
+        {
+          "settle": true
         }
       ],
       "expect": [
@@ -412,11 +415,112 @@
           },
           "id": "no-export-claim",
           "why": "Nothing was written, so the card must not say Exported."
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Could not export"
+          },
+          "id": "no-failure-claim",
+          "why": "Closing the dialog is not a failed write."
+        }
+      ]
+    },
+    {
+      "id": "export-verilog-cancelled",
+      "title": "Cancelling Export Verilog writes nothing and does not report an export",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "cancel": "save"
+          }
+        },
+        {
+          "menu": "File ▸ Export Verilog"
+        },
+        {
+          "settle": true
         }
       ],
-      "knownIssue": "export-report-ignores-cancel",
-      "continueOnFail": true,
-      "why": "App bug, recorded not fixed: src/renderer/App.tsx onExportNetlistRequest calls `void bridge.saveNetlistData?.(netlist)` and then setNetlistReport({kind:'export',…}) without awaiting the result, while electron/main.ts file:save-netlist returns {ok:false} on a cancelled dialog. So a cancelled export still shows “Exported N parts to a netlist”. Verilog/GDS/LEF/DEF/Liberty/OASIS use the same pattern (not exercised here)."
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "defaultPathRe": "design\\.v$",
+          "filtersInclude": ["Verilog"],
+          "id": "asked-where"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Exported "
+          },
+          "id": "no-export-claim"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Could not export"
+          },
+          "id": "no-failure-claim"
+        },
+        {
+          "type": "file",
+          "path": "{out}/design.v",
+          "exists": false,
+          "id": "no-file"
+        }
+      ]
+    },
+    {
+      "id": "export-gds-cancelled",
+      "title": "Cancelling Export GDS writes nothing and does not report an export",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "cancel": "save"
+          }
+        },
+        {
+          "menu": "File ▸ Export GDS"
+        },
+        {
+          "settle": true
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "save",
+          "count": 1,
+          "defaultPathRe": "layout\\.gds$",
+          "filtersInclude": ["GDSII layout"],
+          "id": "asked-where"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Exported "
+          },
+          "id": "no-export-claim"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "textRe": "^Could not export"
+          },
+          "id": "no-failure-claim"
+        },
+        {
+          "type": "file",
+          "path": "{out}/layout.gds",
+          "exists": false,
+          "id": "no-file"
+        }
+      ]
     },
     {
       "id": "theme-slate",

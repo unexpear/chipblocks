@@ -15,6 +15,7 @@ import {
   REGISTRY_MAX_PACK_BYTES,
 } from '../src/renderer/content-registry.ts'
 import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
+import type { SaveDialogOutcome } from '../src/renderer/save-outcome.ts'
 import { type CanvasLoadingItemId, canvasLoadingItems } from './canvas-menu.ts'
 import { planChipDescriptionRequest } from './chip-description.ts'
 import { type CircuitOpenDecision, decideCircuitOpen } from './circuit-open.ts'
@@ -297,156 +298,122 @@ function registerSaveHandler(window: BrowserWindow): void {
   // removeHandler first so re-running createWindow (e.g. a macOS reactivate after all
   // windows have closed) can't throw "Attempted to register a second handler".
   ipcMain.removeHandler('file:save-data')
-  ipcMain.handle('file:save-data', async (_event, text: string) => {
+  ipcMain.handle('file:save-data', async (_event, text: string): Promise<SaveDialogOutcome> => {
     let path = pendingSaveAs ? null : currentCircuitPath
     if (path === null) {
       const picked = await dialog.showSaveDialog(window, {
         filters: CIRCUIT_FILTERS,
         defaultPath: currentCircuitPath ?? 'circuit.chipblocks',
       })
-      if (picked.canceled || picked.filePath === undefined) return { ok: false }
+      if (picked.canceled || !picked.filePath) return { ok: false, cancelled: true }
       path = picked.filePath
     }
     try {
       await writeFile(path, text, 'utf8')
     } catch (error) {
-      dialog.showErrorBox('Could not save circuit', `Writing the file failed: ${String(error)}`)
-      return { ok: false }
+      const reason = `Writing the file failed: ${String(error)}`
+      dialog.showErrorBox('Could not save circuit', reason)
+      return { ok: false, reason }
     }
     setCircuitPath(window, path)
     return { ok: true, path }
   })
 }
 
-function registerNetlistExportHandler(window: BrowserWindow): void {
-  // The renderer answers an export request with the SPICE netlist text; we pick a file and write it.
-  ipcMain.removeHandler('file:save-netlist')
-  ipcMain.handle('file:save-netlist', async (_event, text: string) => {
-    const picked = await dialog.showSaveDialog(window, {
-      filters: NETLIST_FILTERS,
-      defaultPath: 'circuit.cir',
-    })
-    if (picked.canceled || picked.filePath === undefined) return { ok: false }
+/**
+ * Pick a file, write the renderer's bytes, and say which of the three things happened.
+ * Cancel (`cancelled: true`) writes nothing. A throw while writing is a failure with a reason,
+ * and the native error box stays so the failure is visible even if the canvas card is missed.
+ */
+function registerChosenExport(
+  window: BrowserWindow,
+  channel: string,
+  filters: { name: string; extensions: string[] }[],
+  defaultPath: string,
+  failureTitle: string,
+  binary: boolean,
+): void {
+  ipcMain.removeHandler(channel)
+  ipcMain.handle(channel, async (_event, data: string | Uint8Array): Promise<SaveDialogOutcome> => {
+    const picked = await dialog.showSaveDialog(window, { filters, defaultPath })
+    if (picked.canceled || !picked.filePath) return { ok: false, cancelled: true }
     try {
-      await writeFile(picked.filePath, text, 'utf8')
-    } catch (error) {
-      dialog.showErrorBox('Could not export netlist', `Writing the file failed: ${String(error)}`)
-      return { ok: false }
-    }
-    return { ok: true, path: picked.filePath }
-  })
-}
-
-function registerVerilogExportHandler(window: BrowserWindow): void {
-  // The renderer answers an export request with the structural Verilog text; we pick a file and write it.
-  ipcMain.removeHandler('file:save-verilog')
-  ipcMain.handle('file:save-verilog', async (_event, text: string) => {
-    const picked = await dialog.showSaveDialog(window, {
-      filters: VERILOG_FILTERS,
-      defaultPath: 'design.v',
-    })
-    if (picked.canceled || picked.filePath === undefined) return { ok: false }
-    try {
-      await writeFile(picked.filePath, text, 'utf8')
-    } catch (error) {
-      dialog.showErrorBox('Could not export Verilog', `Writing the file failed: ${String(error)}`)
-      return { ok: false }
-    }
-    return { ok: true, path: picked.filePath }
-  })
-}
-
-function registerFabZipExportHandler(window: BrowserWindow): void {
-  // The renderer sends the finished manufacturing ZIP's bytes (built by the deterministic engine —
-  // Gerbers, drill, BOM, placement, validation report); we pick a file and write them verbatim.
-  ipcMain.removeHandler('file:save-fab-zip')
-  ipcMain.handle('file:save-fab-zip', async (_event, data: Uint8Array) => {
-    const picked = await dialog.showSaveDialog(window, {
-      filters: [{ name: 'Manufacturing ZIP', extensions: ['zip'] }],
-      defaultPath: 'manufacturing.zip',
-    })
-    if (picked.canceled || picked.filePath === undefined) return { ok: false }
-    try {
-      await writeFile(picked.filePath, Buffer.from(data))
-    } catch (error) {
-      dialog.showErrorBox(
-        'Could not export manufacturing ZIP',
-        `Writing the file failed: ${String(error)}`,
-      )
-      return { ok: false }
-    }
-    return { ok: true, path: picked.filePath }
-  })
-}
-
-function registerGdsExportHandler(window: BrowserWindow): void {
-  // The renderer sends the placed chip floorplan's GDSII bytes (built by the deterministic gds.ts writer);
-  // we pick a file and write them verbatim. Binary, like the fab-ZIP path — never re-encoded.
-  ipcMain.removeHandler('file:save-gds')
-  ipcMain.handle('file:save-gds', async (_event, data: Uint8Array) => {
-    const picked = await dialog.showSaveDialog(window, {
-      filters: GDS_FILTERS,
-      defaultPath: 'layout.gds',
-    })
-    if (picked.canceled || picked.filePath === undefined) return { ok: false }
-    try {
-      await writeFile(picked.filePath, Buffer.from(data))
-    } catch (error) {
-      dialog.showErrorBox('Could not export GDSII', `Writing the file failed: ${String(error)}`)
-      return { ok: false }
-    }
-    return { ok: true, path: picked.filePath }
-  })
-}
-
-function registerOasisExportHandler(window: BrowserWindow): void {
-  // The renderer sends the placed floorplan's OASIS bytes (oasis.ts); we pick a file and write them
-  // verbatim — binary, like the GDS path.
-  ipcMain.removeHandler('file:save-oasis')
-  ipcMain.handle('file:save-oasis', async (_event, data: Uint8Array) => {
-    const picked = await dialog.showSaveDialog(window, {
-      filters: OASIS_FILTERS,
-      defaultPath: 'layout.oas',
-    })
-    if (picked.canceled || picked.filePath === undefined) return { ok: false }
-    try {
-      await writeFile(picked.filePath, Buffer.from(data))
-    } catch (error) {
-      dialog.showErrorBox('Could not export OASIS', `Writing the file failed: ${String(error)}`)
-      return { ok: false }
-    }
-    return { ok: true, path: picked.filePath }
-  })
-}
-
-function registerLefDefExportHandlers(window: BrowserWindow): void {
-  // The renderer builds the LEF library / DEF placed-design TEXT (lef.ts / def.ts, for OpenROAD); we pick a
-  // file and write it. Text, like the Verilog export.
-  const textExport = (
-    channel: string,
-    filters: typeof LEF_FILTERS,
-    defaultPath: string,
-    label: string,
-  ) => {
-    ipcMain.removeHandler(channel)
-    ipcMain.handle(channel, async (_event, text: string) => {
-      const picked = await dialog.showSaveDialog(window, { filters, defaultPath })
-      if (picked.canceled || picked.filePath === undefined) return { ok: false }
-      try {
-        await writeFile(picked.filePath, text, 'utf8')
-      } catch (error) {
-        dialog.showErrorBox(
-          `Could not export ${label}`,
-          `Writing the file failed: ${String(error)}`,
-        )
-        return { ok: false }
-      }
+      if (binary) await writeFile(picked.filePath, Buffer.from(data as Uint8Array))
+      else await writeFile(picked.filePath, data as string, 'utf8')
       return { ok: true, path: picked.filePath }
-    })
-  }
-  textExport('file:save-lef', LEF_FILTERS, 'design.lef', 'LEF')
-  textExport('file:save-def', DEF_FILTERS, 'design.def', 'DEF')
-  textExport('file:save-lib', LIB_FILTERS, 'design.lib', 'Liberty')
+    } catch (error) {
+      const reason = `Writing the file failed: ${String(error)}`
+      dialog.showErrorBox(failureTitle, reason)
+      return { ok: false, reason }
+    }
+  })
+}
+
+function registerExportHandlers(window: BrowserWindow): void {
+  registerChosenExport(
+    window,
+    'file:save-netlist',
+    NETLIST_FILTERS,
+    'circuit.cir',
+    'Could not export netlist',
+    false,
+  )
+  registerChosenExport(
+    window,
+    'file:save-verilog',
+    VERILOG_FILTERS,
+    'design.v',
+    'Could not export Verilog',
+    false,
+  )
+  registerChosenExport(
+    window,
+    'file:save-fab-zip',
+    [{ name: 'Manufacturing ZIP', extensions: ['zip'] }],
+    'manufacturing.zip',
+    'Could not export manufacturing ZIP',
+    true,
+  )
+  registerChosenExport(
+    window,
+    'file:save-gds',
+    GDS_FILTERS,
+    'layout.gds',
+    'Could not export GDSII',
+    true,
+  )
+  registerChosenExport(
+    window,
+    'file:save-oasis',
+    OASIS_FILTERS,
+    'layout.oas',
+    'Could not export OASIS',
+    true,
+  )
+  registerChosenExport(
+    window,
+    'file:save-lef',
+    LEF_FILTERS,
+    'design.lef',
+    'Could not export LEF',
+    false,
+  )
+  registerChosenExport(
+    window,
+    'file:save-def',
+    DEF_FILTERS,
+    'design.def',
+    'Could not export DEF',
+    false,
+  )
+  registerChosenExport(
+    window,
+    'file:save-lib',
+    LIB_FILTERS,
+    'design.lib',
+    'Could not export Liberty',
+    false,
+  )
 }
 
 /** Read + validate a .chipblocks file at `path` (shared by the open-into-a-new-tab handlers below,
@@ -656,7 +623,7 @@ function registerUserTemplatesHandlers(): void {
   })
   ipcMain.handle(
     'user-templates:write',
-    async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
+    async (_event, text: string): Promise<SaveDialogOutcome> => {
       const path = userTemplatesPath()
       try {
         await mkdir(dirname(path), { recursive: true })
@@ -667,7 +634,7 @@ function registerUserTemplatesHandlers(): void {
           'Could not save your templates library',
           `Writing failed: ${String(error)}`,
         )
-        return { ok: false }
+        return { ok: false, reason: `Writing failed: ${String(error)}` }
       }
     },
   )
@@ -1248,12 +1215,7 @@ function createWindow(): void {
   hardenNavigation(window, devUrl)
   installMenu(window)
   registerSaveHandler(window)
-  registerNetlistExportHandler(window)
-  registerVerilogExportHandler(window)
-  registerFabZipExportHandler(window)
-  registerGdsExportHandler(window)
-  registerOasisExportHandler(window)
-  registerLefDefExportHandlers(window)
+  registerExportHandlers(window)
   registerCircuitOpenHandlers(window)
   registerChipDescriptionHandler(window)
   registerKeybindHandlers(window)

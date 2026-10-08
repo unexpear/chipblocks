@@ -69,7 +69,7 @@ Electron target (`npm run ui-checks:electron`):
 
 | workflow | what |
 |---|---|
-| electron-native-menus | sandbox verified at launch; File / Edit / Settings / Tools / Shortcuts menu structure and accelerators; canvas-only File items grey on the launcher; Tools ▸ Plugin & Content Manager and Shortcuts ▸ View / Change open the panels; Edit ▸ Select All / Copy / Paste / Undo / Redo on the LED circuit; File ▸ Export Netlist… (save dialog default name + filter, file written, report card); cancelled export (known issue, below); Settings ▸ Theme ▸ Slate (radio checked, `--surfaceBase` changes) survives a relaunch |
+| electron-native-menus | sandbox verified at launch; File / Edit / Settings / Tools / Shortcuts menu structure and accelerators; canvas-only File items grey on the launcher; Tools ▸ Plugin & Content Manager and Shortcuts ▸ View / Change open the panels; Edit ▸ Select All / Copy / Paste / Undo / Redo on the LED circuit; File ▸ Export Netlist… (save dialog default name + filter, file written, report card); cancelling Export Netlist, Export Verilog, and Export GDS writes nothing and shows no export card; Settings ▸ Theme ▸ Slate (radio checked, `--surfaceBase` changes) survives a relaunch |
 | electron-save-open-projects | first Save asks (Documents/UicLed.chipblocks, JSON: format, 4 nodes, 4 wires, window title); second Save is silent and rewrites (5 nodes); Save As to Desktop; My Projects lists both (scan count); open a file from elsewhere via the open dialog; recent list; reopen; a broken file is refused with an error box; the list survives a relaunch |
 | electron-user-templates | File ▸ Save as Template → toast + `~/.chipblocks/user-templates.json`; listed under My templates ("4 parts · schematic"); survives a relaunch; start a project from it; delete asks to confirm, then empties the file |
 | electron-content-packs | three packs built at test time with a throwaway ed25519 key (signed MIT, signature broken after signing, GPL-3.0); signed install from a local file → ENABLED badge, trust note, `libraries/<id>/pack.json` + `index.json` (valid-untrusted / match); bad signature and copyleft refused; disable / enable badges; the pack's part in the picker; survives a relaunch; tampered pack.json → `ENABLED · NOT LOADED` + SHA-256 mismatch note; uninstall |
@@ -135,9 +135,9 @@ A step can carry `"knownIssue": "<short id or link>"`. If it still fails, it is 
 KNOWN with full evidence but does **not** fail the run; if it passes, the report says the tag can
 be removed.
 
-| step | issue |
-|---|---|
-| electron-native-menus › export-netlist-cancelled | `export-report-ignores-cancel`: cancelling File ▸ Export Netlist…'s save dialog still shows "Exported N parts to a netlist". `App.tsx` `onExportNetlistRequest` calls `void bridge.saveNetlistData?.(netlist)` and sets the export report without waiting for `{ ok }`; `file:save-netlist` returns `{ ok: false }` on cancel. The Verilog / GDS / LEF / DEF / Liberty / OASIS exports use the same pattern (not driven here). |
+None are open. Cancelling File ▸ Export Netlist… used to show "Exported N parts to a netlist"
+(`export-report-ignores-cancel`); that step is now a normal assert, and Export Verilog and Export
+GDS are cancelled the same way.
 
 ## Laya advisor (optional)
 
