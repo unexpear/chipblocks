@@ -5,6 +5,7 @@ import {
   useState,
 } from 'react'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import './canvas-animations.css'
 
 /**
@@ -158,36 +159,38 @@ export function DockablePanel({
           }}
         >
           {tabs.map((t) => (
-            <div
-              key={t.id}
-              onPointerDown={startTabDrag(t.id)}
-              title="Drag a tab out to an edge to pop it back into its own panel"
-              style={tabStyle(t.id === activeId)}
-            >
-              {t.title}
-            </div>
+            <HelpTip key={t.id} helpId="dock.tab">
+              <div
+                data-dock-tab={t.id}
+                onPointerDown={startTabDrag(t.id)}
+                style={tabStyle(t.id === activeId)}
+              >
+                {t.title}
+              </div>
+            </HelpTip>
           ))}
         </div>
       ) : (
-        <div
-          onPointerDown={startTabDrag(activeId)}
-          title="Drag to move — snaps to an edge, or drop onto a panel to stack"
-          style={{
-            ...gripBase,
-            cursor: 'grab',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            padding: horizontal ? '0 10px' : '8px 6px',
-            borderRight: horizontal ? panelBorder : undefined,
-            borderBottom: horizontal ? undefined : panelBorder,
-          }}
-        >
-          <span aria-hidden style={{ letterSpacing: -1 }}>
-            ⠿
-          </span>
-          {tabs[0]?.title}
-        </div>
+        <HelpTip helpId="dock.move">
+          <div
+            onPointerDown={startTabDrag(activeId)}
+            style={{
+              ...gripBase,
+              cursor: 'grab',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: horizontal ? '0 10px' : '8px 6px',
+              borderRight: horizontal ? panelBorder : undefined,
+              borderBottom: horizontal ? undefined : panelBorder,
+            }}
+          >
+            <span aria-hidden style={{ letterSpacing: -1 }}>
+              ⠿
+            </span>
+            {tabs[0]?.title}
+          </div>
+        </HelpTip>
       )}
       <div
         className="cb-scroll-hidden"

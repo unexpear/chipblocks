@@ -886,8 +886,17 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
 // Light-mode toggle, grid-color presets, and a Custom… item that opens the
 // in-canvas color picker. File/Shortcuts accelerators come from the editable
 // keybinds map.
+let menuThemes: { id: string; label: string }[] = [{ id: 'midnight', label: 'Midnight' }]
+let menuThemeActive = 'midnight'
+let hoverHelpMode: 'full' | 'brief' | 'off' = 'full'
+
 function installMenu(window: BrowserWindow): void {
   const sendGrid = (color: string) => window.webContents.send('settings:grid-color', color)
+  const chooseHoverHelp = (mode: 'full' | 'brief' | 'off') => {
+    hoverHelpMode = mode
+    window.webContents.send('settings:hover-help', mode)
+    apply(menuThemes, menuThemeActive)
+  }
   const buildTemplate = (
     themes: { id: string; label: string }[],
     active: string,
@@ -1053,6 +1062,29 @@ function installMenu(window: BrowserWindow): void {
             },
           ],
         },
+        {
+          label: 'Hover help',
+          submenu: [
+            {
+              label: 'Full',
+              type: 'radio' as const,
+              checked: hoverHelpMode === 'full',
+              click: () => chooseHoverHelp('full'),
+            },
+            {
+              label: 'Brief — name and shortcut',
+              type: 'radio' as const,
+              checked: hoverHelpMode === 'brief',
+              click: () => chooseHoverHelp('brief'),
+            },
+            {
+              label: 'Off',
+              type: 'radio' as const,
+              checked: hoverHelpMode === 'off',
+              click: () => chooseHoverHelp('off'),
+            },
+          ],
+        },
         { type: 'separator' },
         {
           label: 'Grid color',
@@ -1092,16 +1124,27 @@ function installMenu(window: BrowserWindow): void {
       ],
     },
   ]
-  const apply = (themes: { id: string; label: string }[], active: string): void =>
+  const apply = (themes: { id: string; label: string }[], active: string): void => {
+    menuThemes = themes
+    menuThemeActive = active
     Menu.setApplicationMenu(Menu.buildFromTemplate(buildTemplate(themes, active)))
-  // Build now with a placeholder; the renderer registers the real list (from theme.ts) on
-  // start-up, so adding a theme there makes it appear here with no change to this file.
-  apply([{ id: 'midnight', label: 'Midnight' }], 'midnight')
+  }
+  // Build now with whatever the renderer last registered (a placeholder until then). The renderer
+  // registers the real theme list and the saved hover-help choice on start-up.
+  apply(menuThemes, menuThemeActive)
+  ipcMain.removeAllListeners('settings:register-themes')
   ipcMain.on(
     'settings:register-themes',
     (_event, payload: { themes: { id: string; label: string }[]; active: string }) =>
       apply(payload.themes, payload.active),
   )
+  ipcMain.removeAllListeners('settings:register-hover-help')
+  ipcMain.on('settings:register-hover-help', (_event, mode: unknown) => {
+    if (mode === 'full' || mode === 'brief' || mode === 'off') {
+      hoverHelpMode = mode
+      apply(menuThemes, menuThemeActive)
+    }
+  })
   ipcMain.removeAllListeners('window:circuit-canvas-open')
   ipcMain.on('window:circuit-canvas-open', (_event, open: unknown) =>
     setCircuitCanvasOpen(open === true),

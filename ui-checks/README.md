@@ -51,6 +51,7 @@ Browser target (default):
 | voltage-divider | Math: 500 µA × 10.00 kΩ = 5.00 V, converged |
 | my-projects | My Projects category (the rest is Electron-only) |
 | cross-screen-panels | panels open only on the screen on display, and a rebind reaches every open tab |
+| hover-help | hover a tool, a palette part, disabled Export ZIP, a Gerber layer tab, a catalog badge, and the registry URL; the tip names each one and goes away on mouse-out |
 
 After every step the runner also checks that screen's invariants (from the map) and a global
 crash watch (error boundary absent, root rendered). Any `console.error` or uncaught page error

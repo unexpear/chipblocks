@@ -306,6 +306,7 @@ import {
 } from './timing-graph.ts'
 import { TimingPanel } from './timing-panel.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
+import { HelpTip } from './tooltip.tsx'
 import { type TraceBlock, TraceInspector } from './trace-inspector.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { checkpoint, dropLastCheckpoint, emptyHistory, redo, undo } from './undo-history.ts'
@@ -377,6 +378,8 @@ declare global {
       onGridColor: (callback: (color: string) => void) => void
       onGridColorCustom: (callback: () => void) => void
       registerThemes?: (themes: { id: string; label: string }[], active: string) => void
+      onHoverHelp?: (callback: (mode: string) => void) => void
+      registerHoverHelp?: (mode: string) => void
       onSaveRequest: (callback: () => void) => void
       saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
       // The three that hand a file to THIS canvas return an unsubscribe, because only the tab on screen may
@@ -888,25 +891,36 @@ function LevelBreadcrumb({
         return (
           <span key={lvl.id} style={{ display: 'flex', alignItems: 'center' }}>
             {i > 0 && <span style={{ color: faint, margin: '0 4px' }}>▸</span>}
-            <button
-              type="button"
-              disabled={lvl.soon}
-              onClick={() => {
-                if (lvl.id !== 'system') onMode(lvl.id)
-              }}
-              title={lvl.soon ? `${lvl.label} — coming soon` : `Go to the ${lvl.label} level`}
-              style={{
-                all: 'unset',
-                cursor: lvl.soon ? 'default' : 'pointer',
-                color: lvl.soon ? faint : on ? bright : soft,
-                fontWeight: on ? 700 : 400,
-                padding: '4px 7px',
-                borderRadius: 4,
-              }}
+            <HelpTip
+              helpId={
+                lvl.id === 'schematic'
+                  ? 'crumb.circuit'
+                  : lvl.id === 'board'
+                    ? 'crumb.board'
+                    : lvl.id === 'chip'
+                      ? 'crumb.chip'
+                      : 'crumb.system'
+              }
             >
-              {lvl.label}
-              {lvl.soon && <span style={{ fontSize: 10, color: faint }}> · soon</span>}
-            </button>
+              <button
+                type="button"
+                disabled={lvl.soon}
+                onClick={() => {
+                  if (lvl.id !== 'system') onMode(lvl.id)
+                }}
+                style={{
+                  all: 'unset',
+                  cursor: lvl.soon ? 'default' : 'pointer',
+                  color: lvl.soon ? faint : on ? bright : soft,
+                  fontWeight: on ? 700 : 400,
+                  padding: '4px 7px',
+                  borderRadius: 4,
+                }}
+              >
+                {lvl.label}
+                {lvl.soon && <span style={{ fontSize: 10, color: faint }}> · soon</span>}
+              </button>
+            </HelpTip>
           </span>
         )
       })}
@@ -4457,6 +4471,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     }
     return problems
   }, [pcbBoard, pcbOffBoard, pcbUnplaced, boardRecesses, pcbMergedRouting, pcbDrc])
+  const exportZipReason =
+    pcbFabProblems.length > 0
+      ? `The board isn't manufacturable yet: ${pcbFabProblems.join(', ')}`
+      : 'Export the manufacturing ZIP — Gerbers, drill, BOM, placement, validation report'
   // The PCB view mode: the full flat layout; the LAMINATION as a stack of paper (one sheet at a
   // time, paged up/down); or the 3-D exploded view (the sheets pulled apart in space, vias bridging
   // the copper planes). The drawable layers come from the stack-up.
@@ -9815,13 +9833,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 <span style={{ color: THEME.statusDanger }}> · DRC: {pcbDrc.length}</span>
               )}
               {pcbOverCurrentUnevaluated && (
-                <span
-                  style={{ color: THEME.statusWarn }}
-                  title="This board's currents weren't solved (a digital / logic board), so trace over-current couldn't be checked."
-                >
-                  {' '}
-                  · over-current not checked
-                </span>
+                <HelpTip helpId="board.overCurrent">
+                  <span style={{ color: THEME.statusWarn }}> · over-current not checked</span>
+                </HelpTip>
               )}
             </span>
             <PcbViewControls
@@ -9832,70 +9846,74 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
               onStep={stepPcbLayer}
             />
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button
-                type="button"
-                onClick={() => setBoardTool((t) => (t === 'route' ? 'select' : 'route'))}
-                title="Route tool — click a pad to start, click to drop corners, click a same-net pad to finish. Draws real copper on the active layer that ships in the Gerbers. Works on the flat board AND directly in the 3-D view (click to route, drag to orbit)."
-                style={{
-                  border: `1px solid ${THEME.borderStrong}`,
-                  background: boardTool === 'route' ? THEME.accentBlue : THEME.surfaceInput,
-                  color: boardTool === 'route' ? '#0b1220' : THEME.textSoft,
-                  borderRadius: 4,
-                  fontSize: 11,
-                  padding: '2px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                ▬ Route
-              </button>
-              <button
-                type="button"
-                onClick={() => setBoardTool((t) => (t === 'via' ? 'select' : 'via'))}
-                title="Via tool — click on copper (a pad or a trace) to drop a plated via there: the vertical jump that carries the net between the two copper layers. Shows as a real barrel in the 3-D view."
-                style={{
-                  border: `1px solid ${THEME.borderStrong}`,
-                  background: boardTool === 'via' ? THEME.accentBlue : THEME.surfaceInput,
-                  color: boardTool === 'via' ? '#0b1220' : THEME.textSoft,
-                  borderRadius: 4,
-                  fontSize: 11,
-                  padding: '2px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                ⊙ Via
-              </button>
-              <button
-                type="button"
-                onClick={() => setBoardTool((t) => (t === 'measure' ? 'select' : 'measure'))}
-                title="Measure tool — a dimensional ruler. Click two points on the board to measure the distance between them (mm / cm / in / mil / µm); clicks snap to pad centres. Distinct from the multimeter, which measures electrical quantities."
-                style={{
-                  border: `1px solid ${THEME.borderStrong}`,
-                  background: boardTool === 'measure' ? THEME.accentBlue : THEME.surfaceInput,
-                  color: boardTool === 'measure' ? '#0b1220' : THEME.textSoft,
-                  borderRadius: 4,
-                  fontSize: 11,
-                  padding: '2px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                📏 Measure
-              </button>
-              <button
-                type="button"
-                onClick={() => setBoardTool((t) => (t === 'outline' ? 'select' : 'outline'))}
-                title="Outline tool — drag the board-edge corners to reshape the board profile. The Gerber edge-cut and the copper / component-to-edge clearance checks follow the polygon. A rectangular board becomes an editable outline on the first drag."
-                style={{
-                  border: `1px solid ${THEME.borderStrong}`,
-                  background: boardTool === 'outline' ? THEME.accentBlue : THEME.surfaceInput,
-                  color: boardTool === 'outline' ? '#0b1220' : THEME.textSoft,
-                  borderRadius: 4,
-                  fontSize: 11,
-                  padding: '2px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                ⬡ Outline
-              </button>
+              <HelpTip helpId="board.route">
+                <button
+                  type="button"
+                  onClick={() => setBoardTool((t) => (t === 'route' ? 'select' : 'route'))}
+                  style={{
+                    border: `1px solid ${THEME.borderStrong}`,
+                    background: boardTool === 'route' ? THEME.accentBlue : THEME.surfaceInput,
+                    color: boardTool === 'route' ? '#0b1220' : THEME.textSoft,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ▬ Route
+                </button>
+              </HelpTip>
+              <HelpTip helpId="board.via">
+                <button
+                  type="button"
+                  onClick={() => setBoardTool((t) => (t === 'via' ? 'select' : 'via'))}
+                  style={{
+                    border: `1px solid ${THEME.borderStrong}`,
+                    background: boardTool === 'via' ? THEME.accentBlue : THEME.surfaceInput,
+                    color: boardTool === 'via' ? '#0b1220' : THEME.textSoft,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ⊙ Via
+                </button>
+              </HelpTip>
+              <HelpTip helpId="board.measure">
+                <button
+                  type="button"
+                  onClick={() => setBoardTool((t) => (t === 'measure' ? 'select' : 'measure'))}
+                  style={{
+                    border: `1px solid ${THEME.borderStrong}`,
+                    background: boardTool === 'measure' ? THEME.accentBlue : THEME.surfaceInput,
+                    color: boardTool === 'measure' ? '#0b1220' : THEME.textSoft,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📏 Measure
+                </button>
+              </HelpTip>
+              <HelpTip helpId="board.outline">
+                <button
+                  type="button"
+                  onClick={() => setBoardTool((t) => (t === 'outline' ? 'select' : 'outline'))}
+                  style={{
+                    border: `1px solid ${THEME.borderStrong}`,
+                    background: boardTool === 'outline' ? THEME.accentBlue : THEME.surfaceInput,
+                    color: boardTool === 'outline' ? '#0b1220' : THEME.textSoft,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ⬡ Outline
+                </button>
+              </HelpTip>
               {boardTool === 'outline' && (
                 <span style={{ fontSize: 11, color: THEME.textFaint }}>
                   Drag a corner to reshape the board · Esc to finish
@@ -9903,45 +9921,48 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
               )}
               {boardTool === 'measure' && (
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <select
-                    value={measureUnit}
-                    onChange={(e) => setMeasureUnit(e.target.value as MeasureUnit)}
-                    title="Measurement unit"
-                    style={{
-                      background: THEME.surfaceInput,
-                      color: THEME.textSoft,
-                      border: `1px solid ${THEME.borderStrong}`,
-                      borderRadius: 4,
-                      fontSize: 11,
-                      padding: '1px 4px',
-                    }}
-                  >
-                    {MEASURE_UNITS.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.label}
-                      </option>
-                    ))}
-                  </select>
-                  {measurements.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMeasurements([])
-                        setPendingMeasureA(null)
-                      }}
-                      title="Clear all measurements"
+                  <HelpTip helpId="board.measureUnit">
+                    <select
+                      value={measureUnit}
+                      aria-label="Measurement unit"
+                      onChange={(e) => setMeasureUnit(e.target.value as MeasureUnit)}
                       style={{
-                        border: `1px solid ${THEME.borderStrong}`,
                         background: THEME.surfaceInput,
                         color: THEME.textSoft,
+                        border: `1px solid ${THEME.borderStrong}`,
                         borderRadius: 4,
                         fontSize: 11,
-                        padding: '2px 8px',
-                        cursor: 'pointer',
+                        padding: '1px 4px',
                       }}
                     >
-                      Clear ({measurements.length})
-                    </button>
+                      {MEASURE_UNITS.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.label}
+                        </option>
+                      ))}
+                    </select>
+                  </HelpTip>
+                  {measurements.length > 0 && (
+                    <HelpTip helpId="board.clearMeasures">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMeasurements([])
+                          setPendingMeasureA(null)
+                        }}
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Clear ({measurements.length})
+                      </button>
+                    </HelpTip>
                   )}
                 </span>
               )}
@@ -9951,33 +9972,42 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   return (
                     <span style={{ display: 'flex', gap: 0 }}>
                       {copperSheets.map((l, i) => (
-                        <button
+                        <HelpTip
                           key={l.id}
-                          type="button"
-                          onClick={() => setPcbActiveLayerId(l.id)}
-                          title={`Route on ${l.name}${l.id === 'f_cu' || l.id === 'b_cu' ? '' : ' (buried inner layer)'}`}
-                          style={{
-                            border: `1px solid ${THEME.borderStrong}`,
-                            background: pcbActiveLayerId === l.id ? l.color : THEME.surfaceInput,
-                            color: pcbActiveLayerId === l.id ? '#0b1220' : THEME.textSoft,
-                            borderRadius:
-                              i === 0
-                                ? '4px 0 0 4px'
-                                : i === copperSheets.length - 1
-                                  ? '0 4px 4px 0'
-                                  : '0',
-                            borderLeft: i === 0 ? undefined : 'none',
-                            fontSize: 11,
-                            padding: '2px 8px',
-                            cursor: 'pointer',
-                          }}
+                          helpId="board.copperLayer"
+                          name={l.name}
+                          detail={
+                            l.id === 'f_cu' || l.id === 'b_cu'
+                              ? undefined
+                              : 'This is a buried inner copper sheet.'
+                          }
                         >
-                          {l.id === 'f_cu'
-                            ? 'Top'
-                            : l.id === 'b_cu'
-                              ? 'Bottom'
-                              : l.name.replace('.Cu', '')}
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => setPcbActiveLayerId(l.id)}
+                            style={{
+                              border: `1px solid ${THEME.borderStrong}`,
+                              background: pcbActiveLayerId === l.id ? l.color : THEME.surfaceInput,
+                              color: pcbActiveLayerId === l.id ? '#0b1220' : THEME.textSoft,
+                              borderRadius:
+                                i === 0
+                                  ? '4px 0 0 4px'
+                                  : i === copperSheets.length - 1
+                                    ? '0 4px 4px 0'
+                                    : '0',
+                              borderLeft: i === 0 ? undefined : 'none',
+                              fontSize: 11,
+                              padding: '2px 8px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {l.id === 'f_cu'
+                              ? 'Top'
+                              : l.id === 'b_cu'
+                                ? 'Bottom'
+                                : l.name.replace('.Cu', '')}
+                          </button>
+                        </HelpTip>
                       ))}
                     </span>
                   )
@@ -10400,15 +10430,47 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
               ) : null}
             </div>
           ) : null}
-          ChipBlocks — {nodes.length} components, {edges.length} wires · select a part to edit it, R
-          to rotate, Delete to remove, double-click a switch to flip
-          {tool === 'wire'
-            ? ' · wire tool: click anywhere to start, click corners, click a dot to finish (double-click in space ends there; Esc cancels)'
-            : ''}
-          {tool === 'lasso'
-            ? ' · lasso: press and draw any shape around parts; release to select them'
-            : ''}
-          {alwaysOn ? '' : ' · physics paused — hit Solve'}
+          <span style={{ pointerEvents: 'auto' }}>
+            ChipBlocks —{' '}
+            <HelpTip helpId="status.components">
+              <span>{nodes.length} components</span>
+            </HelpTip>
+            {', '}
+            <HelpTip helpId="status.wires">
+              <span>{edges.length} wires</span>
+            </HelpTip>
+            {' · '}
+            <HelpTip helpId="status.gestures">
+              <span>
+                select a part to edit it, {keybinds.rotate} to rotate, {keybinds.delete} to remove,
+                double-click a switch to flip
+              </span>
+            </HelpTip>
+            {tool === 'wire' ? (
+              <HelpTip helpId="status.wireTool">
+                <span>
+                  {' '}
+                  · wire tool: click anywhere to start, click corners, click a dot to finish
+                  (double-click in space ends there; Esc cancels)
+                </span>
+              </HelpTip>
+            ) : null}
+            {tool === 'lasso' ? (
+              <HelpTip helpId="status.lassoTool">
+                <span> · lasso: press and draw any shape around parts; release to select them</span>
+              </HelpTip>
+            ) : null}
+            {tool === 'connect' ? (
+              <HelpTip helpId="status.connectTool">
+                <span> · connect: click a start dot, then an end dot (Esc cancels)</span>
+              </HelpTip>
+            ) : null}
+            {alwaysOn ? null : (
+              <HelpTip helpId="status.paused">
+                <span> · physics paused — hit Solve</span>
+              </HelpTip>
+            )}
+          </span>
         </div>
 
         {drawProgress !== null ? (
@@ -11082,7 +11144,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           },
           parts: {
             title: 'Parts',
-            visible: false,
+            visible: true,
             content: (
               <Palette
                 blocks={nodes
@@ -11099,13 +11161,22 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             visible: true,
             content: (
               <>
-                <button
-                  type="button"
-                  disabled={drawProgress !== null}
-                  onClick={() => setTestBenchOpen((open) => !open)}
+                <HelpTip
+                  helpId="toolbar.tests"
+                  detail={
+                    drawProgress !== null
+                      ? 'The design is still being drawn — there is no whole circuit to check yet'
+                      : undefined
+                  }
                 >
-                  Tests and preflight
-                </button>
+                  <button
+                    type="button"
+                    disabled={drawProgress !== null}
+                    onClick={() => setTestBenchOpen((open) => !open)}
+                  >
+                    Tests and preflight
+                  </button>
+                </HelpTip>
                 <ToolbarItems
                   tool={tool}
                   onTool={setTool}
@@ -11689,106 +11760,136 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                     data-drc={pcbDrc.length}
                     style={{ fontSize: 12, color: THEME.textSoft }}
                   >
-                    {pcbBoard.placements.length} part
-                    {pcbBoard.placements.length === 1 ? '' : 's'} placed ·{' '}
-                    {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
-                    {/* routed CONNECTIONS, not trace count — one via'd connection is three traces */}
-                    {pcbRatsnest.airwires.length > 0 &&
-                      ` · ${pcbRatsnest.airwires.length - pcbMergedRouting.unrouted.length} of ${pcbRatsnest.airwires.length} connection${
-                        pcbRatsnest.airwires.length === 1 ? '' : 's'
-                      } routed`}
-                    {pcbMergedRouting.vias.length > 0 &&
-                      ` · ${pcbMergedRouting.vias.length} via${pcbMergedRouting.vias.length === 1 ? '' : 's'}`}
-                    {pcbOffBoard > 0 && (
-                      <span style={{ color: THEME.textFaint }}>
-                        {' '}
-                        · {pcbOffBoard} wired pin{pcbOffBoard === 1 ? '' : 's'} not on the board yet
-                        {pcbUnplaced.length > 0
-                          ? `: ${pcbUnplaced.map(formatUnplacedPart).join(', ')}`
-                          : ' (no footprint)'}
+                    <HelpTip helpId="pcb.placed">
+                      <span>
+                        {pcbBoard.placements.length} part
+                        {pcbBoard.placements.length === 1 ? '' : 's'} placed
                       </span>
+                    </HelpTip>
+                    {' · '}
+                    <HelpTip helpId="pcb.boardSize">
+                      <span>
+                        {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
+                      </span>
+                    </HelpTip>
+                    {/* routed CONNECTIONS, not trace count — one via'd connection is three traces */}
+                    {pcbRatsnest.airwires.length > 0 && (
+                      <HelpTip helpId="pcb.routed">
+                        <span>
+                          {` · ${pcbRatsnest.airwires.length - pcbMergedRouting.unrouted.length} of ${pcbRatsnest.airwires.length} connection${
+                            pcbRatsnest.airwires.length === 1 ? '' : 's'
+                          } routed`}
+                        </span>
+                      </HelpTip>
+                    )}
+                    {pcbMergedRouting.vias.length > 0 && (
+                      <HelpTip helpId="pcb.vias">
+                        <span>
+                          {` · ${pcbMergedRouting.vias.length} via${pcbMergedRouting.vias.length === 1 ? '' : 's'}`}
+                        </span>
+                      </HelpTip>
+                    )}
+                    {pcbOffBoard > 0 && (
+                      <HelpTip helpId="pcb.offBoard">
+                        <span style={{ color: THEME.textFaint }}>
+                          {' '}
+                          · {pcbOffBoard} wired pin{pcbOffBoard === 1 ? '' : 's'} not on the board
+                          yet
+                          {pcbUnplaced.length > 0
+                            ? `: ${pcbUnplaced.map(formatUnplacedPart).join(', ')}`
+                            : ' (no footprint)'}
+                        </span>
+                      </HelpTip>
                     )}
                     {pcbBoard.placements.length > 0 &&
                       (pcbDrc.length > 0 ? (
-                        <span style={{ color: THEME.statusDanger }}>
-                          {' '}
-                          · DRC: {pcbDrc.length} violation{pcbDrc.length === 1 ? '' : 's'}
-                        </span>
+                        <HelpTip helpId="pcb.drcViolations">
+                          <span style={{ color: THEME.statusDanger }}>
+                            {' '}
+                            · DRC: {pcbDrc.length} violation{pcbDrc.length === 1 ? '' : 's'}
+                          </span>
+                        </HelpTip>
                       ) : (
-                        <span style={{ color: THEME.statusOk }}> · DRC clean</span>
+                        <HelpTip helpId="pcb.drcClean">
+                          <span style={{ color: THEME.statusOk }}> · DRC clean</span>
+                        </HelpTip>
                       ))}
                     {pcbOverCurrentUnevaluated && (
-                      <span
-                        style={{ color: THEME.statusWarn }}
-                        title="This board's currents weren't solved (a digital / logic board, or an unsolved circuit), so trace over-current couldn't be checked. It is NOT reported as clean."
-                      >
-                        {' '}
-                        · over-current not checked (no solved currents)
-                      </span>
+                      <HelpTip helpId="pcb.overCurrent">
+                        <span style={{ color: THEME.statusWarn }}>
+                          {' '}
+                          · over-current not checked (no solved currents)
+                        </span>
+                      </HelpTip>
                     )}
                   </span>
                   <span style={{ display: 'flex', gap: 6 }}>
-                    <button
-                      type="button"
-                      data-testid="pcb-export-zip"
-                      onClick={onExportFabZip}
-                      disabled={pcbFabProblems.length > 0}
-                      title={
-                        pcbFabProblems.length > 0
-                          ? `The board isn't manufacturable yet: ${pcbFabProblems.join(', ')}`
-                          : 'Export the manufacturing ZIP — Gerbers, drill, BOM, placement, validation report'
-                      }
-                      style={{
-                        border: `1px solid ${THEME.borderStrong}`,
-                        background: THEME.surfaceInput,
-                        color: pcbFabProblems.length > 0 ? THEME.textFaint : THEME.textSoft,
-                        borderRadius: 4,
-                        fontSize: 11,
-                        padding: '2px 8px',
-                        cursor: pcbFabProblems.length > 0 ? 'not-allowed' : 'pointer',
-                      }}
+                    <HelpTip
+                      helpId="pcb.exportZip"
+                      detail={pcbFabProblems.length > 0 ? exportZipReason : undefined}
                     >
-                      Export ZIP
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="pcb-check-gerbers"
-                      aria-pressed={gerberCheck !== null}
-                      onClick={() => {
-                        if (gerberCheck !== null) {
-                          setGerberCheck(null)
-                          return
-                        }
-                        setGerberCheck(manufacturingFileTexts(assembleFabInputs()).files)
-                      }}
-                      title="Plot the Gerber and drill files this Export ZIP would write, in one shared frame. ChipBlocks output only."
-                      style={{
-                        border: `1px solid ${THEME.borderStrong}`,
-                        background: gerberCheck !== null ? THEME.surfaceActive : THEME.surfaceInput,
-                        color: THEME.textSoft,
-                        borderRadius: 4,
-                        fontSize: 11,
-                        padding: '2px 8px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Check Gerbers
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPcbOpen(false)}
-                      style={{
-                        border: `1px solid ${THEME.borderStrong}`,
-                        background: THEME.surfaceInput,
-                        color: THEME.textSoft,
-                        borderRadius: 4,
-                        fontSize: 11,
-                        padding: '2px 8px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Close
-                    </button>
+                      <button
+                        type="button"
+                        data-testid="pcb-export-zip"
+                        data-export-reason={exportZipReason}
+                        onClick={onExportFabZip}
+                        disabled={pcbFabProblems.length > 0}
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background: THEME.surfaceInput,
+                          color: pcbFabProblems.length > 0 ? THEME.textFaint : THEME.textSoft,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          cursor: pcbFabProblems.length > 0 ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        Export ZIP
+                      </button>
+                    </HelpTip>
+                    <HelpTip helpId="pcb.checkGerbers">
+                      <button
+                        type="button"
+                        data-testid="pcb-check-gerbers"
+                        aria-pressed={gerberCheck !== null}
+                        onClick={() => {
+                          if (gerberCheck !== null) {
+                            setGerberCheck(null)
+                            return
+                          }
+                          setGerberCheck(manufacturingFileTexts(assembleFabInputs()).files)
+                        }}
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background:
+                            gerberCheck !== null ? THEME.surfaceActive : THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Check Gerbers
+                      </button>
+                    </HelpTip>
+                    <HelpTip helpId="pcb.close">
+                      <button
+                        type="button"
+                        onClick={() => setPcbOpen(false)}
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Close
+                      </button>
+                    </HelpTip>
                   </span>
                 </div>
                 {pcbExportNote !== null && (
@@ -11843,9 +11944,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                         )}
                       </div>
                     )}
-                    <span style={{ fontSize: 11, color: THEME.textFaint }}>
-                      drag a part to move it · click to select, R to rotate
-                    </span>
+                    <HelpTip helpId="pcb.dragHint">
+                      <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                        drag a part to move it · click to select, R to rotate
+                      </span>
+                    </HelpTip>
                     <span
                       style={{
                         fontSize: 11,
@@ -11857,153 +11960,171 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                       }}
                     >
                       stack-up:
-                      <select
-                        value={pcbStackup.copperLayers}
-                        onChange={(e) =>
-                          setPcbStackupOptions((o) => ({
-                            ...o,
-                            copperLayers: Number(e.target.value) as CopperLayerCount,
-                          }))
-                        }
-                        title="Copper layer count. 2 = standard board. 4 / 6 = multilevel: inner copper planes buried in the FR4 — pull the layers apart in the 3-D view to see them. (Multilevel is for design + visualisation; export stays 2-layer for now.)"
-                        style={{
-                          background: THEME.surfaceInput,
-                          color: THEME.textSoft,
-                          border: `1px solid ${THEME.borderStrong}`,
-                          borderRadius: 4,
-                          fontSize: 11,
-                          padding: '1px 4px',
-                        }}
-                      >
-                        <option value={2}>2-layer</option>
-                        <option value={4}>4-layer</option>
-                        <option value={6}>6-layer</option>
-                      </select>
+                      <HelpTip helpId="pcb.copperCount">
+                        <select
+                          aria-label="Copper layer count"
+                          value={pcbStackup.copperLayers}
+                          onChange={(e) =>
+                            setPcbStackupOptions((o) => ({
+                              ...o,
+                              copperLayers: Number(e.target.value) as CopperLayerCount,
+                            }))
+                          }
+                          style={{
+                            background: THEME.surfaceInput,
+                            color: THEME.textSoft,
+                            border: `1px solid ${THEME.borderStrong}`,
+                            borderRadius: 4,
+                            fontSize: 11,
+                            padding: '1px 4px',
+                          }}
+                        >
+                          <option value={2}>2-layer</option>
+                          <option value={4}>4-layer</option>
+                          <option value={6}>6-layer</option>
+                        </select>
+                      </HelpTip>
                       FR4 ·
-                      <select
-                        value={pcbStackup.thicknessMm}
-                        onChange={(e) =>
-                          setPcbStackupOptions((o) => ({
-                            ...o,
-                            thicknessMm: Number(e.target.value),
-                          }))
-                        }
-                        title="Finished board thickness"
-                        style={{
-                          background: THEME.surfaceInput,
-                          color: THEME.textSoft,
-                          border: `1px solid ${THEME.borderStrong}`,
-                          borderRadius: 4,
-                          fontSize: 11,
-                          padding: '1px 4px',
-                        }}
-                      >
-                        {STANDARD_BOARD_THICKNESSES_MM.map((t) => (
-                          <option key={t} value={t}>
-                            {t.toFixed(1)} mm
-                          </option>
-                        ))}
-                      </select>
-                      ·
-                      <select
-                        value={pcbStackup.copperWeight}
-                        onChange={(e) =>
-                          setPcbStackupOptions((o) => ({
-                            ...o,
-                            copperWeight: e.target.value as CopperWeight,
-                          }))
-                        }
-                        title="Outer copper weight"
-                        style={{
-                          background: THEME.surfaceInput,
-                          color: THEME.textSoft,
-                          border: `1px solid ${THEME.borderStrong}`,
-                          borderRadius: 4,
-                          fontSize: 11,
-                          padding: '1px 4px',
-                        }}
-                      >
-                        <option value="half_oz">0.5 oz copper</option>
-                        <option value="one_oz">1 oz copper</option>
-                        <option value="two_oz">2 oz copper</option>
-                      </select>
-                      ·
-                      <select
-                        value={pcbStackup.surfaceFinish}
-                        onChange={(e) =>
-                          setPcbStackupOptions((o) => ({
-                            ...o,
-                            surfaceFinish: e.target.value as SurfaceFinishId,
-                          }))
-                        }
-                        title="Surface finish"
-                        style={{
-                          background: THEME.surfaceInput,
-                          color: THEME.textSoft,
-                          border: `1px solid ${THEME.borderStrong}`,
-                          borderRadius: 4,
-                          fontSize: 11,
-                          padding: '1px 4px',
-                        }}
-                      >
-                        {(Object.keys(SURFACE_FINISHES) as (keyof typeof SURFACE_FINISHES)[]).map(
-                          (id) => (
-                            <option key={id} value={id}>
-                              {SURFACE_FINISHES[id].name}
+                      <HelpTip helpId="pcb.thickness">
+                        <select
+                          aria-label="Finished board thickness"
+                          value={pcbStackup.thicknessMm}
+                          onChange={(e) =>
+                            setPcbStackupOptions((o) => ({
+                              ...o,
+                              thicknessMm: Number(e.target.value),
+                            }))
+                          }
+                          style={{
+                            background: THEME.surfaceInput,
+                            color: THEME.textSoft,
+                            border: `1px solid ${THEME.borderStrong}`,
+                            borderRadius: 4,
+                            fontSize: 11,
+                            padding: '1px 4px',
+                          }}
+                        >
+                          {STANDARD_BOARD_THICKNESSES_MM.map((t) => (
+                            <option key={t} value={t}>
+                              {t.toFixed(1)} mm
                             </option>
-                          ),
-                        )}
-                      </select>
+                          ))}
+                        </select>
+                      </HelpTip>
+                      ·
+                      <HelpTip helpId="pcb.copperWeight">
+                        <select
+                          aria-label="Outer copper weight"
+                          value={pcbStackup.copperWeight}
+                          onChange={(e) =>
+                            setPcbStackupOptions((o) => ({
+                              ...o,
+                              copperWeight: e.target.value as CopperWeight,
+                            }))
+                          }
+                          style={{
+                            background: THEME.surfaceInput,
+                            color: THEME.textSoft,
+                            border: `1px solid ${THEME.borderStrong}`,
+                            borderRadius: 4,
+                            fontSize: 11,
+                            padding: '1px 4px',
+                          }}
+                        >
+                          <option value="half_oz">0.5 oz copper</option>
+                          <option value="one_oz">1 oz copper</option>
+                          <option value="two_oz">2 oz copper</option>
+                        </select>
+                      </HelpTip>
+                      ·
+                      <HelpTip helpId="pcb.finish">
+                        <select
+                          aria-label="Surface finish"
+                          value={pcbStackup.surfaceFinish}
+                          onChange={(e) =>
+                            setPcbStackupOptions((o) => ({
+                              ...o,
+                              surfaceFinish: e.target.value as SurfaceFinishId,
+                            }))
+                          }
+                          style={{
+                            background: THEME.surfaceInput,
+                            color: THEME.textSoft,
+                            border: `1px solid ${THEME.borderStrong}`,
+                            borderRadius: 4,
+                            fontSize: 11,
+                            padding: '1px 4px',
+                          }}
+                        >
+                          {(Object.keys(SURFACE_FINISHES) as (keyof typeof SURFACE_FINISHES)[]).map(
+                            (id) => (
+                              <option key={id} value={id}>
+                                {SURFACE_FINISHES[id].name}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </HelpTip>
                     </span>
                     <span
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11 }}
-                      title="V-scored panel edges — a V-scored (snap-groove) edge needs 0.4 mm copper clearance vs 0.3 mm for a routed edge. Click a side to toggle it V-scored."
                     >
-                      <span style={{ color: THEME.textFaint }}>V-score:</span>
+                      <HelpTip helpId="pcb.vscore">
+                        <span style={{ color: THEME.textFaint }}>V-score:</span>
+                      </HelpTip>
                       {(['top', 'bottom', 'left', 'right'] as const).map((side) => {
                         const on = pcbVScoredSides.includes(side)
                         return (
-                          <button
+                          <HelpTip
                             key={side}
-                            type="button"
-                            onClick={() =>
-                              setPcbVScoredSides((cur) =>
-                                cur.includes(side) ? cur.filter((s) => s !== side) : [...cur, side],
-                              )
-                            }
-                            title={`${side} edge — ${on ? 'V-scored (0.4 mm clearance)' : 'routed (0.3 mm clearance)'}`}
-                            style={{
-                              border: `1px solid ${THEME.borderStrong}`,
-                              background: on ? THEME.accentBlue : THEME.surfaceInput,
-                              color: on ? '#0b1220' : THEME.textSoft,
-                              borderRadius: 4,
-                              fontSize: 10,
-                              padding: '1px 5px',
-                              cursor: 'pointer',
-                            }}
+                            helpId="pcb.vscore"
+                            detail={`${side} edge — ${on ? 'V-scored (0.4 mm clearance)' : 'routed (0.3 mm clearance)'}`}
                           >
-                            {side[0]?.toUpperCase()}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPcbVScoredSides((cur) =>
+                                  cur.includes(side)
+                                    ? cur.filter((s) => s !== side)
+                                    : [...cur, side],
+                                )
+                              }
+                              style={{
+                                border: `1px solid ${THEME.borderStrong}`,
+                                background: on ? THEME.accentBlue : THEME.surfaceInput,
+                                color: on ? '#0b1220' : THEME.textSoft,
+                                borderRadius: 4,
+                                fontSize: 10,
+                                padding: '1px 5px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {side[0]?.toUpperCase()}
+                            </button>
+                          </HelpTip>
                         )
                       })}
                     </span>
                     {pcbImpedance.z !== undefined && (
-                      <span
-                        style={{ fontSize: 11, color: THEME.textFaint }}
-                        title={`IPC-2141A single-line microstrip: a ${DEFAULT_ROUTE_CLASS.traceWidthMm} mm trace over the ${pcbImpedance.z.referenceLayer} plane, ${pcbImpedance.z.dielectricHeightMm.toFixed(3)} mm of FR4 (Dk ${pcbImpedance.z.dielectricConstant.toFixed(1)}) between them.${pcbImpedance.z.withinValidity ? '' : ' Outside the formula range (w/h) — treat as an estimate.'} A closed-form approximation (~±5%); a fab's field-solver stack-up is authoritative for a manufactured board.`}
+                      <HelpTip
+                        helpId="pcb.impedance"
+                        detail={`${DEFAULT_ROUTE_CLASS.traceWidthMm} mm trace over the ${pcbImpedance.z.referenceLayer} plane reads about ${Math.round(pcbImpedance.z.ohms)} Ω${pcbImpedance.z.withinValidity ? '' : ' (outside the formula range)'}.`}
                       >
-                        impedance:{' '}
-                        <span style={{ color: THEME.textSoft }}>
-                          {DEFAULT_ROUTE_CLASS.traceWidthMm} mm ≈ {Math.round(pcbImpedance.z.ohms)}{' '}
-                          Ω{pcbImpedance.z.withinValidity ? '' : ' (est.)'}
-                        </span>{' '}
-                        · 50 Ω needs{' '}
-                        <span style={{ color: THEME.textSoft }}>
-                          {pcbImpedance.widthFor50 !== undefined
-                            ? `${pcbImpedance.widthFor50} mm`
-                            : 'a thinner dielectric'}
+                        <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                          impedance:{' '}
+                          <span style={{ color: THEME.textSoft }}>
+                            {DEFAULT_ROUTE_CLASS.traceWidthMm} mm ≈{' '}
+                            {Math.round(pcbImpedance.z.ohms)} Ω
+                            {pcbImpedance.z.withinValidity ? '' : ' (est.)'}
+                          </span>{' '}
+                          · 50 Ω needs{' '}
+                          <span style={{ color: THEME.textSoft }}>
+                            {pcbImpedance.widthFor50 !== undefined
+                              ? `${pcbImpedance.widthFor50} mm`
+                              : 'a thinner dielectric'}
+                          </span>
                         </span>
-                      </span>
+                      </HelpTip>
                     )}
                     <span
                       style={{
@@ -12016,70 +12137,72 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                       }}
                     >
                       cavity / step:
-                      <button
-                        type="button"
-                        title="Add a recessed cavity — a controlled-depth pocket milled into the board centre. Open the 3-D view to see it."
-                        onClick={() => {
-                          const o = pcbBoard.outline
-                          setBoardRecesses((rs) => [
-                            ...rs,
-                            {
-                              x: o.x + o.w * 0.3,
-                              y: o.y + o.h * 0.3,
-                              w: o.w * 0.4,
-                              h: o.h * 0.4,
-                              depthMm: Math.min(
-                                pcbStackup.thicknessMm * 0.5,
-                                pcbStackup.thicknessMm - 0.1,
-                              ),
-                              side: 'top',
-                            },
-                          ])
-                        }}
-                        style={{
-                          border: `1px solid ${THEME.borderStrong}`,
-                          background: THEME.surfaceInput,
-                          color: THEME.textSoft,
-                          borderRadius: 4,
-                          fontSize: 11,
-                          padding: '1px 6px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        + Cavity
-                      </button>
-                      <button
-                        type="button"
-                        title="Add a stepped edge — a recess running to the board edge (a thinner card edge / step)."
-                        onClick={() => {
-                          const o = pcbBoard.outline
-                          setBoardRecesses((rs) => [
-                            ...rs,
-                            {
-                              x: o.x,
-                              y: o.y,
-                              w: o.w,
-                              h: o.h * 0.28,
-                              depthMm: Math.min(
-                                pcbStackup.thicknessMm * 0.4,
-                                pcbStackup.thicknessMm - 0.1,
-                              ),
-                              side: 'top',
-                            },
-                          ])
-                        }}
-                        style={{
-                          border: `1px solid ${THEME.borderStrong}`,
-                          background: THEME.surfaceInput,
-                          color: THEME.textSoft,
-                          borderRadius: 4,
-                          fontSize: 11,
-                          padding: '1px 6px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        + Step
-                      </button>
+                      <HelpTip helpId="pcb.cavity">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const o = pcbBoard.outline
+                            setBoardRecesses((rs) => [
+                              ...rs,
+                              {
+                                x: o.x + o.w * 0.3,
+                                y: o.y + o.h * 0.3,
+                                w: o.w * 0.4,
+                                h: o.h * 0.4,
+                                depthMm: Math.min(
+                                  pcbStackup.thicknessMm * 0.5,
+                                  pcbStackup.thicknessMm - 0.1,
+                                ),
+                                side: 'top',
+                              },
+                            ])
+                          }}
+                          style={{
+                            border: `1px solid ${THEME.borderStrong}`,
+                            background: THEME.surfaceInput,
+                            color: THEME.textSoft,
+                            borderRadius: 4,
+                            fontSize: 11,
+                            padding: '1px 6px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          + Cavity
+                        </button>
+                      </HelpTip>
+                      <HelpTip helpId="pcb.step">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const o = pcbBoard.outline
+                            setBoardRecesses((rs) => [
+                              ...rs,
+                              {
+                                x: o.x,
+                                y: o.y,
+                                w: o.w,
+                                h: o.h * 0.28,
+                                depthMm: Math.min(
+                                  pcbStackup.thicknessMm * 0.4,
+                                  pcbStackup.thicknessMm - 0.1,
+                                ),
+                                side: 'top',
+                              },
+                            ])
+                          }}
+                          style={{
+                            border: `1px solid ${THEME.borderStrong}`,
+                            background: THEME.surfaceInput,
+                            color: THEME.textSoft,
+                            borderRadius: 4,
+                            fontSize: 11,
+                            padding: '1px 6px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          + Step
+                        </button>
+                      </HelpTip>
                       {boardRecesses.map((r, i) => {
                         const o = pcbBoard.outline
                         const isStep =
@@ -12100,80 +12223,87 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                             }}
                           >
                             {isStep ? 'step' : 'cavity'}
-                            <input
-                              type="number"
-                              value={r.depthMm}
-                              min={0.05}
-                              max={pcbStackup.thicknessMm - 0.05}
-                              step={0.05}
-                              title="Milled depth (mm)"
-                              onChange={(e) => {
-                                const d = Number(e.target.value)
-                                setBoardRecesses((rs) =>
-                                  rs.map((rr, j) =>
-                                    j === i
-                                      ? {
-                                          ...rr,
-                                          depthMm: Math.max(
-                                            0.05,
-                                            Math.min(d, pcbStackup.thicknessMm - 0.05),
-                                          ),
-                                        }
-                                      : rr,
-                                  ),
-                                )
-                              }}
-                              style={{
-                                width: 44,
-                                background: THEME.surfaceInput,
-                                color: THEME.textSoft,
-                                border: `1px solid ${THEME.borderStrong}`,
-                                borderRadius: 3,
-                                fontSize: 11,
-                                padding: '1px 2px',
-                              }}
-                            />
+                            <HelpTip helpId="pcb.recessDepth">
+                              <input
+                                type="number"
+                                aria-label="Milled depth (mm)"
+                                value={r.depthMm}
+                                min={0.05}
+                                max={pcbStackup.thicknessMm - 0.05}
+                                step={0.05}
+                                onChange={(e) => {
+                                  const d = Number(e.target.value)
+                                  setBoardRecesses((rs) =>
+                                    rs.map((rr, j) =>
+                                      j === i
+                                        ? {
+                                            ...rr,
+                                            depthMm: Math.max(
+                                              0.05,
+                                              Math.min(d, pcbStackup.thicknessMm - 0.05),
+                                            ),
+                                          }
+                                        : rr,
+                                    ),
+                                  )
+                                }}
+                                style={{
+                                  width: 44,
+                                  background: THEME.surfaceInput,
+                                  color: THEME.textSoft,
+                                  border: `1px solid ${THEME.borderStrong}`,
+                                  borderRadius: 3,
+                                  fontSize: 11,
+                                  padding: '1px 2px',
+                                }}
+                              />
+                            </HelpTip>
                             mm
-                            <select
-                              value={r.side}
-                              title="Which face is milled"
-                              onChange={(e) =>
-                                setBoardRecesses((rs) =>
-                                  rs.map((rr, j) =>
-                                    j === i
-                                      ? { ...rr, side: e.target.value as 'top' | 'bottom' }
-                                      : rr,
-                                  ),
-                                )
-                              }
-                              style={{
-                                background: THEME.surfaceInput,
-                                color: THEME.textSoft,
-                                border: `1px solid ${THEME.borderStrong}`,
-                                borderRadius: 3,
-                                fontSize: 11,
-                                padding: '1px 2px',
-                              }}
-                            >
-                              <option value="top">top</option>
-                              <option value="bottom">bottom</option>
-                            </select>
-                            <button
-                              type="button"
-                              title="Remove this recess"
-                              onClick={() => setBoardRecesses((rs) => rs.filter((_, j) => j !== i))}
-                              style={{
-                                border: 'none',
-                                background: 'transparent',
-                                color: THEME.statusDanger,
-                                cursor: 'pointer',
-                                fontSize: 13,
-                                lineHeight: 1,
-                                padding: '0 2px',
-                              }}
-                            >
-                              ×
-                            </button>
+                            <HelpTip helpId="pcb.recessFace">
+                              <select
+                                aria-label="Which face is milled"
+                                value={r.side}
+                                onChange={(e) => {
+                                  setBoardRecesses((rs) =>
+                                    rs.map((rr, j) =>
+                                      j === i
+                                        ? { ...rr, side: e.target.value as 'top' | 'bottom' }
+                                        : rr,
+                                    ),
+                                  )
+                                }}
+                                style={{
+                                  background: THEME.surfaceInput,
+                                  color: THEME.textSoft,
+                                  border: `1px solid ${THEME.borderStrong}`,
+                                  borderRadius: 3,
+                                  fontSize: 11,
+                                  padding: '1px 2px',
+                                }}
+                              >
+                                <option value="top">top</option>
+                                <option value="bottom">bottom</option>
+                              </select>
+                            </HelpTip>
+                            <HelpTip helpId="pcb.recessRemove">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setBoardRecesses((rs) => rs.filter((_, j) => j !== i))
+                                }
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  color: THEME.statusDanger,
+                                  cursor: 'pointer',
+                                  fontSize: 13,
+                                  lineHeight: 1,
+                                  padding: '0 2px',
+                                }}
+                              >
+                                ×
+                              </button>
+                            </HelpTip>
                           </span>
                         )
                       })}

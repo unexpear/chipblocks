@@ -9,6 +9,7 @@ import {
   type Keybinds,
 } from './keybinds.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * The Shortcuts panel (S19-v3-62) — EVERY control in the app, in one place:
@@ -88,14 +89,15 @@ export function ShortcutsPanel({
     >
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
         <div style={{ fontSize: 14, fontWeight: 700 }}>Shortcuts & controls</div>
-        <button
-          type="button"
-          onClick={onClose}
-          title="Close (changes are already saved)"
-          style={{ ...chipButton(light), marginLeft: 'auto' }}
-        >
-          ✕ Close
-        </button>
+        <HelpTip helpId="shortcuts.close">
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ ...chipButton(light), marginLeft: 'auto' }}
+          >
+            ✕ Close
+          </button>
+        </HelpTip>
       </div>
 
       <div style={{ fontWeight: 700, color: dimColor, margin: '8px 0 4px' }}>
@@ -124,28 +126,32 @@ export function ShortcutsPanel({
           >
             {capturing === action ? 'press a key…' : binds[action]}
           </span>
-          <button
-            type="button"
-            onClick={() => {
-              setCapturing(capturing === action ? null : action)
-              setProblem(null)
-            }}
-            style={chipButton(light, capturing === action)}
-          >
-            {capturing === action ? 'cancel' : 'Change'}
-          </button>
+          <HelpTip helpId="shortcuts.change">
+            <button
+              type="button"
+              onClick={() => {
+                setCapturing(capturing === action ? null : action)
+                setProblem(null)
+              }}
+              style={chipButton(light, capturing === action)}
+            >
+              {capturing === action ? 'cancel' : 'Change'}
+            </button>
+          </HelpTip>
         </div>
       ))}
       {problem !== null ? (
         <div style={{ color: THEME.statusDanger, fontSize: 11, marginTop: 4 }}>{problem}</div>
       ) : null}
-      <button
-        type="button"
-        onClick={() => onChange({ ...DEFAULT_KEYBINDS })}
-        style={{ ...chipButton(light), marginTop: 8 }}
-      >
-        Reset all to defaults
-      </button>
+      <HelpTip helpId="shortcuts.reset">
+        <button
+          type="button"
+          onClick={() => onChange({ ...DEFAULT_KEYBINDS })}
+          style={{ ...chipButton(light), marginTop: 8 }}
+        >
+          Reset all to defaults
+        </button>
+      </HelpTip>
 
       {groups.map((group) => (
         <div key={group}>

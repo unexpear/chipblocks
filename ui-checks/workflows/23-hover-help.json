@@ -1,0 +1,321 @@
+{
+  "name": "hover-help",
+  "title": "Hover help names a tool, a palette part, disabled Export ZIP, a Gerber layer, and a catalog badge, then goes away",
+  "covers": ["workspace", "pcbPanel", "gerberCheck", "contentManager"],
+  "steps": [
+    {
+      "id": "blank",
+      "title": "Blank circuit",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplBlankCircuit"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "\u2014 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "hover-wire",
+      "title": "Toolbar Wire tool shows its name and a sentence, then hides",
+      "screen": "workspace",
+      "do": [
+        {
+          "hover": "workspace.wire"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "testid": "tooltip"
+          },
+          "id": "tip-visible"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-name"
+          },
+          "matches": "^Wire$",
+          "id": "tip-name"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-summary"
+          },
+          "matches": ".+",
+          "id": "tip-summary"
+        }
+      ]
+    },
+    {
+      "id": "wire-mouseout",
+      "title": "The tip goes away when the pointer leaves",
+      "screen": "workspace",
+      "do": [
+        {
+          "mouseMove": {
+            "x": 800,
+            "y": 500
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "testid": "tooltip"
+          },
+          "id": "tip-gone"
+        }
+      ]
+    },
+    {
+      "id": "hover-resistor",
+      "title": "A palette part says what it is",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.partsTab"
+        },
+        {
+          "hover": "workspace.paletteResistor"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-name"
+          },
+          "matches": "^Resistor$",
+          "id": "part-name"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-summary"
+          },
+          "matches": "470",
+          "id": "part-summary"
+        }
+      ]
+    },
+    {
+      "id": "hover-export-disabled",
+      "title": "Export ZIP, while disabled, says why",
+      "screen": "pcbPanel",
+      "do": [
+        {
+          "mouseMove": {
+            "x": 800,
+            "y": 500
+          }
+        },
+        {
+          "open": "pcbPanel"
+        },
+        {
+          "hover": "pcbPanel.exportZip"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-name"
+          },
+          "matches": "^Export ZIP$",
+          "id": "export-name"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-summary"
+          },
+          "matches": ".+",
+          "id": "export-summary"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-detail"
+          },
+          "matches": "isn't manufacturable yet",
+          "id": "export-why"
+        }
+      ]
+    },
+    {
+      "id": "hover-planned-badge",
+      "title": "A Content Manager catalog badge explains planned, not installed",
+      "screen": "contentManager",
+      "do": [
+        {
+          "mouseMove": {
+            "x": 800,
+            "y": 500
+          }
+        },
+        {
+          "open": "contentManager"
+        },
+        {
+          "hover": "contentManager.plannedBadge"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-name"
+          },
+          "matches": "^Planned, not installed$",
+          "id": "badge-name"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-summary"
+          },
+          "matches": ".+",
+          "id": "badge-summary"
+        }
+      ]
+    },
+    {
+      "id": "hover-registry-url",
+      "title": "The registry URL tip says nothing is downloaded while you type",
+      "screen": "contentManager",
+      "do": [
+        {
+          "hover": "contentManager.registryUrl"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-name"
+          },
+          "matches": "^Registry index URL$",
+          "id": "url-name"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-summary"
+          },
+          "matches": "does not download",
+          "id": "url-summary"
+        }
+      ]
+    },
+    {
+      "id": "close-manager",
+      "title": "Close the Content Manager",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "contentManager.close"
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "role": "dialog",
+            "name": "Plugin and Content Manager"
+          },
+          "id": "manager-closed"
+        }
+      ]
+    },
+    {
+      "id": "create-led",
+      "title": "LED board so the Gerber check has a copper file",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "\u2014 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    },
+    {
+      "id": "hover-copper-tab",
+      "title": "A Gerber copper tab says it is the top copper",
+      "screen": "gerberCheck",
+      "do": [
+        {
+          "open": "gerberCheck"
+        },
+        {
+          "hover": "gerberCheck.tab",
+          "with": {
+            "file": "board-F_Cu.gtl"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-name"
+          },
+          "matches": "^Top copper$",
+          "id": "copper-name"
+        },
+        {
+          "type": "text",
+          "sel": {
+            "testid": "tooltip-summary"
+          },
+          "matches": ".+",
+          "id": "copper-summary"
+        }
+      ]
+    },
+    {
+      "id": "copper-mouseout",
+      "title": "Leaving the layer tab hides the tip",
+      "screen": "gerberCheck",
+      "do": [
+        {
+          "mouseMove": {
+            "x": 8,
+            "y": 8
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "testid": "tooltip"
+          },
+          "id": "copper-tip-gone"
+        }
+      ]
+    }
+  ]
+}

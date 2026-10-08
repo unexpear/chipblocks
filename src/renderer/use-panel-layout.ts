@@ -12,6 +12,7 @@ import { moveToEdge, type PanelLayout, stackOnto } from './panel-groups.ts'
 export function usePanelLayout() {
   const [panelLayout, setPanelLayout] = useState<PanelLayout>({
     hierarchy: { edge: 'left', group: 0 },
+    parts: { edge: 'left', group: 0 },
     properties: { edge: 'left', group: 2 },
     tools: { edge: 'top', group: 1 },
     scope: { edge: 'bottom', group: 3 },

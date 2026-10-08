@@ -11,6 +11,7 @@ import {
 import { type LivePublisherTrust, publisherTrustLabel } from './content-pack-signature.ts'
 import type { RegistryPackEntry, RegistryUpdate } from './content-registry.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * What the panel claims about install trust. Kept as a constant so a test can lock the wording:
@@ -131,13 +132,15 @@ export function ContentManagerPanel({
       >
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, gap: 8 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Plugin & Content Manager</div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{ ...chipButton(light), marginLeft: 'auto' }}
-          >
-            Close
-          </button>
+          <HelpTip helpId="content.close">
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ ...chipButton(light), marginLeft: 'auto' }}
+            >
+              Close
+            </button>
+          </HelpTip>
         </div>
 
         <p style={{ margin: '0 0 10px', color: dimColor, lineHeight: 1.45 }}>
@@ -163,99 +166,112 @@ export function ContentManagerPanel({
           </div>
           <label style={{ display: 'block', color: dimColor, marginBottom: 4 }}>
             Registry index URL
-            <input
-              data-testid="content-manager-registry-url"
-              aria-label="Content registry index URL"
-              value={registryUrl}
-              onChange={(event) => onRegistryUrlChange(event.target.value)}
-              spellCheck={false}
-              style={{
-                display: 'block',
-                width: '100%',
-                boxSizing: 'border-box',
-                marginTop: 4,
-                padding: '6px 8px',
-                borderRadius: 4,
-                border: light
-                  ? `1px solid ${THEME.textPrimary}`
-                  : `1px solid ${THEME.borderStrong}`,
-                background: light ? THEME.white : THEME.surfaceInput,
-                color: textColor,
-                fontSize: 12,
-              }}
-            />
+            <HelpTip helpId="content.registry.url">
+              <input
+                data-testid="content-manager-registry-url"
+                aria-label="Content registry index URL"
+                value={registryUrl}
+                onChange={(event) => onRegistryUrlChange(event.target.value)}
+                spellCheck={false}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: light
+                    ? `1px solid ${THEME.textPrimary}`
+                    : `1px solid ${THEME.borderStrong}`,
+                  background: light ? THEME.white : THEME.surfaceInput,
+                  color: textColor,
+                  fontSize: 12,
+                }}
+              />
+            </HelpTip>
           </label>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-            <button
-              type="button"
-              data-testid="content-manager-registry-save"
-              onClick={onSaveRegistryUrl}
-              style={chipButton(light)}
-            >
-              Save registry URL
-            </button>
-            <button
-              type="button"
-              data-testid="content-manager-registry-load"
-              onClick={onLoadRegistry}
-              style={chipButton(light)}
-            >
-              Load registry index
-            </button>
+            <HelpTip helpId="content.registry.save">
+              <button
+                type="button"
+                data-testid="content-manager-registry-save"
+                onClick={onSaveRegistryUrl}
+                style={chipButton(light)}
+              >
+                Save registry URL
+              </button>
+            </HelpTip>
+            <HelpTip helpId="content.registry.load">
+              <button
+                type="button"
+                data-testid="content-manager-registry-load"
+                onClick={onLoadRegistry}
+                style={chipButton(light)}
+              >
+                Load registry index
+              </button>
+            </HelpTip>
           </div>
           <label style={{ display: 'block', color: dimColor, marginTop: 8 }}>
             Pack in the loaded index
-            <select
-              data-testid="content-manager-registry-pack"
-              aria-label="Pack in the loaded index"
-              value={registrySelection}
-              onChange={(event) => onRegistrySelection(event.target.value)}
-              style={{
-                display: 'block',
-                marginTop: 4,
-                maxWidth: '100%',
-                padding: '4px 8px',
-                borderRadius: 4,
-                border: light
-                  ? `1px solid ${THEME.textPrimary}`
-                  : `1px solid ${THEME.borderStrong}`,
-                background: light ? THEME.white : THEME.surfaceInput,
-                color: textColor,
-              }}
-            >
-              <option value="">No pack chosen</option>
-              {registryPacks.map((pack) => (
-                <option key={pack.id} value={pack.id}>
-                  {`${pack.name ?? pack.id} ${pack.version}`}
-                </option>
-              ))}
-            </select>
+            <HelpTip helpId="content.registry.pack">
+              <select
+                data-testid="content-manager-registry-pack"
+                aria-label="Pack in the loaded index"
+                value={registrySelection}
+                onChange={(event) => onRegistrySelection(event.target.value)}
+                style={{
+                  display: 'block',
+                  marginTop: 4,
+                  maxWidth: '100%',
+                  padding: '4px 8px',
+                  borderRadius: 4,
+                  border: light
+                    ? `1px solid ${THEME.textPrimary}`
+                    : `1px solid ${THEME.borderStrong}`,
+                  background: light ? THEME.white : THEME.surfaceInput,
+                  color: textColor,
+                }}
+              >
+                <option value="">No pack chosen</option>
+                {registryPacks.map((pack) => (
+                  <option key={pack.id} value={pack.id}>
+                    {`${pack.name ?? pack.id} ${pack.version}`}
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
           </label>
-          <button
-            type="button"
-            data-testid="content-manager-install-from-registry"
-            onClick={onInstallFromRegistry}
-            style={{ ...primaryButton(light), marginTop: 8 }}
-          >
-            Install from registry
-          </button>
-          {updates.map((update) => (
-            <div
-              key={update.id}
-              data-testid="content-manager-update-available"
-              data-pack={update.id}
-              style={{ color: dimColor, marginTop: 8, lineHeight: 1.4 }}
+          <HelpTip helpId="content.registry.install">
+            <button
+              type="button"
+              data-testid="content-manager-install-from-registry"
+              onClick={onInstallFromRegistry}
+              style={{ ...primaryButton(light), marginTop: 8 }}
             >
-              Update available for {update.name}: installed {update.installed}, registry has{' '}
-              {update.offered}. It stays on the installed version until you install this one.
-            </div>
+              Install from registry
+            </button>
+          </HelpTip>
+          {updates.map((update) => (
+            <HelpTip key={update.id} helpId="content.update">
+              <div
+                data-testid="content-manager-update-available"
+                data-pack={update.id}
+                style={{ color: dimColor, marginTop: 8, lineHeight: 1.4 }}
+              >
+                Update available for {update.name}: installed {update.installed}, registry has{' '}
+                {update.offered}. It stays on the installed version until you install this one.
+              </div>
+            </HelpTip>
           ))}
         </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={onInstallLocal} style={primaryButton(light)}>
-            Install from local pack…
-          </button>
+          <HelpTip helpId="content.install">
+            <button type="button" onClick={onInstallLocal} style={primaryButton(light)}>
+              Install from local pack…
+            </button>
+          </HelpTip>
         </div>
 
         {statusMessage !== null ? (
@@ -348,18 +364,28 @@ function InstalledCard({
         <strong>{record.name}</strong>
         <span style={{ color: dim }}>v{record.packVersion}</span>
         <span style={{ color: dim }}>{record.license}</span>
-        <span
-          data-testid="content-manager-badge"
-          data-pack={record.id}
-          style={{
-            marginLeft: 'auto',
-            fontSize: 10,
-            fontWeight: 700,
-            color: record.enabled && !blocked ? THEME.accentLime : dim,
-          }}
+        <HelpTip
+          helpId={
+            !record.enabled
+              ? 'content.badge.disabled'
+              : blocked
+                ? 'content.badge.notLoaded'
+                : 'content.badge.enabled'
+          }
         >
-          {installedPackStatusLabel(record.enabled, blocked)}
-        </span>
+          <span
+            data-testid="content-manager-badge"
+            data-pack={record.id}
+            style={{
+              marginLeft: 'auto',
+              fontSize: 10,
+              fontWeight: 700,
+              color: record.enabled && !blocked ? THEME.accentLime : dim,
+            }}
+          >
+            {installedPackStatusLabel(record.enabled, blocked)}
+          </span>
+        </HelpTip>
       </div>
       <div style={{ color: dim, marginTop: 4 }}>
         {record.description ?? catalog?.description ?? 'Local community pack.'}
@@ -377,14 +403,24 @@ function InstalledCard({
         </div>
       ) : null}
       {blocked ? null : (
-        <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
-          {record.integrityStatus === 'match'
-            ? 'Integrity: declared content hash matched. '
-            : record.integrityStatus === 'undeclared'
-              ? 'Integrity: no declared content hash. '
-              : ''}
-          {record.trustNote}
-        </div>
+        <HelpTip
+          helpId={
+            record.signatureStatus === 'valid-trusted'
+              ? 'content.trust.trusted'
+              : record.signatureStatus === 'valid-untrusted'
+                ? 'content.trust.untrusted'
+                : 'content.trust.none'
+          }
+        >
+          <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
+            {record.integrityStatus === 'match'
+              ? 'Integrity: declared content hash matched. '
+              : record.integrityStatus === 'undeclared'
+                ? 'Integrity: no declared content hash. '
+                : ''}
+            {record.trustNote}
+          </div>
+        </HelpTip>
       )}
       {publisher !== undefined ? (
         <PublisherTrust
@@ -407,37 +443,49 @@ function InstalledCard({
         </div>
       ) : null}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          onClick={() => onSetEnabled(record.id, !record.enabled)}
-          style={chipButton(light)}
-        >
-          {record.enabled ? 'Disable' : 'Enable'}
-        </button>
+        <HelpTip helpId={record.enabled ? 'content.disable' : 'content.enable'}>
+          <button
+            type="button"
+            onClick={() => onSetEnabled(record.id, !record.enabled)}
+            style={chipButton(light)}
+          >
+            {record.enabled ? 'Disable' : 'Enable'}
+          </button>
+        </HelpTip>
         {confirmUninstall ? (
           <>
-            <button
-              type="button"
-              onClick={() => {
-                setConfirmUninstall(false)
-                onUninstall(record.id)
-              }}
-              style={dangerButton(light)}
-            >
-              Confirm uninstall
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmUninstall(false)}
-              style={chipButton(light)}
-            >
-              Cancel
-            </button>
+            <HelpTip helpId="content.confirmUninstall">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmUninstall(false)
+                  onUninstall(record.id)
+                }}
+                style={dangerButton(light)}
+              >
+                Confirm uninstall
+              </button>
+            </HelpTip>
+            <HelpTip helpId="content.cancelUninstall">
+              <button
+                type="button"
+                onClick={() => setConfirmUninstall(false)}
+                style={chipButton(light)}
+              >
+                Cancel
+              </button>
+            </HelpTip>
           </>
         ) : (
-          <button type="button" onClick={() => setConfirmUninstall(true)} style={chipButton(light)}>
-            Uninstall…
-          </button>
+          <HelpTip helpId="content.uninstall">
+            <button
+              type="button"
+              onClick={() => setConfirmUninstall(true)}
+              style={chipButton(light)}
+            >
+              Uninstall…
+            </button>
+          </HelpTip>
         )}
       </div>
     </div>
@@ -465,20 +513,22 @@ function PublisherTrust({
   const trusting = publisher.trust !== 'valid-trusted'
   return (
     <div style={{ marginTop: 6 }}>
-      <div
-        data-testid="content-manager-publisher-fingerprint"
-        data-pack={packId}
-        style={{
-          color: dim,
-          fontSize: 10,
-          lineHeight: 1.4,
-          fontFamily: 'ui-monospace, monospace',
-          overflowWrap: 'anywhere',
-        }}
-      >
-        Publisher key fingerprint (SHA-256 of the raw ed25519 public key):{' '}
-        {publisher.fingerprint || 'still computing'}
-      </div>
+      <HelpTip helpId="content.fingerprint">
+        <div
+          data-testid="content-manager-publisher-fingerprint"
+          data-pack={packId}
+          style={{
+            color: dim,
+            fontSize: 10,
+            lineHeight: 1.4,
+            fontFamily: 'ui-monospace, monospace',
+            overflowWrap: 'anywhere',
+          }}
+        >
+          Publisher key fingerprint (SHA-256 of the raw ed25519 public key):{' '}
+          {publisher.fingerprint || 'still computing'}
+        </div>
+      </HelpTip>
       <div
         data-testid="content-manager-trust-state"
         data-pack={packId}
@@ -499,31 +549,37 @@ function PublisherTrust({
               : `Remove this publisher key from ~/.chipblocks/trusted-publishers.json? Fingerprint ${publisher.fingerprint}. Other packs signed by this same key will also stop counting as pinned.`}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-            <button
-              type="button"
-              data-testid="content-manager-trust-confirm-yes"
-              onClick={onConfirm}
-              style={primaryButton(light)}
-              disabled={publisher.fingerprint === ''}
-            >
-              {trusting ? 'Confirm trust' : 'Confirm untrust'}
-            </button>
-            <button type="button" onClick={onCancel} style={chipButton(light)}>
-              Cancel
-            </button>
+            <HelpTip helpId={trusting ? 'content.trust.confirmPin' : 'content.trust.confirmUnpin'}>
+              <button
+                type="button"
+                data-testid="content-manager-trust-confirm-yes"
+                onClick={onConfirm}
+                style={primaryButton(light)}
+                disabled={publisher.fingerprint === ''}
+              >
+                {trusting ? 'Confirm trust' : 'Confirm untrust'}
+              </button>
+            </HelpTip>
+            <HelpTip helpId="content.trust.cancel">
+              <button type="button" onClick={onCancel} style={chipButton(light)}>
+                Cancel
+              </button>
+            </HelpTip>
           </div>
         </div>
       ) : (
-        <button
-          type="button"
-          data-testid="content-manager-trust-toggle"
-          data-pack={packId}
-          onClick={onAsk}
-          style={{ ...chipButton(light), marginTop: 6 }}
-          disabled={publisher.fingerprint === ''}
-        >
-          {trusting ? 'Trust this publisher…' : 'Stop trusting this publisher…'}
-        </button>
+        <HelpTip helpId={trusting ? 'content.trust.pin' : 'content.trust.unpin'}>
+          <button
+            type="button"
+            data-testid="content-manager-trust-toggle"
+            data-pack={packId}
+            onClick={onAsk}
+            style={{ ...chipButton(light), marginTop: 6 }}
+            disabled={publisher.fingerprint === ''}
+          >
+            {trusting ? 'Trust this publisher…' : 'Stop trusting this publisher…'}
+          </button>
+        </HelpTip>
       )}
     </div>
   )
@@ -535,7 +591,9 @@ function CatalogCard({ entry, light }: { entry: ContentCatalogEntry; light: bool
     <div style={cardStyle(light)}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
         <strong>{entry.name}</strong>
-        <span style={{ color: dim, fontSize: 10, fontWeight: 700 }}>PLANNED · NOT INSTALLED</span>
+        <HelpTip helpId="content.badge.planned">
+          <span style={{ color: dim, fontSize: 10, fontWeight: 700 }}>PLANNED · NOT INSTALLED</span>
+        </HelpTip>
       </div>
       <div style={{ color: dim, marginTop: 4 }}>{entry.description}</div>
       <div style={{ color: dim, marginTop: 4, fontSize: 10 }}>

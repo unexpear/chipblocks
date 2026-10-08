@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // Settings ▸ Theme menu builds itself, and the menu sends back the chosen theme id.
   registerThemes: (themes: { id: string; label: string }[], active: string) =>
     ipcRenderer.send('settings:register-themes', { themes, active }),
+  onHoverHelp: (callback: (mode: string) => void) => subscribe('settings:hover-help', callback),
+  registerHoverHelp: (mode: string) => ipcRenderer.send('settings:register-hover-help', mode),
   onGridColor: (callback: (color: string) => void) => subscribe('settings:grid-color', callback),
   onGridColorCustom: (callback: () => void) => subscribe('settings:grid-color-custom', callback),
   // Save / Load (S19-v3-52): the File menu asks for the circuit, the renderer

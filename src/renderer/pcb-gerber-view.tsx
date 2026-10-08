@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { gerberRoleHelpId } from './help-text.ts'
 import type { ManufacturingFile } from './pcb-fab.ts'
 import type { MmPoint, PlotDraw } from './pcb-gerber-parse.ts'
 import {
@@ -20,6 +21,7 @@ import {
   viewBoxFor,
 } from './pcb-gerber-plot.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * Plots the manufacturing files ChipBlocks just generated — the same Gerber and Excellon strings
@@ -291,35 +293,38 @@ export function GerberCheck({ files }: { files: readonly ManufacturingFile[] }) 
       ) : (
         <>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            <button
-              type="button"
-              onClick={() => setMode('stack')}
-              style={{
-                ...zoomBtn,
-                background: mode === 'stack' ? THEME.surfaceActive : THEME.surfaceInput,
-              }}
-            >
-              Stack
-            </button>
+            <HelpTip helpId="gerber.stack">
+              <button
+                type="button"
+                onClick={() => setMode('stack')}
+                style={{
+                  ...zoomBtn,
+                  background: mode === 'stack' ? THEME.surfaceActive : THEME.surfaceInput,
+                }}
+              >
+                Stack
+              </button>
+            </HelpTip>
             {visible.map((layer, i) => {
               const pressed = mode === 'one' && i === (visible[index] ? index : 0)
               return (
-                <button
-                  key={layer.name}
-                  type="button"
-                  data-testid="gerber-layer-tab"
-                  aria-pressed={pressed}
-                  onClick={() => {
-                    setMode('one')
-                    setIndex(i)
-                  }}
-                  style={{
-                    ...zoomBtn,
-                    background: pressed ? THEME.surfaceActive : THEME.surfaceInput,
-                  }}
-                >
-                  {layer.name}
-                </button>
+                <HelpTip key={layer.name} helpId={gerberRoleHelpId(layer.role)}>
+                  <button
+                    type="button"
+                    data-testid="gerber-layer-tab"
+                    aria-pressed={pressed}
+                    onClick={() => {
+                      setMode('one')
+                      setIndex(i)
+                    }}
+                    style={{
+                      ...zoomBtn,
+                      background: pressed ? THEME.surfaceActive : THEME.surfaceInput,
+                    }}
+                  >
+                    {layer.name}
+                  </button>
+                </HelpTip>
               )
             })}
           </div>
@@ -376,31 +381,39 @@ export function GerberCheck({ files }: { files: readonly ManufacturingFile[] }) 
           active.plot.polarity === 'Negative' ? (
             <>
               <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <button
-                  type="button"
-                  onClick={() => setPxOverride(Math.max(2, pxPerMm / 1.5))}
-                  style={zoomBtn}
-                >
-                  −
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPxOverride(Math.min(80, pxPerMm * 1.5))}
-                  style={zoomBtn}
-                >
-                  +
-                </button>
-                <button type="button" onClick={() => setPxOverride(null)} style={zoomBtn}>
-                  Fit
-                </button>
-                {thin !== null && (
+                <HelpTip helpId="gerber.zoomOut">
                   <button
                     type="button"
-                    onClick={() => setPxOverride(Math.min(80, 2 / thin))}
+                    onClick={() => setPxOverride(Math.max(2, pxPerMm / 1.5))}
                     style={zoomBtn}
                   >
-                    Zoom to thinnest line
+                    −
                   </button>
+                </HelpTip>
+                <HelpTip helpId="gerber.zoomIn">
+                  <button
+                    type="button"
+                    onClick={() => setPxOverride(Math.min(80, pxPerMm * 1.5))}
+                    style={zoomBtn}
+                  >
+                    +
+                  </button>
+                </HelpTip>
+                <HelpTip helpId="gerber.fit">
+                  <button type="button" onClick={() => setPxOverride(null)} style={zoomBtn}>
+                    Fit
+                  </button>
+                </HelpTip>
+                {thin !== null && (
+                  <HelpTip helpId="gerber.zoomThin">
+                    <button
+                      type="button"
+                      onClick={() => setPxOverride(Math.min(80, 2 / thin))}
+                      style={zoomBtn}
+                    >
+                      Zoom to thinnest line
+                    </button>
+                  </HelpTip>
                 )}
               </span>
               <PlotCanvas
