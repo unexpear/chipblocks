@@ -1,12 +1,7 @@
 {
   "name": "hover-help",
   "title": "Hover help names a tool, a palette part, disabled Export ZIP, a Gerber layer, and a catalog badge, then goes away",
-  "covers": [
-    "workspace",
-    "pcbPanel",
-    "gerberCheck",
-    "contentManager"
-  ],
+  "covers": ["workspace", "pcbPanel", "gerberCheck", "contentManager"],
   "steps": [
     {
       "id": "blank",
