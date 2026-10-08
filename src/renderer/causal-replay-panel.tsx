@@ -1,5 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import type { CausalReplay, CausalReplayEvent } from './causal-replay.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 
 const MAX_VISIBLE_EVENTS = 40
@@ -119,16 +120,16 @@ export function CausalReplayPanel({
               return <div key={event.id}>{content}</div>
             }
             return (
-              <button
-                key={event.id}
-                type="button"
-                className="nodrag"
-                onClick={() => onJump(event.frameIndex as number)}
-                title="Jump the timeline to this recorded frame"
-                style={{ padding: 0, border: 0, background: 'none', cursor: 'pointer' }}
-              >
-                {content}
-              </button>
+              <HelpTip key={event.id} helpId="replay.jump">
+                <button
+                  type="button"
+                  className="nodrag"
+                  onClick={() => onJump(event.frameIndex as number)}
+                  style={{ padding: 0, border: 0, background: 'none', cursor: 'pointer' }}
+                >
+                  {content}
+                </button>
+              </HelpTip>
             )
           })}
           {replay.events.length > MAX_VISIBLE_EVENTS ? (

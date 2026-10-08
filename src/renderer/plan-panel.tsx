@@ -8,6 +8,7 @@
 import { type CSSProperties, type JSX, useState } from 'react'
 import { BOARD_PLAN, type PlanItem, type PlanStatus } from './board-plan.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 const STORAGE_KEY = 'chipblocks-plan-status'
 const NEXT: Record<PlanStatus, PlanStatus> = { todo: 'doing', doing: 'done', done: 'todo' }
@@ -123,19 +124,21 @@ export function PlanPanel({ light }: { light: boolean }): JSX.Element {
                     <div
                       style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '2px 0' }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => cycle(item)}
-                        title={`status: ${st} — click to cycle`}
-                        style={{
-                          ...PRESSABLE,
-                          color: statusColor[st],
-                          width: 12,
-                          userSelect: 'none',
-                        }}
-                      >
-                        {GLYPH[st]}
-                      </button>
+                      <HelpTip helpId="plan.status" name={st}>
+                        <button
+                          type="button"
+                          onClick={() => cycle(item)}
+                          aria-label={`Status ${st}`}
+                          style={{
+                            ...PRESSABLE,
+                            color: statusColor[st],
+                            width: 12,
+                            userSelect: 'none',
+                          }}
+                        >
+                          {GLYPH[st]}
+                        </button>
+                      </HelpTip>
                       <button
                         type="button"
                         onClick={() => setExpanded(open ? null : item.id)}

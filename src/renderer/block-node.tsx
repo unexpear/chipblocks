@@ -4,6 +4,7 @@ import { type BlockData, type BlockPort, blockLayout } from './blocks.ts'
 import { GateFace, gateLayout } from './gate-symbol.tsx'
 import { HealthContext } from './health.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * A circuit block on the canvas (S19-v3-67) — ONE node showing its name + its pins, like a chip
@@ -435,147 +436,157 @@ export function BlockNode({ id, data }: NodeProps) {
         }))
       : null
   return (
-    <div
-      className={health?.failed ? 'cb-shake' : undefined}
-      data-caveat={caveat ?? undefined}
-      title={
+    <HelpTip
+      helpId="block.body"
+      name={block.name}
+      detail={
         caveat
-          ? `${caveat}
-
-${block.name} — a circuit block (${block.nodes.length} parts inside, ${block.ports.length} pins). Double-click to see the real circuit it is made of.`
-          : `${block.name} — a circuit block (${block.nodes.length} parts inside, ${block.ports.length} pins). Double-click to see the real circuit it is made of.`
+          ? `${caveat} ${block.nodes.length} parts inside, ${block.ports.length} pins.`
+          : `${block.nodes.length} parts inside, ${block.ports.length} pins.`
       }
-      style={{ position: 'relative', width, height, fontFamily: 'system-ui, sans-serif' }}
     >
-      {health?.failed ? <div className="cb-danger" /> : null}
-      {caveat ? (
+      <div
+        className={health?.failed ? 'cb-shake' : undefined}
+        data-caveat={caveat ?? undefined}
+        style={{ position: 'relative', width, height, fontFamily: 'system-ui, sans-serif' }}
+      >
+        {health?.failed ? <div className="cb-danger" /> : null}
+        {caveat ? (
+          <div
+            style={{
+              position: 'absolute',
+              top: -9,
+              right: -7,
+              zIndex: 2,
+              fontSize: 12,
+              lineHeight: 1,
+              color: THEME.statusWarn,
+              textShadow: `0 0 3px ${THEME.surfaceDeep}`,
+              pointerEvents: 'none',
+            }}
+          >
+            ⚠
+          </div>
+        ) : null}
         <div
           style={{
             position: 'absolute',
-            top: -9,
-            right: -7,
-            zIndex: 2,
-            fontSize: 12,
-            lineHeight: 1,
-            color: THEME.statusWarn,
-            textShadow: `0 0 3px ${THEME.surfaceDeep}`,
+            inset: 0,
+            border: block.symbol
+              ? 'none'
+              : health?.failed
+                ? `1.5px solid ${THEME.statusDanger}`
+                : health?.warned
+                  ? `1.5px solid ${THEME.statusWarn}`
+                  : `1.5px solid ${THEME.textMuted}`,
+            borderRadius: 6,
+            background: block.symbol ? 'transparent' : THEME.surfacePanel,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {block.symbol ? (
+            <GateFace
+              symbol={block.symbol}
+              inputCoords={placed.filter((p) => p.side === 'left').map((p) => p.coord)}
+              stroke={
+                health?.failed
+                  ? THEME.statusDanger
+                  : health?.warned
+                    ? THEME.statusWarn
+                    : THEME.textPrimary
+              }
+            />
+          ) : digitsMulti && sepsMulti ? (
+            <MultiDigitFace width={width} height={height} digits={digitsMulti} seps={sepsMulti} />
+          ) : segments ? (
+            <SevenSegmentFace width={width} height={height} segments={segments} />
+          ) : sep ? (
+            <SeparatorFace width={width} height={height} dp={sep.dp} comma={sep.comma} />
+          ) : matrix ? (
+            <DotMatrixFace width={width} height={height} matrix={matrix} />
+          ) : (
+            <span style={{ color: THEME.textBright, fontSize: 11, fontWeight: 700 }}>
+              {block.name}
+            </span>
+          )}
+        </div>
+        {placed.map(({ port, side, coord }) => {
+          const look = pinLook(port.kind)
+          const onSide = side === 'left' || side === 'right'
+          const polarity =
+            port.kind === 'power_positive'
+              ? ' (+ power)'
+              : port.kind === 'power_negative'
+                ? ' (− power)'
+                : ''
+          const text = `${look.glyph}${look.glyph && port.name ? ' ' : ''}${port.name ?? ''}`
+          // a gate wears only its power labels (V+/GND); the shape itself names the in/out pins
+          const showLabel = !block.symbol || port.id === 'v_dd' || port.id === 'gnd'
+          return (
+            <Fragment key={port.id}>
+              <HelpTip
+                helpId="block.pin"
+                name={`${port.name ?? port.label}${polarity}`}
+                detail={`This pin is the internal terminal ${port.label}.`}
+              >
+                <Handle
+                  id={port.id}
+                  type="source"
+                  position={POS[side]}
+                  onPointerEnter={(event) => event.stopPropagation()}
+                  onMouseEnter={(event) => event.stopPropagation()}
+                  style={{
+                    ...(onSide ? { top: coord } : { left: coord }),
+                    background: look.color,
+                    width: 9,
+                    height: 9,
+                  }}
+                />
+              </HelpTip>
+              {text && showLabel ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    ...labelStyle(side, coord),
+                    fontSize: 8,
+                    fontWeight: 600,
+                    color: look.color,
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {text}
+                </div>
+              ) : null}
+            </Fragment>
+          )
+        })}
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: THEME.textMuted,
+            fontSize: 9,
+            whiteSpace: 'nowrap',
             pointerEvents: 'none',
           }}
         >
-          ⚠
+          {String((data as { label?: string }).label ?? id)}
+          {health?.failed ? (
+            <span title={health.note} style={{ marginLeft: 5 }}>
+              💥
+            </span>
+          ) : health?.warned ? (
+            <span title={health.note} style={{ marginLeft: 5 }}>
+              ⚠️
+            </span>
+          ) : null}
         </div>
-      ) : null}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          border: block.symbol
-            ? 'none'
-            : health?.failed
-              ? `1.5px solid ${THEME.statusDanger}`
-              : health?.warned
-                ? `1.5px solid ${THEME.statusWarn}`
-                : `1.5px solid ${THEME.textMuted}`,
-          borderRadius: 6,
-          background: block.symbol ? 'transparent' : THEME.surfacePanel,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {block.symbol ? (
-          <GateFace
-            symbol={block.symbol}
-            inputCoords={placed.filter((p) => p.side === 'left').map((p) => p.coord)}
-            stroke={
-              health?.failed
-                ? THEME.statusDanger
-                : health?.warned
-                  ? THEME.statusWarn
-                  : THEME.textPrimary
-            }
-          />
-        ) : digitsMulti && sepsMulti ? (
-          <MultiDigitFace width={width} height={height} digits={digitsMulti} seps={sepsMulti} />
-        ) : segments ? (
-          <SevenSegmentFace width={width} height={height} segments={segments} />
-        ) : sep ? (
-          <SeparatorFace width={width} height={height} dp={sep.dp} comma={sep.comma} />
-        ) : matrix ? (
-          <DotMatrixFace width={width} height={height} matrix={matrix} />
-        ) : (
-          <span style={{ color: THEME.textBright, fontSize: 11, fontWeight: 700 }}>
-            {block.name}
-          </span>
-        )}
       </div>
-      {placed.map(({ port, side, coord }) => {
-        const look = pinLook(port.kind)
-        const onSide = side === 'left' || side === 'right'
-        const polarity =
-          port.kind === 'power_positive'
-            ? ' (+ power)'
-            : port.kind === 'power_negative'
-              ? ' (− power)'
-              : ''
-        const text = `${look.glyph}${look.glyph && port.name ? ' ' : ''}${port.name ?? ''}`
-        // a gate wears only its power labels (V+/GND); the shape itself names the in/out pins
-        const showLabel = !block.symbol || port.id === 'v_dd' || port.id === 'gnd'
-        return (
-          <Fragment key={port.id}>
-            <Handle
-              id={port.id}
-              type="source"
-              position={POS[side]}
-              title={`${port.name ?? port.label}${polarity} — this pin IS the internal terminal ${port.label}`}
-              style={{
-                ...(onSide ? { top: coord } : { left: coord }),
-                background: look.color,
-                width: 9,
-                height: 9,
-              }}
-            />
-            {text && showLabel ? (
-              <div
-                style={{
-                  position: 'absolute',
-                  ...labelStyle(side, coord),
-                  fontSize: 8,
-                  fontWeight: 600,
-                  color: look.color,
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                }}
-              >
-                {text}
-              </div>
-            ) : null}
-          </Fragment>
-        )
-      })}
-      <div
-        style={{
-          position: 'absolute',
-          top: '100%',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          color: THEME.textMuted,
-          fontSize: 9,
-          whiteSpace: 'nowrap',
-          pointerEvents: 'none',
-        }}
-      >
-        {String((data as { label?: string }).label ?? id)}
-        {health?.failed ? (
-          <span title={health.note} style={{ marginLeft: 5 }}>
-            💥
-          </span>
-        ) : health?.warned ? (
-          <span title={health.note} style={{ marginLeft: 5 }}>
-            ⚠️
-          </span>
-        ) : null}
-      </div>
-    </div>
+    </HelpTip>
   )
 }

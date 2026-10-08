@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ProjectChoice } from './project-browser.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * Project hub (the per-project home) — modeled on KiCad's project manager: the project's
@@ -203,33 +204,44 @@ export function ProjectHub({
             Project files
           </div>
           {files.map((f) => (
-            <button
+            <HelpTip
               key={f.key}
-              type="button"
-              disabled={!f.open}
-              onClick={f.open ? onOpenEditor : undefined}
-              title={f.open ? 'Open in the Circuit Editor' : undefined}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 9,
-                width: '100%',
-                textAlign: 'left',
-                padding: '7px 8px',
-                borderRadius: 6,
-                border: '1px solid transparent',
-                background: 'transparent',
-                color: f.open ? TEXT : MUTED,
-                cursor: f.open ? 'pointer' : 'default',
-                opacity: f.open ? 1 : 0.6,
-                fontSize: 12.5,
-              }}
+              helpId="hub.file"
+              name={f.label}
+              detail={
+                f.key === 'schematic'
+                  ? 'Opens the schematic in the circuit editor.'
+                  : f.key === 'project'
+                    ? 'This row is the project file. The schematic is what opens in the editor.'
+                    : 'The board is not a separate file in this window yet.'
+              }
             >
-              <span style={{ color: f.key === 'schematic' ? ACCENT_TEXT : MUTED, fontSize: 13 }}>
-                {f.glyph}
-              </span>
-              {f.label}
-            </button>
+              <button
+                type="button"
+                disabled={!f.open}
+                onClick={f.open ? onOpenEditor : undefined}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 9,
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '7px 8px',
+                  borderRadius: 6,
+                  border: '1px solid transparent',
+                  background: 'transparent',
+                  color: f.open ? TEXT : MUTED,
+                  cursor: f.open ? 'pointer' : 'default',
+                  opacity: f.open ? 1 : 0.6,
+                  fontSize: 12.5,
+                }}
+              >
+                <span style={{ color: f.key === 'schematic' ? ACCENT_TEXT : MUTED, fontSize: 13 }}>
+                  {f.glyph}
+                </span>
+                {f.label}
+              </button>
+            </HelpTip>
           ))}
         </div>
 

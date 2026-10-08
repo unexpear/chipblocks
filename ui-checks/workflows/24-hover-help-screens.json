@@ -1,0 +1,582 @@
+{
+  "name": "hover-help-screens",
+  "title": "Hover help on the meter, scope, timeline, canvas, editors, inspectors, and analysis panels, then it goes away",
+  "covers": ["workspace", "start"],
+  "steps": [
+    {
+      "id": "led",
+      "title": "LED circuit",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": { "category": "start.circuit", "template": "start.tplLed" }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "led-counts"
+        }
+      ]
+    },
+    {
+      "id": "canvas-snap",
+      "title": "Snap to grid names itself",
+      "screen": "workspace",
+      "do": [{ "hover": { "role": "button", "name": "Snap to grid", "exact": true } }],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Snap to grid$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "canvas-snap-out",
+      "title": "The snap tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "close-project",
+      "title": "Close project names itself",
+      "screen": "workspace",
+      "do": [{ "hover": "workspace.closeTab" }],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Close project$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "close-project-out",
+      "title": "The close tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "device-pin",
+      "title": "A part terminal names itself",
+      "screen": "workspace",
+      "do": [{ "hover": { "css": ".react-flow__handle" } }],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        { "type": "text", "sel": { "testid": "tooltip-name" }, "matches": ".+", "id": "name" },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "device-pin-out",
+      "title": "The terminal tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "hierarchy",
+      "title": "A hierarchy row names the part",
+      "screen": "workspace",
+      "do": [
+        { "click": { "css": "[data-dock-tab=\"hierarchy\"]" } },
+        { "hover": { "css": "[data-definition=\"resistor\"]" } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        { "type": "text", "sel": { "testid": "tooltip-name" }, "matches": ".+", "id": "name" },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "hierarchy-out",
+      "title": "The hierarchy tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "inspector",
+      "title": "The package picker names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "css": "[data-definition=\"resistor\"]" } },
+        { "hover": { "role": "combobox", "name": "Board package", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Package$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "inspector-out",
+      "title": "The package tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "meter",
+      "title": "DC volts names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.meter" },
+        { "hover": { "role": "button", "name": "V⎓", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^DC volts$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "meter-out",
+      "title": "The meter tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }, { "click": "workspace.meter" }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "scope",
+      "title": "The timebase names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.scope" },
+        { "hover": { "role": "combobox", "name": "Time per division", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Timebase$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "scope-out",
+      "title": "The timebase tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "timeline",
+      "title": "Front mode names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "Timeline", "exact": true } },
+        { "hover": { "role": "button", "name": "Front mode", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        { "type": "text", "sel": { "testid": "tooltip-name" }, "matches": "^Front$", "id": "name" },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "timeline-out",
+      "title": "The front tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "bode",
+      "title": "Bode’s pick names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.bode" },
+        { "hover": { "role": "button", "name": "Pick Bode output", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Pick output$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "bode-out",
+      "title": "The Bode tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "reflection",
+      "title": "Reflection’s pick names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "Reflect", "exact": true } },
+        { "hover": { "role": "button", "name": "Pick reflection port", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Pick port$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "reflection-out",
+      "title": "The reflection tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "distortion",
+      "title": "Distortion’s pick names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "Distort", "exact": true } },
+        { "hover": { "role": "button", "name": "Pick distortion output", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Pick output$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "distortion-out",
+      "title": "The distortion tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "stress",
+      "title": "Ambient names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "Stress", "exact": true } },
+        { "hover": { "role": "button", "name": "Ambient °C", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Ambient$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "stress-out",
+      "title": "The ambient tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "clipboard",
+      "title": "Close clipboard names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "Clipboard", "exact": true } },
+        { "hover": { "role": "button", "name": "Close clipboard", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Close clipboard$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "clipboard-out",
+      "title": "The clipboard tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "plan",
+      "title": "A plan status names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.plan" },
+        { "hover": { "role": "button", "nameRe": "^Status " } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        { "type": "text", "sel": { "testid": "tooltip-name" }, "matches": ".+", "id": "name" },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "plan-out",
+      "title": "The plan tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "verilog",
+      "title": "Debug names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "Verilog", "exact": true } },
+        { "hover": { "role": "button", "name": "Debug" } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        { "type": "text", "sel": { "testid": "tooltip-name" }, "matches": "^Debug$", "id": "name" },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "verilog-out",
+      "title": "The debug tip goes away, and the editor closes",
+      "screen": "workspace",
+      "do": [
+        { "mouseMove": { "x": 1100, "y": 12 } },
+        { "click": { "role": "button", "name": "Close Verilog", "exact": true } }
+      ],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "footprint",
+      "title": "Add pad names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.newFootprint" },
+        { "hover": { "role": "button", "name": "+ Pad", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Add pad$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "footprint-out",
+      "title": "The pad tip goes away, and the editor closes",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }, { "press": "Escape" }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "user-part",
+      "title": "Designator names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.newPart" },
+        { "hover": { "role": "textbox", "name": "Designator", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Designator$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "user-part-out",
+      "title": "The designator tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "symbol",
+      "title": "Select names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "Draw symbol…", "exact": true } },
+        { "hover": { "role": "button", "name": "Select", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Select$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "symbol-out",
+      "title": "The select tip goes away, and both editors close",
+      "screen": "workspace",
+      "do": [
+        { "mouseMove": { "x": 1100, "y": 12 } },
+        { "press": "Escape" },
+        { "click": { "role": "button", "name": "Cancel", "exact": true } }
+      ],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "browser",
+      "title": "Scan again names itself",
+      "screen": "start",
+      "do": [
+        { "click": "workspace.homeTab" },
+        { "click": "start.recent" },
+        { "hover": { "role": "button", "name": "rescan", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Scan again$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "browser-out",
+      "title": "The scan tip goes away",
+      "screen": "start",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "back",
+      "title": "Back to the LED project",
+      "screen": "workspace",
+      "do": [{ "click": { "role": "button", "name": "MyLED", "exact": true } }],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "still-led"
+        }
+      ]
+    },
+    {
+      "id": "chip",
+      "title": "The iCE40 tile names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.crumbChip" },
+        { "hover": { "role": "button", "name": "iCE40 logic tile", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^iCE40 logic tile$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "chip-out",
+      "title": "The tile tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "fpga",
+      "title": "The closed report can be opened again",
+      "screen": "workspace",
+      "do": [
+        { "click": { "role": "button", "name": "iCE40 logic tile", "exact": true } },
+        { "click": { "role": "button", "name": "Compile to iCE40…", "exact": true } },
+        { "click": "workspace.dismissReport" },
+        { "hover": { "testid": "fpga-report-reopen" } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        { "type": "text", "sel": { "testid": "tooltip-name" }, "matches": ".+", "id": "name" },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "fpga-out",
+      "title": "The report tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    },
+    {
+      "id": "board-3d",
+      "title": "Reset view names itself",
+      "screen": "workspace",
+      "do": [
+        { "click": "workspace.crumbBoard" },
+        { "click": { "role": "button", "name": "3D", "exact": true } },
+        { "hover": { "role": "button", "name": "Reset the view", "exact": true } }
+      ],
+      "expect": [
+        { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^Reset view$",
+          "id": "name"
+        },
+        { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
+      ]
+    },
+    {
+      "id": "board-3d-out",
+      "title": "The reset tip goes away",
+      "screen": "workspace",
+      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
+    }
+  ]
+}

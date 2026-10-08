@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { FlowViewportPortal } from './flow-portals.tsx'
 import type { Point } from './net-edge.tsx'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 
 /**
  * Wire-to-wire crossings (Sprint 22). Two wires that cross on the canvas are NOT connected — the over
@@ -279,44 +280,41 @@ export function WireCrossingsOverlay({
         const interactive = !readOnly && !c.connected
         const hot = interactive && hovered === c.key
         return (
-          // biome-ignore lint/a11y/useKeyWithClickEvents: a crossing marker is click-to-join; keyboard joining is future work
-          // biome-ignore lint/a11y/noStaticElementInteractions: a crossing marker is a click target to join two wires; keyboard joining is future work
-          <div
+          <HelpTip
             key={c.key}
-            className="nodrag nopan"
-            onClick={
-              interactive
-                ? (event) => {
-                    event.stopPropagation()
-                    onJoin(c)
-                  }
-                : undefined
-            }
-            onMouseEnter={interactive ? () => setHovered(c.key) : undefined}
-            onMouseLeave={
-              interactive ? () => setHovered((h) => (h === c.key ? null : h)) : undefined
-            }
-            title={
-              c.connected
-                ? 'These wires are CONNECTED here — one net (filled junction dot).'
-                : readOnly
-                  ? 'These wires cross but are NOT connected (open dot).'
-                  : 'These wires cross but are NOT connected (open dot). Click to JOIN them into one net.'
-            }
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${c.x}px, ${c.y}px)`,
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: c.connected ? THEME.wire : canvasFill,
-              border: c.connected ? 'none' : `1.5px solid ${THEME.wire}`,
-              boxShadow: hot ? `0 0 0 2px ${THEME.accentBlue}` : undefined,
-              cursor: interactive ? 'pointer' : 'default',
-              pointerEvents: interactive ? 'all' : 'none',
-              zIndex: 6,
-            }}
-          />
+            helpId={c.connected ? 'crossing.joined' : readOnly ? 'crossing.open' : 'crossing.join'}
+          >
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: a crossing marker is click-to-join; keyboard joining is future work */}
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: a crossing marker is a click target to join two wires; keyboard joining is future work */}
+            <div
+              className="nodrag nopan"
+              onClick={
+                interactive
+                  ? (event) => {
+                      event.stopPropagation()
+                      onJoin(c)
+                    }
+                  : undefined
+              }
+              onMouseEnter={interactive ? () => setHovered(c.key) : undefined}
+              onMouseLeave={
+                interactive ? () => setHovered((h) => (h === c.key ? null : h)) : undefined
+              }
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, -50%) translate(${c.x}px, ${c.y}px)`,
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: c.connected ? THEME.wire : canvasFill,
+                border: c.connected ? 'none' : `1.5px solid ${THEME.wire}`,
+                boxShadow: hot ? `0 0 0 2px ${THEME.accentBlue}` : undefined,
+                cursor: interactive ? 'pointer' : 'default',
+                pointerEvents: interactive ? 'all' : 'none',
+                zIndex: 6,
+              }}
+            />
+          </HelpTip>
         )
       })}
     </FlowViewportPortal>

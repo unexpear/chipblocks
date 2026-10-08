@@ -4,6 +4,7 @@ import { attachDrawnSymbol } from './symbol-draft.ts'
 import { SymbolEditor } from './symbol-editor.tsx'
 import type { DrawnSymbol } from './symbol-geometry.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { BEHAVIOUR_DEVICES, buildUserPartDraft } from './user-part-draft.ts'
 import { UserPartGlyph } from './user-part-glyphs.tsx'
 import {
@@ -246,17 +247,18 @@ export function UserPartEditor({
                   style={{ ...textInput, width: '100%' }}
                 />
               </label>
-              <label style={{ ...fieldLabel, width: 90, flex: 'none' }}>
-                Designator
-                <input
-                  type="text"
-                  value={designator}
-                  onChange={(e) => setDesignator(e.target.value)}
-                  placeholder="U"
-                  title="The reference-designator letter — U for a chip, J for a connector, etc."
-                  style={{ ...textInput, width: '100%' }}
-                />
-              </label>
+              <HelpTip helpId="userpart.designator">
+                <label style={{ ...fieldLabel, width: 90, flex: 'none' }}>
+                  Designator
+                  <input
+                    type="text"
+                    value={designator}
+                    onChange={(e) => setDesignator(e.target.value)}
+                    placeholder="U"
+                    style={{ ...textInput, width: '100%' }}
+                  />
+                </label>
+              </HelpTip>
             </div>
 
             <SectionHeader
@@ -277,49 +279,56 @@ export function UserPartEditor({
                   placeholder="pin name"
                   style={{ ...textInput, flex: 1, minWidth: 0 }}
                 />
-                <input
-                  type="text"
-                  value={pin.pad}
-                  onChange={(e) => updatePin(pin.key, { pad: e.target.value })}
-                  placeholder="pad"
-                  title="Which pad of the footprint this pin solders to, named as the package labels it (1, A5). A real symbol carries this alongside the signal name — on a 48-pin chip, IO_12 and pad 31 are unrelated. Leave blank to match the pin name against a pad, then fall back to order."
-                  style={{ ...textInput, width: 58, flexShrink: 0 }}
-                />
-                <select
-                  value={pin.side}
-                  onChange={(e) => updatePin(pin.key, { side: e.target.value as PinSide })}
-                  title="Which edge of the box the pin sits on"
-                  style={selectInput}
-                >
-                  {SIDES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={pin.electrical}
-                  onChange={(e) =>
-                    updatePin(pin.key, { electrical: e.target.value as PinElectrical })
-                  }
-                  title="The pin's electrical role (documentation for now)"
-                  style={selectInput}
-                >
-                  {PIN_ELECTRICAL_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t.replace(/_/g, ' ')}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => removePin(pin.key)}
-                  aria-label={`Remove pin ${pin.name}`}
-                  title="Remove this pin"
-                  style={iconButton}
-                >
-                  ×
-                </button>
+                <HelpTip helpId="userpart.pad">
+                  <input
+                    type="text"
+                    value={pin.pad}
+                    onChange={(e) => updatePin(pin.key, { pad: e.target.value })}
+                    placeholder="pad"
+                    aria-label="Pad"
+                    style={{ ...textInput, width: 58, flexShrink: 0 }}
+                  />
+                </HelpTip>
+                <HelpTip helpId="userpart.side">
+                  <select
+                    value={pin.side}
+                    onChange={(e) => updatePin(pin.key, { side: e.target.value as PinSide })}
+                    aria-label="Side"
+                    style={selectInput}
+                  >
+                    {SIDES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </HelpTip>
+                <HelpTip helpId="userpart.role">
+                  <select
+                    value={pin.electrical}
+                    onChange={(e) =>
+                      updatePin(pin.key, { electrical: e.target.value as PinElectrical })
+                    }
+                    aria-label="Electrical role"
+                    style={selectInput}
+                  >
+                    {PIN_ELECTRICAL_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t.replace(/_/g, ' ')}
+                      </option>
+                    ))}
+                  </select>
+                </HelpTip>
+                <HelpTip helpId="userpart.removePin">
+                  <button
+                    type="button"
+                    onClick={() => removePin(pin.key)}
+                    aria-label={`Remove pin ${pin.name}`}
+                    style={iconButton}
+                  >
+                    ×
+                  </button>
+                </HelpTip>
               </div>
             ))}
 
@@ -332,19 +341,21 @@ export function UserPartEditor({
                 optional — so it lands on a board (name a pad per pin, or leave it to order)
               </span>
             </div>
-            <select
-              value={footprintValue}
-              onChange={(e) => setFootprint(e.target.value)}
-              title="The physical package this part solders to. Only footprints with enough pads for your pins are listed; your pins map to its pads top-to-bottom in order."
-              style={{ ...selectInput, width: '100%', flex: 'initial' }}
-            >
-              <option value="">None — stays off the board</option>
-              {footprintChoices.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name} ({f.pads.length} pads)
-                </option>
-              ))}
-            </select>
+            <HelpTip helpId="userpart.footprint">
+              <select
+                value={footprintValue}
+                onChange={(e) => setFootprint(e.target.value)}
+                aria-label="Footprint"
+                style={{ ...selectInput, width: '100%', flex: 'initial' }}
+              >
+                <option value="">None — stays off the board</option>
+                {footprintChoices.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name} ({f.pads.length} pads)
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
 
             <div style={{ height: 14 }} />
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
@@ -355,19 +366,21 @@ export function UserPartEditor({
                 optional — make it simulate as a real device
               </span>
             </div>
-            <select
-              value={behaviourValid ? behaviourDef : ''}
-              onChange={(e) => chooseBehaviour(e.target.value)}
-              title="Give the part real physics: pick the built-in device it behaves as, and map each of that device's terminals to one of your pins. The simulator then runs the real device."
-              style={{ ...selectInput, width: '100%', flex: 'initial' }}
-            >
-              <option value="">None — a black box (won’t simulate)</option>
-              {BEHAVIOUR_DEVICES.filter((d) => d.terminals.length <= pins.length).map((d) => (
-                <option key={d.definition} value={d.definition}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
+            <HelpTip helpId="userpart.behaviour">
+              <select
+                value={behaviourValid ? behaviourDef : ''}
+                onChange={(e) => chooseBehaviour(e.target.value)}
+                aria-label="Behaviour"
+                style={{ ...selectInput, width: '100%', flex: 'initial' }}
+              >
+                <option value="">None — a black box (won’t simulate)</option>
+                {BEHAVIOUR_DEVICES.filter((d) => d.terminals.length <= pins.length).map((d) => (
+                  <option key={d.definition} value={d.definition}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+            </HelpTip>
             {behaviourValid && behaviourDevice ? (
               <div style={{ marginTop: 6 }}>
                 {behaviourDevice.terminals.map((terminal, i) => (
@@ -433,23 +446,26 @@ export function UserPartEditor({
                     placeholder="value"
                     style={{ ...textInput, width: 76, flex: 'none' }}
                   />
-                  <input
-                    type="text"
-                    value={param.unit}
-                    onChange={(e) => updateParam(param.key, { unit: e.target.value })}
-                    placeholder="unit"
-                    title="Unit (e.g. V, A, ohm) — leave blank for a plain number"
-                    style={{ ...textInput, width: 64, flex: 'none' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeParam(param.key)}
-                    aria-label="Remove value"
-                    title="Remove this value"
-                    style={iconButton}
-                  >
-                    ×
-                  </button>
+                  <HelpTip helpId="userpart.unit">
+                    <input
+                      type="text"
+                      value={param.unit}
+                      onChange={(e) => updateParam(param.key, { unit: e.target.value })}
+                      placeholder="unit"
+                      aria-label="Unit"
+                      style={{ ...textInput, width: 64, flex: 'none' }}
+                    />
+                  </HelpTip>
+                  <HelpTip helpId="userpart.removeValue">
+                    <button
+                      type="button"
+                      onClick={() => removeParam(param.key)}
+                      aria-label="Remove value"
+                      style={iconButton}
+                    >
+                      ×
+                    </button>
+                  </HelpTip>
                 </div>
               ))
             )}
@@ -504,22 +520,27 @@ export function UserPartEditor({
               Save adds it to the palette — drag it onto the canvas and wire it like any part.
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => setSymbolEditorOpen(true)}
-            style={{
-              marginLeft: 'auto',
-              padding: '7px 12px',
-              borderRadius: 7,
-              border: `1px solid ${THEME.borderStrong}`,
-              background: THEME.surfaceRaised,
-              color: THEME.textPrimary,
-              fontSize: 12,
-              cursor: 'pointer',
-            }}
+          <HelpTip
+            helpId="userpart.drawSymbol"
+            name={drawnSymbol === null ? 'Draw symbol' : 'Edit symbol'}
           >
-            {drawnSymbol === null ? 'Draw symbol…' : 'Edit symbol…'}
-          </button>
+            <button
+              type="button"
+              onClick={() => setSymbolEditorOpen(true)}
+              style={{
+                marginLeft: 'auto',
+                padding: '7px 12px',
+                borderRadius: 7,
+                border: `1px solid ${THEME.borderStrong}`,
+                background: THEME.surfaceRaised,
+                color: THEME.textPrimary,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              {drawnSymbol === null ? 'Draw symbol…' : 'Edit symbol…'}
+            </button>
+          </HelpTip>
           <button
             type="button"
             onClick={onClose}

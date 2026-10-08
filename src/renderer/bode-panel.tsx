@@ -4,6 +4,7 @@ import type { World } from '../cross-fk-validator.ts'
 import { AcLossNotice } from './ac-loss-notice.tsx'
 import { axisRange } from './plot-axis.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 
 /**
@@ -197,31 +198,36 @@ export function BodePanel({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              className="nodrag"
-              onClick={onPickToggle}
-              title={
+            <HelpTip
+              helpId="bode.pick"
+              detail={
                 picking
-                  ? 'Click a terminal on the canvas to set the output (Esc / this button cancels)'
-                  : 'Pick the output by clicking a terminal on the canvas, like a scope probe'
+                  ? 'Click a terminal, or click here again to cancel. Escape cancels too.'
+                  : undefined
               }
-              style={{
-                background: picking
-                  ? THEME.surfaceActive
-                  : light
-                    ? THEME.white
-                    : THEME.surfaceInput,
-                border: `1px solid ${picking ? THEME.accentBlue : light ? THEME.textPrimary : THEME.borderStrong}`,
-                color: text,
-                borderRadius: 3,
-                fontSize: 12,
-                padding: '0 7px',
-                cursor: 'pointer',
-              }}
             >
-              ⌖
-            </button>
+              <button
+                type="button"
+                className="nodrag"
+                onClick={onPickToggle}
+                aria-label="Pick Bode output"
+                style={{
+                  background: picking
+                    ? THEME.surfaceActive
+                    : light
+                      ? THEME.white
+                      : THEME.surfaceInput,
+                  border: `1px solid ${picking ? THEME.accentBlue : light ? THEME.textPrimary : THEME.borderStrong}`,
+                  color: text,
+                  borderRadius: 3,
+                  fontSize: 12,
+                  padding: '0 7px',
+                  cursor: 'pointer',
+                }}
+              >
+                ⌖
+              </button>
+            </HelpTip>
           </div>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

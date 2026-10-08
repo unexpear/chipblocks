@@ -198,7 +198,7 @@
         },
         "deleteTemplate": {
           "sel": {
-            "css": "button[title=\"Delete this template\"]"
+            "css": "button[data-action=\"delete-template\"]"
           },
           "does": "× on a My templates row (asks first)."
         },
@@ -481,7 +481,7 @@
             "name": "×",
             "exact": true
           },
-          "does": "Close a project tab (title 'Close project'). First visible one when several are open."
+          "does": "Close a project tab. First visible one when several are open."
         },
         "focusCanvas": {
           "sel": {

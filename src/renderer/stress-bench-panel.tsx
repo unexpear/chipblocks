@@ -8,6 +8,7 @@
 import type { Edge, Node } from '@xyflow/react'
 import { type JSX, useEffect, useMemo, useState } from 'react'
 import { runStressSweep, type StressAxis, type StressResult } from './stress-bench.ts'
+import { HelpTip } from './tooltip.tsx'
 
 type Mode = 'ambient' | 'supply' | 'component'
 
@@ -122,19 +123,22 @@ export function StressBench({
         }}
       >
         <span>Stress bench</span>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            background: 'transparent',
-            border: 0,
-            color: 'var(--textSoft)',
-            cursor: 'pointer',
-            fontSize: 16,
-          }}
-        >
-          ×
-        </button>
+        <HelpTip helpId="stress.close">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close stress"
+            style={{
+              background: 'transparent',
+              border: 0,
+              color: 'var(--textSoft)',
+              cursor: 'pointer',
+              fontSize: 16,
+            }}
+          >
+            ×
+          </button>
+        </HelpTip>
       </header>
 
       <div
@@ -153,28 +157,41 @@ export function StressBench({
             const disabled =
               (m === 'supply' && supplies.length === 0) || (m === 'component' && loads.length === 0)
             const label = m === 'ambient' ? 'Ambient °C' : m === 'supply' ? 'Supply V' : 'Component'
+            const helpId =
+              m === 'ambient'
+                ? 'stress.ambient'
+                : m === 'supply'
+                  ? 'stress.supply'
+                  : 'stress.component'
+            const whyOff =
+              m === 'supply' && supplies.length === 0
+                ? 'This sheet has no voltage source to sweep.'
+                : m === 'component' && loads.length === 0
+                  ? 'This sheet has no resistor to sweep.'
+                  : undefined
             return (
-              <button
-                key={m}
-                type="button"
-                disabled={disabled}
-                onClick={() => setMode(m)}
-                style={{
-                  padding: '5px 12px',
-                  borderRadius: 6,
-                  border: '1px solid var(--borderStrong)',
-                  background: mode === m ? 'var(--accentBlueDeep)' : 'var(--surfaceRaised)',
-                  color: disabled
-                    ? 'var(--textFaint)'
-                    : mode === m
-                      ? 'var(--white)'
-                      : 'var(--textPrimary)',
-                  cursor: disabled ? 'default' : 'pointer',
-                  fontSize: 12,
-                }}
-              >
-                {label}
-              </button>
+              <HelpTip key={m} helpId={helpId} detail={whyOff}>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setMode(m)}
+                  style={{
+                    padding: '5px 12px',
+                    borderRadius: 6,
+                    border: '1px solid var(--borderStrong)',
+                    background: mode === m ? 'var(--accentBlueDeep)' : 'var(--surfaceRaised)',
+                    color: disabled
+                      ? 'var(--textFaint)'
+                      : mode === m
+                        ? 'var(--white)'
+                        : 'var(--textPrimary)',
+                    cursor: disabled ? 'default' : 'pointer',
+                    fontSize: 12,
+                  }}
+                >
+                  {label}
+                </button>
+              </HelpTip>
             )
           })}
           {mode === 'component' && loads.length > 0 && (
@@ -239,23 +256,34 @@ export function StressBench({
               {name !== 'steps' ? unit : ''}
             </label>
           ))}
-          <button
-            type="button"
-            onClick={run}
-            disabled={axis === null}
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: '1px solid var(--borderStrong)',
-              background: axis ? 'var(--accentBlueDeep)' : 'var(--surfaceRaised)',
-              color: axis ? 'var(--white)' : 'var(--textFaint)',
-              cursor: axis ? 'pointer' : 'default',
-              fontSize: 12,
-              fontWeight: 600,
-            }}
+          <HelpTip
+            helpId="stress.sweep"
+            detail={
+              axis === null
+                ? mode === 'supply'
+                  ? 'This sheet has no voltage source to sweep.'
+                  : 'This sheet has no resistor to sweep.'
+                : undefined
+            }
           >
-            ▸ Sweep
-          </button>
+            <button
+              type="button"
+              onClick={run}
+              disabled={axis === null}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 6,
+                border: '1px solid var(--borderStrong)',
+                background: axis ? 'var(--accentBlueDeep)' : 'var(--surfaceRaised)',
+                color: axis ? 'var(--white)' : 'var(--textFaint)',
+                cursor: axis ? 'pointer' : 'default',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              ▸ Sweep
+            </button>
+          </HelpTip>
         </div>
 
         {result && <StressResults result={result} unit={unit} fmt={fmt} />}
@@ -329,15 +357,26 @@ function StressResults({
               // repeat (e.g. from === to).
               const unsafe = !pt.converged || pt.failures.some((f) => f.partId === p.partId)
               return (
-                <div
-                  // biome-ignore lint/suspicious/noArrayIndexKey: cells are positional; values can repeat
+                <HelpTip
+                  // biome-ignore lint/suspicious/noArrayIndexKey: sweep values can repeat (from === to)
                   key={i}
-                  title={`${fmt(pt.value)}: ${!pt.converged ? 'thermal runaway' : unsafe ? 'fails' : 'ok'}`}
-                  style={{
-                    flex: 1,
-                    background: unsafe ? 'var(--statusDanger)' : 'var(--statusOk)',
-                  }}
-                />
+                  helpId="stress.point"
+                  name={fmt(pt.value)}
+                  detail={
+                    !pt.converged
+                      ? 'The solve ran away thermally here.'
+                      : unsafe
+                        ? 'A part is past its limit here.'
+                        : 'Every part is inside its limits here.'
+                  }
+                >
+                  <div
+                    style={{
+                      flex: 1,
+                      background: unsafe ? 'var(--statusDanger)' : 'var(--statusOk)',
+                    }}
+                  />
+                </HelpTip>
               )
             })}
           </div>

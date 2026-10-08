@@ -89,6 +89,7 @@ import {
   type SymbolShape,
 } from './symbol-geometry.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import {
   canRedo,
   canUndo,
@@ -109,32 +110,47 @@ import { PIN_ELECTRICAL_TYPES, type PinElectrical, type PinSide } from './user-p
 
 type Tool = 'select' | 'line' | 'rectangle' | 'circle' | 'arc' | 'text' | 'pin'
 
-const TOOLS: readonly { tool: Tool; label: string; hint: string }[] = [
+const TOOLS: readonly { tool: Tool; label: string; helpId: string; hint: string }[] = [
   {
     tool: 'select',
     label: 'Select',
+    helpId: 'symbol.select',
     hint: 'click a shape, pin or field to edit it · drag to move it · drag empty space to pan · wheel to zoom',
   },
   {
     tool: 'line',
     label: 'Line',
+    helpId: 'symbol.line',
     hint: 'click each corner · click the last corner again (or double-click, or Enter) to finish · click the first corner to close the shape',
   },
   {
     tool: 'rectangle',
     label: 'Rectangle',
+    helpId: 'symbol.rectangle',
     hint: 'drag from one corner to the opposite corner, or click both',
   },
-  { tool: 'circle', label: 'Circle', hint: 'drag from the centre out to the edge, or click both' },
+  {
+    tool: 'circle',
+    label: 'Circle',
+    helpId: 'symbol.circle',
+    hint: 'drag from the centre out to the edge, or click both',
+  },
   {
     tool: 'arc',
     label: 'Arc',
+    helpId: 'symbol.arc',
     hint: 'click where it starts, then where it ends, then a point it curves through',
   },
-  { tool: 'text', label: 'Text', hint: 'click where the text goes, then type it in the panel' },
+  {
+    tool: 'text',
+    label: 'Text',
+    helpId: 'symbol.text',
+    hint: 'click where the text goes, then type it in the panel',
+  },
   {
     tool: 'pin',
     label: 'Pin',
+    helpId: 'symbol.pin',
     hint: 'click where a wire should land — the pin points out of whichever side of the body you click beyond',
   },
 ]
@@ -872,12 +888,17 @@ export function SymbolEditor({
                 borderBottom: `1px solid ${THEME.borderSubtle}`,
               }}
             >
-              {TOOLS.map(({ tool: option, label, hint }) => (
+              {TOOLS.map(({ tool: option, label, helpId }) => (
                 <CanvasButton
                   key={option}
                   active={tool === option}
                   onClick={() => setTool(option)}
-                  title={hint}
+                  helpId={helpId}
+                  detail={
+                    option === 'pin' && pinsLeft === 0 && !canAddPins
+                      ? 'Every pin is already drawn, and this part cannot take another.'
+                      : undefined
+                  }
                   disabled={option === 'pin' && pinsLeft === 0 && !canAddPins}
                 >
                   {label}
@@ -888,7 +909,8 @@ export function SymbolEditor({
                 active={false}
                 onClick={stepBack}
                 disabled={!canUndo(history)}
-                title="Undo (Ctrl+Z)"
+                helpId="symbol.undo"
+                detail={canUndo(history) ? undefined : 'Nothing to undo.'}
               >
                 Undo
               </CanvasButton>
@@ -896,7 +918,8 @@ export function SymbolEditor({
                 active={false}
                 onClick={stepForward}
                 disabled={!canRedo(history)}
-                title="Redo (Ctrl+Y)"
+                helpId="symbol.redo"
+                detail={canRedo(history) ? undefined : 'Nothing to redo.'}
               >
                 Redo
               </CanvasButton>
@@ -904,7 +927,14 @@ export function SymbolEditor({
                 active={false}
                 onClick={rotateSelected}
                 disabled={selection === null || selection.kind === 'field'}
-                title="Turn the selection a quarter turn (R)"
+                helpId="symbol.rotate"
+                detail={
+                  selection === null
+                    ? 'Select a shape or a pin first.'
+                    : selection.kind === 'field'
+                      ? 'A field is moved by dragging it.'
+                      : undefined
+                }
               >
                 Rotate
               </CanvasButton>
@@ -912,31 +942,36 @@ export function SymbolEditor({
                 active={false}
                 onClick={removeSelected}
                 disabled={selection === null}
-                title="Delete the selection (Del) — a pin comes off the drawing, a field is hidden"
+                helpId="symbol.delete"
+                detail={selection === null ? 'Nothing is selected.' : undefined}
               >
                 Delete
               </CanvasButton>
-              <CanvasButton active={false} onClick={fitToDrawing} title="Fit the drawing in view">
+              <CanvasButton active={false} onClick={fitToDrawing} helpId="symbol.fit">
                 Fit
               </CanvasButton>
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  fontSize: 11,
-                  color: THEME.textMuted,
-                  marginLeft: 4,
-                }}
-                title={`Pin tips snap to the ${SCHEMATIC_GRID_PX} px schematic grid, shapes to its ${SCHEMATIC_MINOR_GRID_PX} px fine grid`}
+              <HelpTip
+                helpId="symbol.snap"
+                detail={`Pin tips use the ${SCHEMATIC_GRID_PX} px grid. Shapes use the ${SCHEMATIC_MINOR_GRID_PX} px grid.`}
               >
-                <input
-                  type="checkbox"
-                  checked={snapOn}
-                  onChange={(e) => setSnapOn(e.target.checked)}
-                />
-                snap to grid
-              </label>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    fontSize: 11,
+                    color: THEME.textMuted,
+                    marginLeft: 4,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={snapOn}
+                    onChange={(e) => setSnapOn(e.target.checked)}
+                  />
+                  snap to grid
+                </label>
+              </HelpTip>
             </div>
 
             <div
@@ -1407,14 +1442,20 @@ export function SymbolEditor({
           <button type="button" style={subtleButton} onClick={onClose}>
             Cancel
           </button>
-          <button
-            type="button"
-            style={{ ...primaryButton, opacity: problems.length === 0 ? 1 : 0.45 }}
-            disabled={problems.length > 0}
-            onClick={save}
+          <HelpTip
+            helpId="symbol.save"
+            name={confirmReplace ? 'Redraw them' : saveLabel}
+            detail={problems.length > 0 ? problems[0] : undefined}
           >
-            {confirmReplace ? 'Redraw them' : saveLabel}
-          </button>
+            <button
+              type="button"
+              style={{ ...primaryButton, opacity: problems.length === 0 ? 1 : 0.45 }}
+              disabled={problems.length > 0}
+              onClick={save}
+            >
+              {confirmReplace ? 'Redraw them' : saveLabel}
+            </button>
+          </HelpTip>
         </div>
       </div>
     </div>
@@ -1697,48 +1738,49 @@ function PinPanel({
             }}
           />
         </label>
-        <label
-          style={fieldLabel}
-          title="The pad this pin solders to, as the package labels it (1, A5). Blank: matched by the pin's name, then by order — the number shown greyed is the one it gets."
-        >
-          Number
-          <input
-            style={textInput}
-            value={pin.pad}
-            placeholder={number ?? 'none'}
-            onChange={(e) => {
-              const pad = e.target.value
-              onChange('pad', (p) => ({ ...p, pad }))
-            }}
-          />
-        </label>
+        <HelpTip helpId="symbol.pad">
+          <label style={fieldLabel}>
+            Number
+            <input
+              style={textInput}
+              value={pin.pad}
+              placeholder={number ?? 'none'}
+              onChange={(e) => {
+                const pad = e.target.value
+                onChange('pad', (p) => ({ ...p, pad }))
+              }}
+            />
+          </label>
+        </HelpTip>
       </div>
       <div style={fieldRow}>
-        <label
-          style={fieldLabel}
-          title={
+        <HelpTip
+          helpId="symbol.type"
+          detail={
             typeFixed
-              ? 'Set by the circuit inside this part — the logic simulation reads it to know which pins drive'
-              : 'What the pin does electrically'
+              ? 'The circuit inside this part sets this, so the logic simulation can see which pins drive.'
+              : undefined
           }
         >
-          Type
-          <select
-            style={textInput}
-            value={pin.electrical}
-            disabled={typeFixed}
-            onChange={(e) => {
-              const electrical = e.target.value as PinElectrical
-              onChange('electrical', (p) => ({ ...p, electrical }))
-            }}
-          >
-            {PIN_ELECTRICAL_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {type.replace(/_/g, ' ')}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label style={fieldLabel}>
+            Type
+            <select
+              style={textInput}
+              value={pin.electrical}
+              disabled={typeFixed}
+              onChange={(e) => {
+                const electrical = e.target.value as PinElectrical
+                onChange('electrical', (p) => ({ ...p, electrical }))
+              }}
+            >
+              {PIN_ELECTRICAL_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+          </label>
+        </HelpTip>
         <label style={fieldLabel}>
           Points
           <select
@@ -2040,15 +2082,17 @@ function FieldRow({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        <input
-          type="checkbox"
-          checked={field.visible}
-          title="Show it on the schematic"
-          onChange={(e) => {
-            const visible = e.target.checked
-            onChange('visible', (f) => ({ ...f, visible }))
-          }}
-        />
+        <HelpTip helpId="symbol.visible">
+          <input
+            type="checkbox"
+            checked={field.visible}
+            aria-label={`Show ${label} on the schematic`}
+            onChange={(e) => {
+              const visible = e.target.checked
+              onChange('visible', (f) => ({ ...f, visible }))
+            }}
+          />
+        </HelpTip>
         <button
           type="button"
           onClick={onSelect}

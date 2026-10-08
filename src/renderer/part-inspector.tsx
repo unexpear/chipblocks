@@ -13,6 +13,7 @@ import {
 import type { PartReading } from './part-readings.ts'
 import type { PlacedPadEdit } from './placement-pad-edit.ts'
 import { THEME } from './theme.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 import { isUserFootprint } from './user-footprints.ts'
 
@@ -524,19 +525,21 @@ function BoardPadEditor({
         <div style={sourceNote}>{blocked}</div>
       ) : (
         <>
-          <select
-            value={pad.id}
-            onChange={(e) => onPick?.(e.target.value)}
-            className="nodrag"
-            style={{ ...field, width: '100%', marginBottom: 4 }}
-            title="The pad to edit — or click a pad on the board"
-          >
-            {pads.map((p) => (
-              <option key={p.id} value={p.id}>
-                Pad {p.id}
-              </option>
-            ))}
-          </select>
+          <HelpTip helpId="inspector.pad">
+            <select
+              value={pad.id}
+              onChange={(e) => onPick?.(e.target.value)}
+              className="nodrag"
+              aria-label="Pad"
+              style={{ ...field, width: '100%', marginBottom: 4 }}
+            >
+              {pads.map((p) => (
+                <option key={p.id} value={p.id}>
+                  Pad {p.id}
+                </option>
+              ))}
+            </select>
+          </HelpTip>
           {/* Keyed on the pad's board geometry: a board pick or an applied edit refreshes the fields. */}
           <PadFields
             key={`${pad.id}:${pad.x},${pad.y},${pad.w},${pad.h}`}
@@ -586,29 +589,34 @@ function PadFields({
         ))}
       </div>
       <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
-        <button
-          type="button"
-          className="nodrag"
-          disabled={!valid || onEdit === undefined}
-          style={{ ...deriveButton, marginTop: 0, flex: 1 }}
-          title="Write this pad's board centre and size (mm) into the placement's user-owned footprint"
-          onClick={() => {
-            const [x, y, w, h] = parsed as [number, number, number, number]
-            onEdit?.({ padId: pad.id, x, y, w, h })
-          }}
+        <HelpTip
+          helpId="inspector.applyPad"
+          detail={!valid ? 'The centre and the size need real numbers.' : undefined}
         >
-          Apply pad
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          disabled={onEdit === undefined}
-          style={{ ...deriveButton, marginTop: 0, flex: 1 }}
-          title="Turn this pad a quarter turn about its centre (its width and height swap)"
-          onClick={() => onEdit?.({ padId: pad.id, quarterTurn: true })}
-        >
-          Turn 90°
-        </button>
+          <button
+            type="button"
+            className="nodrag"
+            disabled={!valid || onEdit === undefined}
+            style={{ ...deriveButton, marginTop: 0, flex: 1 }}
+            onClick={() => {
+              const [x, y, w, h] = parsed as [number, number, number, number]
+              onEdit?.({ padId: pad.id, x, y, w, h })
+            }}
+          >
+            Apply pad
+          </button>
+        </HelpTip>
+        <HelpTip helpId="inspector.turnPad">
+          <button
+            type="button"
+            className="nodrag"
+            disabled={onEdit === undefined}
+            style={{ ...deriveButton, marginTop: 0, flex: 1 }}
+            onClick={() => onEdit?.({ padId: pad.id, quarterTurn: true })}
+          >
+            Turn 90°
+          </button>
+        </HelpTip>
       </div>
       <div style={sourceNote}>
         Board mm. Saved into this part's user-owned footprint, labeled board-derived.
@@ -751,43 +759,47 @@ export function PartInspector({
           <>
             <div style={sectionLabel}>Footprint</div>
             {options.length > 1 ? (
-              <select
-                value={fp.id}
-                onChange={(e) => onFootprint(e.target.value)}
-                className="nodrag"
-                style={{ ...field, width: '100%', marginBottom: 4 }}
-                title="Choose this part's board package"
-              >
-                {options.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
+              <HelpTip helpId="inspector.package">
+                <select
+                  value={fp.id}
+                  onChange={(e) => onFootprint(e.target.value)}
+                  className="nodrag"
+                  aria-label="Board package"
+                  style={{ ...field, width: '100%', marginBottom: 4 }}
+                >
+                  {options.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+              </HelpTip>
             ) : (
               <div style={{ fontSize: 11, color: THEME.textSoft, marginBottom: 4 }}>{fp.name}</div>
             )}
             {onEditOwnedFootprint !== undefined && isUserFootprint(fp.id) ? (
-              <button
-                type="button"
-                className="nodrag"
-                style={{ ...deriveButton, marginTop: 0, marginBottom: 4 }}
-                title="Edit this package. Saving a user-owned footprint writes its id back onto this part, and the board re-places from that assignment."
-                onClick={onEditOwnedFootprint}
-              >
-                Edit footprint
-              </button>
+              <HelpTip helpId="inspector.editFootprint">
+                <button
+                  type="button"
+                  className="nodrag"
+                  style={{ ...deriveButton, marginTop: 0, marginBottom: 4 }}
+                  onClick={onEditOwnedFootprint}
+                >
+                  Edit footprint
+                </button>
+              </HelpTip>
             ) : null}
             {onFootprintFromPlacement !== undefined && fp.provisional !== true ? (
-              <button
-                type="button"
-                className="nodrag"
-                style={{ ...deriveButton, marginTop: 0, marginBottom: 4 }}
-                title="Save the land as it sits on the board as a user-owned footprint. A built-in package is copied under a new id (never shadowed); the part is re-pointed only when the land fits it, and a role-sensitive pinout is never invented."
-                onClick={onFootprintFromPlacement}
-              >
-                Footprint from placement
-              </button>
+              <HelpTip helpId="inspector.fromPlacement">
+                <button
+                  type="button"
+                  className="nodrag"
+                  style={{ ...deriveButton, marginTop: 0, marginBottom: 4 }}
+                  onClick={onFootprintFromPlacement}
+                >
+                  Footprint from placement
+                </button>
+              </HelpTip>
             ) : null}
             {placementFootprintNote !== undefined ? (
               <div style={sourceNote}>{placementFootprintNote}</div>
@@ -1020,19 +1032,21 @@ export function PartInspector({
           {(amountOf(selected.parameters, 'ac_amplitude') ?? 0) > 0 ? (
             <label style={row}>
               <span style={{ color: THEME.textSoft }}>Waveform</span>
-              <select
-                value={currentWaveform(selected.parameters)}
-                onChange={(e) => onEnum('waveform', e.target.value)}
-                className="nodrag"
-                title="The function-generator shapes, all swinging offset ± amplitude at the set frequency. Sine ∿ — the smooth AC shape (one FFT spike). Square ⊓ — the clock: exact 50% duty jumps (odd harmonics falling as 1/n — why squares sound buzzy). Triangle ⋀ — linear ramps up and down, sine-phased (odd harmonics falling as 1/n², much purer than a square). Sawtooth ⋰ — ramp up, snap back: the CRT deflection sweep (the ramp draws, the snap is the retrace). Staircase ⊓⊓ — held discrete levels per period: the stepped sweep that keeps a coarse raster's scanlines flat."
-                style={{ ...field, maxWidth: 130 }}
-              >
-                <option value="sine">sine ∿</option>
-                <option value="square">square ⊓ (clock)</option>
-                <option value="triangle">triangle ⋀</option>
-                <option value="sawtooth">sawtooth ⋰ (sweep)</option>
-                <option value="staircase">staircase (stepped sweep)</option>
-              </select>
+              <HelpTip helpId="inspector.waveform">
+                <select
+                  value={currentWaveform(selected.parameters)}
+                  onChange={(e) => onEnum('waveform', e.target.value)}
+                  className="nodrag"
+                  aria-label="Waveform"
+                  style={{ ...field, maxWidth: 130 }}
+                >
+                  <option value="sine">sine ∿</option>
+                  <option value="square">square ⊓ (clock)</option>
+                  <option value="triangle">triangle ⋀</option>
+                  <option value="sawtooth">sawtooth ⋰ (sweep)</option>
+                  <option value="staircase">staircase (stepped sweep)</option>
+                </select>
+              </HelpTip>
             </label>
           ) : null}
           {(() => {
@@ -1042,34 +1056,45 @@ export function PartInspector({
             return (
               <div>
                 <div style={row}>
-                  <span
-                    style={{ color: THEME.textSoft }}
-                    title="How many leads this source brings out. 2 = a plain source. 3–6 = a tapped stack: every lead going down drops one section of this voltage (a real tapped pack — 3 leads make a ± dual-rail supply). 1 = a supply rail whose return is through the circuit's ground."
-                  >
-                    Leads
-                  </span>
+                  <HelpTip helpId="inspector.leads">
+                    <span style={{ color: THEME.textSoft }}>Leads</span>
+                  </HelpTip>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      type="button"
-                      className="nodrag"
-                      onClick={() => setLeads(leads - 1)}
-                      disabled={leads <= 1}
-                      style={stepButton(leads <= 1)}
+                    <HelpTip
+                      helpId="inspector.fewerLeads"
+                      detail={leads <= 1 ? 'A source always has at least one lead.' : undefined}
                     >
-                      −
-                    </button>
+                      <button
+                        type="button"
+                        className="nodrag"
+                        aria-label="Fewer leads"
+                        onClick={() => setLeads(leads - 1)}
+                        disabled={leads <= 1}
+                        style={stepButton(leads <= 1)}
+                      >
+                        −
+                      </button>
+                    </HelpTip>
                     <span style={{ color: THEME.textPrimary, fontSize: 12, minWidth: 12 }}>
                       {leads}
                     </span>
-                    <button
-                      type="button"
-                      className="nodrag"
-                      onClick={() => setLeads(leads + 1)}
-                      disabled={leads >= 6}
-                      style={stepButton(leads >= 6)}
+                    <HelpTip
+                      helpId="inspector.moreLeads"
+                      detail={
+                        leads >= 6 ? 'Six leads is the most this source brings out.' : undefined
+                      }
                     >
-                      +
-                    </button>
+                      <button
+                        type="button"
+                        className="nodrag"
+                        aria-label="More leads"
+                        onClick={() => setLeads(leads + 1)}
+                        disabled={leads >= 6}
+                        style={stepButton(leads >= 6)}
+                      >
+                        +
+                      </button>
+                    </HelpTip>
                   </span>
                 </div>
                 {leads !== 2 ? (
@@ -1240,16 +1265,21 @@ export function PartInspector({
               const field = AC_LOSS_PARAMETER_FIELDS[key]
               if (field === undefined) return null
               return (
-                <button
+                <HelpTip
                   key={`add:${key}`}
-                  type="button"
-                  onClick={() => onParam(key, 0, field.unit)}
-                  className="nodrag"
-                  style={{ ...deriveButton, marginTop: 0 }}
-                  title={`Add ${humanize(key)} (${field.unit}) — ${field.hint}. Starts at 0; type the value from the part's datasheet.`}
+                  helpId="inspector.addLoss"
+                  name={`Add ${humanize(key)}`}
+                  detail={`${field.hint}. Starts at 0, for the value on the datasheet.`}
                 >
-                  + {humanize(key)}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => onParam(key, 0, field.unit)}
+                    className="nodrag"
+                    style={{ ...deriveButton, marginTop: 0 }}
+                  >
+                    + {humanize(key)}
+                  </button>
+                </HelpTip>
               )
             })}
           </div>
@@ -1261,15 +1291,16 @@ export function PartInspector({
       ) : null}
 
       {canDeriveResistance ? (
-        <button
-          type="button"
-          onClick={onDeriveResistance}
-          className="nodrag"
-          style={deriveButton}
-          title="Recompute resistance from ρ·L/A — the material's resistivity × the geometry"
-        >
-          ⟳ Derive R = ρL/A
-        </button>
+        <HelpTip helpId="inspector.deriveR">
+          <button
+            type="button"
+            onClick={onDeriveResistance}
+            className="nodrag"
+            style={deriveButton}
+          >
+            ⟳ Derive R = ρL/A
+          </button>
+        </HelpTip>
       ) : null}
 
       {LED_DEFINITIONS.has(selected.definition) ? (
@@ -1277,28 +1308,34 @@ export function PartInspector({
           <span style={{ color: THEME.textSoft }}>Color</span>
           <span style={{ display: 'flex', gap: 4 }}>
             {LED_COLORS.map((c) => (
-              <button
+              <HelpTip
                 key={c.nm}
-                type="button"
-                title={`${c.label} — ${c.nm} nm, ${c.forwardVoltage} V (${c.material.replace(/_/g, ' ')})`}
-                onClick={() => {
-                  // Set a consistent real LED: color + semiconductor + its V_F.
-                  onParam('peak_wavelength', c.nm)
-                  onParam('forward_voltage', c.forwardVoltage)
-                  onEnum('n_side', `${c.material}_n_type`)
-                  onEnum('p_side', `${c.material}_p_type`)
-                }}
-                className="nodrag"
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: '50%',
-                  background: c.css,
-                  border: `1px solid ${THEME.borderStrong}`,
-                  cursor: 'pointer',
-                  padding: 0,
-                }}
-              />
+                helpId="inspector.ledColor"
+                name={c.label}
+                detail={`${c.nm} nm, ${c.forwardVoltage} V, ${c.material.replace(/_/g, ' ')}.`}
+              >
+                <button
+                  type="button"
+                  aria-label={c.label}
+                  onClick={() => {
+                    // Set a consistent real LED: color + semiconductor + its V_F.
+                    onParam('peak_wavelength', c.nm)
+                    onParam('forward_voltage', c.forwardVoltage)
+                    onEnum('n_side', `${c.material}_n_type`)
+                    onEnum('p_side', `${c.material}_p_type`)
+                  }}
+                  className="nodrag"
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: '50%',
+                    background: c.css,
+                    border: `1px solid ${THEME.borderStrong}`,
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                />
+              </HelpTip>
             ))}
           </span>
         </div>

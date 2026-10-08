@@ -5,6 +5,7 @@ import type { CausalReplay } from './causal-replay.ts'
 import { CausalReplayPanel } from './causal-replay-panel.tsx'
 import { THEME } from './theme.ts'
 import { clampIndex } from './timeline.ts'
+import { HelpTip } from './tooltip.tsx'
 import { formatEng } from './units.ts'
 import { WhyPanel } from './why-panel.tsx'
 
@@ -114,64 +115,76 @@ export function TimelinePanel({
       <div
         style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', maxWidth: 460 }}
       >
-        <button
-          type="button"
-          className="nodrag"
-          style={controlStyle}
-          title="To start"
-          onClick={() => stepTo(0)}
-        >
-          ⏮
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          style={controlStyle}
-          title="Step back one frame"
-          onClick={() => stepTo(i - 1)}
-        >
-          ◁
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          style={{ ...controlStyle, minWidth: 34 }}
-          title="Play / pause"
-          onClick={() => setPlaying((p) => !p)}
-        >
-          {playing ? '⏸' : '▶'}
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          style={controlStyle}
-          title="Step forward one frame"
-          onClick={() => stepTo(i + 1)}
-        >
-          ▷
-        </button>
-        <button
-          type="button"
-          className="nodrag"
-          style={{
-            ...controlStyle,
-            ...(dir < 0 ? { borderColor: THEME.accentBlue, color: THEME.accentBlue } : {}),
-          }}
-          title="Reverse playback direction"
-          onClick={() => setDir((d) => (d > 0 ? -1 : 1))}
-        >
-          ⇄
-        </button>
+        <HelpTip helpId="timeline.start">
+          <button
+            type="button"
+            className="nodrag"
+            style={controlStyle}
+            aria-label="To start"
+            onClick={() => stepTo(0)}
+          >
+            ⏮
+          </button>
+        </HelpTip>
+        <HelpTip helpId="timeline.back">
+          <button
+            type="button"
+            className="nodrag"
+            style={controlStyle}
+            aria-label="Step back"
+            onClick={() => stepTo(i - 1)}
+          >
+            ◁
+          </button>
+        </HelpTip>
+        <HelpTip helpId="timeline.play">
+          <button
+            type="button"
+            className="nodrag"
+            style={{ ...controlStyle, minWidth: 34 }}
+            aria-label={playing ? 'Pause' : 'Play'}
+            onClick={() => setPlaying((p) => !p)}
+          >
+            {playing ? '⏸' : '▶'}
+          </button>
+        </HelpTip>
+        <HelpTip helpId="timeline.forward">
+          <button
+            type="button"
+            className="nodrag"
+            style={controlStyle}
+            aria-label="Step forward"
+            onClick={() => stepTo(i + 1)}
+          >
+            ▷
+          </button>
+        </HelpTip>
+        <HelpTip helpId="timeline.reverse">
+          <button
+            type="button"
+            className="nodrag"
+            style={{
+              ...controlStyle,
+              ...(dir < 0 ? { borderColor: THEME.accentBlue, color: THEME.accentBlue } : {}),
+            }}
+            aria-label="Reverse"
+            onClick={() => setDir((d) => (d > 0 ? -1 : 1))}
+          >
+            ⇄
+          </button>
+        </HelpTip>
         <span style={{ width: 1, height: 18, background: THEME.borderSubtle, margin: '0 2px' }} />
-        <button
-          type="button"
-          className="nodrag"
-          style={controlStyle}
-          title="Slower"
-          onClick={() => setSpeed((s) => Math.max(0.25, s / 2))}
-        >
-          −
-        </button>
+        <HelpTip helpId="timeline.slower">
+          <button
+            type="button"
+            className="nodrag"
+            style={controlStyle}
+            aria-label="Slower"
+            onClick={() => setSpeed((s) => Math.max(0.25, s / 2))}
+          >
+            −
+          </button>
+        </HelpTip>
         <span
           style={{
             fontSize: 11,
@@ -183,26 +196,30 @@ export function TimelinePanel({
         >
           {speed < 1 ? speed : Math.round(speed)}×
         </span>
-        <button
-          type="button"
-          className="nodrag"
-          style={controlStyle}
-          title="Faster"
-          onClick={() => setSpeed((s) => Math.min(4, s * 2))}
-        >
-          +
-        </button>
-        <input
-          type="range"
-          className="nodrag"
-          min={0}
-          max={len - 1}
-          step={1}
-          value={i}
-          onChange={(e) => stepTo(Number(e.target.value))}
-          title="Scrub through time"
-          style={{ flex: 1, minWidth: 120 }}
-        />
+        <HelpTip helpId="timeline.faster">
+          <button
+            type="button"
+            className="nodrag"
+            style={controlStyle}
+            aria-label="Faster"
+            onClick={() => setSpeed((s) => Math.min(4, s * 2))}
+          >
+            +
+          </button>
+        </HelpTip>
+        <HelpTip helpId="timeline.scrub">
+          <input
+            type="range"
+            className="nodrag"
+            min={0}
+            max={len - 1}
+            step={1}
+            value={i}
+            aria-label="Scrub"
+            onChange={(e) => stepTo(Number(e.target.value))}
+            style={{ flex: 1, minWidth: 120 }}
+          />
+        </HelpTip>
         <span
           style={{
             fontSize: 11,
