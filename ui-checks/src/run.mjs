@@ -3,15 +3,19 @@
 //   npm run ui-checks                                  every workflow (Laya only if configured)
 //   npm run ui-checks:fast                             every workflow, Laya off
 //   node ui-checks/src/run.mjs --workflow <name>[,…]   one or more workflows
-//   node ui-checks/src/run.mjs --list                  workflow names
-// Flags: --no-laya  --laya-sidecar <path>  --laya-python <exe>  --laya-raw  --headed  --url <u>
-//        --repo <path>  --out <dir>  --keep-server  --chrome <exe>
+//   npm run ui-checks:electron                         the Electron workflows (real app, Laya off)
+//   node ui-checks/src/run.mjs --list                  workflow names and targets
+// Flags: --target browser|electron (default browser)  --no-laya  --laya-sidecar <path>
+//        --laya-python <exe>  --laya-raw  --headed  --url <u>  --repo <path>  --out <dir>
+//        --keep-server  --chrome <exe>
+//        electron only: --build (force a rebuild)  --no-build  --keep-sandbox
 // Env:   LAYA_SIDECAR, LAYA_PYTHON (Laya advisor, optional), CHROME_EXE (optional browser override)
 import { execSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { ElectronSession, ensureBuilt, makeSandbox, removeSandbox } from './electron.mjs'
 import { Engine, StepError } from './engine.mjs'
 import { Laya } from './laya.mjs'
 import { writeReports } from './report.mjs'
@@ -41,8 +45,16 @@ const workflows = fs
   .sort()
   .map((f) => readJson(path.join(wfDir, f)))
 
+// Each workflow names the targets it runs on (default: the browser-only dev server).
+const targetsOf = (w) => w.targets ?? ['browser']
+const target = opt('target', 'browser')
+if (!['browser', 'electron'].includes(target)) {
+  console.error(`--target must be browser or electron (got '${target}')`)
+  process.exit(2)
+}
 if (flag('list')) {
-  for (const w of workflows) console.log(`${w.name.padEnd(28)} ${w.title}`)
+  for (const w of workflows)
+    console.log(`${w.name.padEnd(30)} ${targetsOf(w).join(',').padEnd(9)} ${w.title}`)
   process.exit(0)
 }
 const want = opt('workflow')
@@ -53,9 +65,15 @@ const selected = want
         console.error(`no workflow '${n}'. Use --list.`)
         process.exit(2)
       }
+      if (!targetsOf(w).includes(target)) {
+        console.error(
+          `workflow '${w.name}' runs on ${targetsOf(w).join(', ')}, not --target ${target}.`,
+        )
+        process.exit(2)
+      }
       return w
     })
-  : workflows
+  : workflows.filter((w) => targetsOf(w).includes(target))
 
 const url = opt('url', map.defaults.url)
 map.defaults.url = url
@@ -105,10 +123,20 @@ function stopServer() {
   } catch {}
   server = null
 }
+let currentSession = null
 process.on('SIGINT', () => {
   stopServer()
+  currentSession?.kill()
   process.exit(130)
 })
+
+function electronVersion() {
+  try {
+    return readJson(path.join(repo, 'node_modules', 'electron', 'package.json')).version
+  } catch {
+    return 'unknown'
+  }
+}
 
 function gitHead() {
   try {
@@ -119,10 +147,43 @@ function gitHead() {
 }
 
 async function runWorkflow(browser, wf, laya) {
-  const vp = wf.viewport ?? map.defaults.viewport
-  const context = await browser.newContext({ viewport: vp })
-  const page = await context.newPage()
-  const eng = new Engine({ map, page, context, outDir, laya, log, workflowName: wf.name })
+  let vp = wf.viewport ?? map.defaults.viewport
+  let context = null
+  let page
+  let session = null
+  let sandbox = null
+  let pathVars = {}
+  if (target === 'electron') {
+    // one fresh sandbox (home, userData, Documents…) and one app per workflow
+    sandbox = makeSandbox()
+    session = new ElectronSession({ repo, sandbox, size: wf.viewport ?? map.electron?.window, log })
+    currentSession = session
+    page = await session.launch()
+    vp = { width: session.window.content[0], height: session.window.content[1] }
+    pathVars = {
+      sandbox: sandbox.root,
+      home: sandbox.home,
+      userData: sandbox.userData,
+      files: sandbox.files,
+      out: sandbox.out,
+      fixtures: path.join(repo, 'fixtures'),
+    }
+  } else {
+    context = await browser.newContext({ viewport: vp })
+    page = await context.newPage()
+  }
+  const eng = new Engine({
+    map,
+    page,
+    context,
+    outDir,
+    laya,
+    log,
+    workflowName: wf.name,
+    target,
+    session,
+    pathVars,
+  })
   const result = {
     name: wf.name,
     title: wf.title,
@@ -135,7 +196,7 @@ async function runWorkflow(browser, wf, laya) {
   const t0 = Date.now()
   let blockedBy = null
   const hasBridge = async () =>
-    page.evaluate(() => typeof window.chipblocks !== 'undefined').catch(() => false)
+    eng.page.evaluate(() => typeof window.chipblocks !== 'undefined').catch(() => false)
   for (const step of wf.steps) {
     const rec = { id: step.id, title: step.title, status: 'pass', asserts: [], invariants: [] }
     const ts = Date.now()
@@ -148,6 +209,12 @@ async function runWorkflow(browser, wf, laya) {
         rec.reason = `blocked: earlier step '${blockedBy}' failed`
         throw null
       }
+      if (step.target && step.target !== target) {
+        rec.status = 'skip'
+        rec.reason = step.targetNote ?? `${step.target}-only step`
+        throw null
+      }
+      await eng.beginStep()
       const req = (step.requires ?? []).filter((r) => r.startsWith('electron:'))
       if (req.length && !(await hasBridge())) {
         const why = req.map((r) => map.electronOnly.find((e) => e.id === r)?.skip ?? r).join(' ')
@@ -207,6 +274,29 @@ async function runWorkflow(browser, wf, laya) {
         throw new StepError('assert', failedA.map((a) => `${a.id}: ${a.detail}`).join(' ‖ '))
       if (failedI.length)
         throw new StepError('invariant', failedI.map((a) => `${a.id}: ${a.detail}`).join(' ‖ '))
+      if (session) {
+        // A native dialog nobody queued, or an error/message box, is the app talking to the user:
+        // it fails the step unless the step asserts on that kind of dialog.
+        const expected = new Set(
+          (step.expect ?? []).filter((x) => x.type === 'dialogs').map((x) => x.kind),
+        )
+        const surprise = (await eng.stepDialogs()).filter(
+          (c) =>
+            !expected.has(c.kind) &&
+            (c.kind === 'errorBox' || c.kind === 'messageBox' || c.answer === 'unqueued'),
+        )
+        if (surprise.length)
+          throw new StepError(
+            'dialog',
+            surprise
+              .map((c) =>
+                c.kind === 'errorBox' || c.kind === 'messageBox'
+                  ? `${c.kind} "${c.title}": ${c.content}`
+                  : `unexpected native ${c.kind} dialog${c.title ? ` "${c.title}"` : ''} (answered cancel)`,
+              )
+              .join(' ‖ '),
+          )
+      }
       const cp = eng.newConsoleProblems(c0, p0)
       if (cp.length) throw new StepError('console', cp.join(' ‖ '))
       if (laya && step.laya)
@@ -259,7 +349,18 @@ async function runWorkflow(browser, wf, laya) {
     benignErrors: eng.console.filter((c) => c.benign).length,
     http4xx: eng.badResponses.map((r) => `${r.status} ${r.url}`),
   }
-  await context.close()
+  if (session) {
+    result.electron = {
+      launches: session.launches,
+      launchMs: session.launchMs,
+      window: session.window,
+      isolatedPaths: session.paths,
+    }
+    await session.close()
+    currentSession = null
+    const keep = flag('keep-sandbox') || result.steps.some((s) => s.status === 'fail')
+    result.sandbox = { root: sandbox.root, kept: keep || !removeSandbox(sandbox) }
+  } else await context.close()
   return result
 }
 
@@ -281,19 +382,25 @@ if (!layaOff) {
   }
 }
 let srv
+let build = null
 let exitCode = 0
 try {
-  srv = await ensureServer()
-  let browser
-  try {
-    browser = await chromium.launch({
-      ...(chromeExe ? { executablePath: chromeExe } : {}),
-      headless: !flag('headed'),
-    })
-  } catch (e) {
-    throw new Error(
-      `could not launch Chromium (${String(e.message).split('\n')[0]}). Run \`npx playwright install chromium\` or pass --chrome <exe>.`,
-    )
+  let browser = null
+  if (target === 'electron') {
+    build = ensureBuilt(repo, { force: flag('build'), skip: flag('no-build'), log })
+    if (build.built) log(`built in ${(build.ms / 1000).toFixed(1)} s`)
+  } else {
+    srv = await ensureServer()
+    try {
+      browser = await chromium.launch({
+        ...(chromeExe ? { executablePath: chromeExe } : {}),
+        headless: !flag('headed'),
+      })
+    } catch (e) {
+      throw new Error(
+        `could not launch Chromium (${String(e.message).split('\n')[0]}). Run \`npx playwright install chromium\` or pass --chrome <exe>.`,
+      )
+    }
   }
   if (laya) {
     const ok = await laya.whenReady()
@@ -313,16 +420,21 @@ try {
     log(`▶ ${wf.name} — ${wf.title}`)
     results.push(await runWorkflow(browser, wf, laya))
   }
-  await browser.close()
+  await browser?.close()
   const run = {
     tool: 'chipblocks ui-runner',
+    target,
     startedAt: new Date(tStart).toISOString(),
     ms: Date.now() - tStart,
     commit: gitHead(),
-    url,
+    url: target === 'electron' ? 'out/renderer/index.html (file://)' : url,
     repo,
     outDir,
-    browser: chromeExe || 'playwright-managed chromium',
+    browser:
+      target === 'electron'
+        ? `electron ${electronVersion()}`
+        : chromeExe || 'playwright-managed chromium',
+    build,
     devServer: srv,
     laya: laya
       ? {
@@ -346,6 +458,7 @@ try {
   exitCode = 3
 } finally {
   laya?.stop()
+  await currentSession?.close()
   if (!flag('keep-server')) stopServer()
 }
 process.exit(exitCode)

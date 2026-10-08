@@ -1,0 +1,200 @@
+{
+  "name": "electron-fpga-chip-description",
+  "targets": ["electron"],
+  "title": "File ▸ Read an FPGA Chip File…: refusal that asks for the chip description, choose it, decode, remembered across reopen and relaunch",
+  "covers": ["workspace"],
+  "notes": "Uses the repo's own fixtures (fixtures/icebox-ice40-384-vendor-xor5.bin and the Project IceStorm 384 chipdb). Offline: no network, no API key.",
+  "steps": [
+    {
+      "id": "blank",
+      "title": "Blank circuit (the File item needs a canvas)",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplBlankCircuit"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "read-without-description",
+      "title": "Read the chip file: refused with a button to choose the chip description",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "open": "{fixtures}/icebox-ice40-384-vendor-xor5.bin"
+          }
+        },
+        {
+          "menu": "File ▸ Read an FPGA Chip File"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "open",
+          "count": 1,
+          "filtersInclude": ["FPGA chip file"],
+          "id": "asked-which-file"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^Could not read “icebox-ice40-384-vendor-xor5\\.bin”"
+          },
+          "id": "refusal-card"
+        },
+        {
+          "type": "visible",
+          "sel": "workspace.chooseChipDescription",
+          "id": "choose-button"
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components",
+          "id": "nothing-drawn"
+        }
+      ]
+    },
+    {
+      "id": "choose-description",
+      "title": "Choose the chip description…: asks for the 384 chip's description, then decodes the same file",
+      "screen": "workspace",
+      "do": [
+        {
+          "dialog": {
+            "open": "{fixtures}/icebox-ice40-384-chipdb.txt"
+          }
+        },
+        {
+          "click": "workspace.chooseChipDescription"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "open",
+          "count": 1,
+          "titleRe": "^Choose the description of the 384 chip$",
+          "id": "asked-for-description"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^Read a .+ chip — \\d+ logic parts? recovered$"
+          },
+          "id": "read-card"
+        },
+        {
+          "type": "not",
+          "id": "parts-drawn",
+          "assert": {
+            "type": "text",
+            "region": "workspace.status",
+            "matches": "— 0 components",
+            "id": "still-empty"
+          }
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/fpga-chip-descriptions.json",
+          "json": [
+            {
+              "at": ["ice40/384", 0],
+              "matches": "icebox-ice40-384-chipdb\\.txt$"
+            }
+          ],
+          "id": "remembered"
+        }
+      ]
+    },
+    {
+      "id": "reopen-asks-once",
+      "title": "Read the same chip file again: only the file chooser, no description dialog",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.dismissReport"
+        },
+        {
+          "dialog": {
+            "open": "{fixtures}/icebox-ice40-384-vendor-xor5.bin"
+          }
+        },
+        {
+          "menu": "File ▸ Read an FPGA Chip File"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "open",
+          "count": 1,
+          "filtersInclude": ["FPGA chip file"],
+          "id": "one-dialog"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^Read a .+ chip — \\d+ logic parts? recovered$"
+          },
+          "id": "read-card"
+        }
+      ]
+    },
+    {
+      "id": "remembered-after-relaunch",
+      "title": "Relaunch, new canvas, read it again: still no description dialog",
+      "screen": "workspace",
+      "do": [
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplBlankCircuit"
+          }
+        },
+        {
+          "dialog": {
+            "open": "{fixtures}/icebox-ice40-384-vendor-xor5.bin"
+          }
+        },
+        {
+          "menu": "File ▸ Read an FPGA Chip File"
+        }
+      ],
+      "expect": [
+        {
+          "type": "dialogs",
+          "kind": "open",
+          "count": 1,
+          "id": "one-dialog"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^Read a .+ chip — \\d+ logic parts? recovered$"
+          },
+          "id": "read-card"
+        }
+      ]
+    }
+  ]
+}

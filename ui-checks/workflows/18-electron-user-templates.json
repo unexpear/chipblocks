@@ -1,0 +1,218 @@
+{
+  "name": "electron-user-templates",
+  "targets": ["electron"],
+  "title": "File ▸ Save as Template → ~/.chipblocks/user-templates.json → My templates → start a project from it → delete",
+  "covers": ["start", "workspace"],
+  "steps": [
+    {
+      "id": "new-project",
+      "title": "LED project named UicTpl",
+      "screen": "workspace",
+      "do": {
+        "macro": "newNamedProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed",
+          "name": "UicTpl"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    },
+    {
+      "id": "save-as-template",
+      "title": "File ▸ Save as Template…: confirmation toast, written to user-templates.json",
+      "screen": "workspace",
+      "do": {
+        "menu": "File ▸ Save as Template"
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.templateToast",
+          "matches": "^Saved “UicTpl” to My templates",
+          "id": "toast"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/user-templates.json",
+          "json": [
+            {
+              "at": "format",
+              "eq": "chipblocks-user-templates"
+            },
+            {
+              "at": "templates.length",
+              "eq": 1
+            },
+            {
+              "at": "templates[0].name",
+              "eq": "UicTpl"
+            },
+            {
+              "at": "templates[0].circuit.nodes.length",
+              "eq": 4
+            }
+          ],
+          "id": "file-written"
+        }
+      ]
+    },
+    {
+      "id": "listed",
+      "title": "My templates lists it with its part count",
+      "screen": "start",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myTemplates"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "start.templateEntry",
+          "with": {
+            "template": "UicTpl"
+          },
+          "id": "entry"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^4 parts · schematic$"
+          },
+          "id": "part-count"
+        }
+      ]
+    },
+    {
+      "id": "survives-relaunch",
+      "title": "Quit and relaunch: still listed",
+      "screen": "start",
+      "do": [
+        {
+          "relaunch": true
+        },
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myTemplates"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "start.templateEntry",
+          "with": {
+            "template": "UicTpl"
+          },
+          "id": "entry"
+        }
+      ]
+    },
+    {
+      "id": "start-from-template",
+      "title": "Pick it: a fresh project tab with the template's 4 parts and 4 wires",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "start.templateEntry",
+          "with": {
+            "template": "UicTpl"
+          }
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        },
+        {
+          "type": "visible",
+          "sel": "workspace.tab",
+          "with": {
+            "project": "UicTpl"
+          },
+          "id": "tab"
+        },
+        {
+          "type": "windowTitle",
+          "matches": "^ChipBlocks$",
+          "id": "no-file-yet",
+          "why": "A project started from a template has no file until it is saved."
+        }
+      ]
+    },
+    {
+      "id": "delete-asks",
+      "title": "× on the template asks first",
+      "screen": "start",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.myTemplates"
+        },
+        {
+          "click": "start.deleteTemplate"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^Delete “UicTpl”\\?$"
+          },
+          "id": "confirm-shown"
+        }
+      ]
+    },
+    {
+      "id": "delete",
+      "title": "Delete: gone from the list and from the file",
+      "screen": "start",
+      "do": {
+        "click": "start.confirmDelete",
+        "with": {
+          "label": "Delete"
+        }
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^No saved templates yet"
+          },
+          "id": "empty-list"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/user-templates.json",
+          "json": [
+            {
+              "at": "templates.length",
+              "eq": 0
+            }
+          ],
+          "id": "file-emptied"
+        }
+      ]
+    }
+  ]
+}
