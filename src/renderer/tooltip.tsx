@@ -251,10 +251,13 @@ export function HelpTip({
   const anchorRef = useRef<HTMLElement | null>(null)
   const entry = resolveHelp(helpId, name)
   const props = (children?.props ?? {}) as TipChildProps
+  const session = api?.session
+  // The provider hands out a new context value whenever a tip opens or closes. This
+  // cleanup must follow the session, not that value, or the open would immediately leave.
   useEffect(() => {
-    if (api === null) return
-    return () => api.session.leave(key)
-  }, [api, key])
+    if (session === undefined) return
+    return () => session.leave(key)
+  }, [session, key])
   if (children === undefined) return null
   if (api === null || entry === undefined || api.mode === 'off') return children
 

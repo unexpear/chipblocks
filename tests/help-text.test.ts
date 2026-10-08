@@ -1,6 +1,8 @@
 /**
  * Every hover-help id a screen asks for has a sentence, and every built-in part,
  * picker section, and Gerber layer role has one too.
+ *
+ * @vitest-environment jsdom
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
