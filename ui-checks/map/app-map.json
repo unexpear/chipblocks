@@ -2079,8 +2079,8 @@
     },
     "notCovered": [
       {
-        "feature": "Import Netlist / Schematic / Verilog…, Export Verilog/GDS/OASIS/LEF/DEF/Liberty, Compile to iCE40…",
-        "why": "Menu items are listed and reachable, but only Export Netlist, Read an FPGA Chip File and the save/open paths are driven end to end."
+        "feature": "Import Netlist / Schematic / Verilog…, successful Export Verilog/GDS/OASIS/LEF/DEF/Liberty writes, Compile to iCE40…",
+        "why": "Menu items are listed and reachable. Export Netlist is written end to end. Cancelling Export Netlist, Export Verilog, and Export GDS is checked (no success card, nothing written). A successful write of Verilog, GDS, OASIS, LEF, DEF, or Liberty is not driven. Read an FPGA Chip File and the save/open paths are driven end to end."
       },
       {
         "feature": "View menu roles (Reload, Developer Tools, Zoom, Full Screen, Minimize, Close Window)",

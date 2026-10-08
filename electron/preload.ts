@@ -3,6 +3,7 @@
 // removeAllListeners-before-on keeps exactly one handler per channel, so a React
 // re-subscribe (or StrictMode double-mount) can't stack duplicate listeners.
 import { contextBridge, ipcRenderer } from 'electron'
+import type { SaveDialogOutcome } from '../src/renderer/save-outcome.ts'
 import { subscribeOnly } from './ipc-subscribe.ts'
 
 const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) =>
@@ -25,7 +26,7 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // answers with the serialized text; an opened file's (main-validated) text
   // arrives ready to load.
   onSaveRequest: (callback: () => void) => subscribe('file:save-request', callback),
-  saveCircuitData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+  saveCircuitData: (text: string): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-data', text),
   onCircuitOpened: (callback: (text: string) => void) => subscribe('file:opened', callback),
   // The opened file's design was still being drawn when the user pressed Stop, so the canvas went
@@ -74,16 +75,16 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // Export Netlist (rung 2): the File menu asks; the renderer answers with the SPICE text.
   onExportNetlistRequest: (callback: () => void) =>
     subscribe('file:export-netlist-request', callback),
-  saveNetlistData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+  saveNetlistData: (text: string): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-netlist', text),
   // Export Verilog: the File menu asks; the renderer answers with the structural Verilog text.
   onExportVerilogRequest: (callback: () => void) =>
     subscribe('file:export-verilog-request', callback),
-  saveVerilogData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+  saveVerilogData: (text: string): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-verilog', text),
   // Manufacturing ZIP (board road): the renderer builds the engine-owned archive bytes;
   // the main process picks a destination and writes them verbatim.
-  saveFabZip: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
+  saveFabZip: (data: Uint8Array): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-fab-zip', data),
   // Export GDS (chip-physical chapter): the File menu asks; the renderer builds the placed
   // floorplan's GDSII bytes (gds.ts) and hands them over; main picks a file and writes them verbatim.
@@ -91,22 +92,22 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // Compile to iCE40: the File menu asks; the renderer compiles and shows a report. No save dialog.
   onCompileIce40Request: (callback: () => void) =>
     subscribe('file:compile-ice40-request', callback),
-  saveGdsData: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
+  saveGdsData: (data: Uint8Array): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-gds', data),
   // Export OASIS (compact binary layout): the renderer builds the bytes; main writes them verbatim.
   onExportOasisRequest: (callback: () => void) => subscribe('file:export-oasis-request', callback),
-  saveOasisData: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
+  saveOasisData: (data: Uint8Array): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-oasis', data),
   // Export LEF/DEF (OpenROAD interop): the File menu asks; the renderer builds the text and hands it over.
   onExportLefRequest: (callback: () => void) => subscribe('file:export-lef-request', callback),
-  saveLefData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+  saveLefData: (text: string): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-lef', text),
   onExportDefRequest: (callback: () => void) => subscribe('file:export-def-request', callback),
-  saveDefData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+  saveDefData: (text: string): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-def', text),
   // Export Liberty (the .lib timing library that completes the OpenROAD signoff round-trip).
   onExportLibRequest: (callback: () => void) => subscribe('file:export-lib-request', callback),
-  saveLibData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+  saveLibData: (text: string): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('file:save-lib', text),
   // Personal parts library (user-made parts, slice 3b): the parts you author persist to
   // ~/.chipblocks/user-parts.json so they follow you across projects. Main does the raw file I/O;
@@ -117,7 +118,7 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // Personal TEMPLATES library (user-made starter circuits): the circuits you "Save as Template" persist
   // to ~/.chipblocks/user-templates.json so they follow you across projects, right beside your parts.
   readUserTemplates: (): Promise<string | null> => ipcRenderer.invoke('user-templates:read'),
-  writeUserTemplates: (text: string): Promise<{ ok: boolean; path?: string }> =>
+  writeUserTemplates: (text: string): Promise<SaveDialogOutcome> =>
     ipcRenderer.invoke('user-templates:write', text),
   onSaveTemplateRequest: (callback: () => void) =>
     subscribe('file:save-template-request', callback),

@@ -280,6 +280,14 @@ import { projectNameFromPath, recordRecentProject } from './recent-projects.ts'
 import { ReflectionPanel } from './reflection-panel.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { runTrace } from './run-trace.ts'
+import {
+  circuitSaveEffect,
+  manufacturingZipNote,
+  refusedSaveReport,
+  type SaveDialogOutcome,
+  settleExportReport,
+  templateSaveEffect,
+} from './save-outcome.ts'
 import { scanMatrixFromBuffer } from './scan-display.ts'
 import { SchematicHierarchy } from './schematic-hierarchy.tsx'
 import { fastestSourceHz, ScopePlot, scopeProbeKey, scopeWindow, TRACE_COLORS } from './scope.tsx'
@@ -381,7 +389,7 @@ declare global {
       onHoverHelp?: (callback: (mode: string) => void) => void
       registerHoverHelp?: (mode: string) => void
       onSaveRequest: (callback: () => void) => void
-      saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
+      saveCircuitData: (text: string) => Promise<SaveDialogOutcome>
       // The three that hand a file to THIS canvas return an unsubscribe, because only the tab on screen may
       // be listening — see `setCircuitCanvasOpen`.
       onCircuitOpened: (callback: (text: string) => void) => () => void
@@ -407,25 +415,25 @@ declare global {
         ask: boolean,
       ) => Promise<{ ok: boolean; files?: { name: string; text: string }[] }>
       onExportNetlistRequest?: (callback: () => void) => void
-      saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      saveNetlistData?: (text: string) => Promise<SaveDialogOutcome>
       onExportVerilogRequest?: (callback: () => void) => void
-      saveVerilogData?: (text: string) => Promise<{ ok: boolean; path?: string }>
-      saveFabZip?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
+      saveVerilogData?: (text: string) => Promise<SaveDialogOutcome>
+      saveFabZip?: (data: Uint8Array) => Promise<SaveDialogOutcome>
       onExportGdsRequest?: (callback: () => void) => void
       onCompileIce40Request?: (callback: () => void) => () => void
-      saveGdsData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
+      saveGdsData?: (data: Uint8Array) => Promise<SaveDialogOutcome>
       onExportLefRequest?: (callback: () => void) => void
-      saveLefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      saveLefData?: (text: string) => Promise<SaveDialogOutcome>
       onExportDefRequest?: (callback: () => void) => void
-      saveDefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      saveDefData?: (text: string) => Promise<SaveDialogOutcome>
       onExportLibRequest?: (callback: () => void) => void
-      saveLibData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      saveLibData?: (text: string) => Promise<SaveDialogOutcome>
       onExportOasisRequest?: (callback: () => void) => void
-      saveOasisData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
+      saveOasisData?: (data: Uint8Array) => Promise<SaveDialogOutcome>
       readUserLibrary?: () => Promise<string | null>
       writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
       readUserTemplates?: () => Promise<string | null>
-      writeUserTemplates?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      writeUserTemplates?: (text: string) => Promise<SaveDialogOutcome>
       readContentIndex?: () => Promise<string | null>
       writeContentIndex?: (text: string) => Promise<{ ok: boolean; path?: string }>
       readContentPack?: (id: string) => Promise<string | null>
@@ -3182,16 +3190,27 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         allUserFootprints(),
         simulationTestsRef.current,
       )
-      void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
-        // A successful save lands the project in the "My Projects" list (by its file path).
-        if (r.ok && r.path !== undefined) {
-          recordRecentProject({
-            name: project.name || projectNameFromPath(r.path),
-            path: r.path,
-            savedAt: Date.now(),
-          })
-        }
-      })
+      void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then(
+        (r) => {
+          const effect = circuitSaveEffect(r)
+          if (effect.kind === 'remember') {
+            recordRecentProject({
+              name: project.name || projectNameFromPath(effect.path),
+              path: effect.path,
+              savedAt: Date.now(),
+            })
+            setNetlistReport((current) =>
+              current?.kind === 'refused' && current.title === 'Not saved' ? null : current,
+            )
+            return
+          }
+          if (effect.kind === 'failed') setNetlistReport(effect.report)
+        },
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error)
+          setNetlistReport(refusedSaveReport('Not saved', message))
+        },
+      )
     })
   }, [nodes, edges, project.name])
 
@@ -3268,7 +3287,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           return
         }
         const written = await write(folded.text)
-        if (!written.ok) return
+        const effect = templateSaveEffect(written)
+        if (effect.kind === 'failed') {
+          setNetlistReport(effect.report)
+          return
+        }
+        setNetlistReport((current) =>
+          current?.kind === 'refused' && current.title === 'Not saved as a template'
+            ? null
+            : current,
+        )
         setTemplateSaved(name)
         window.setTimeout(() => setTemplateSaved(null), 3200)
         window.dispatchEvent(new CustomEvent('chipblocks:user-templates'))
@@ -3291,8 +3319,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       const count =
         file.nodes.filter((n) => n.definition !== 'ground' && n.definition !== 'junction').length -
         unsupported.length
-      void bridge.saveNetlistData?.(netlist)
-      setNetlistReport({ kind: 'export', count, unsupported, warnings })
+      void settleExportReport(
+        bridge.saveNetlistData?.(netlist),
+        { kind: 'export', count, unsupported, warnings },
+        'the netlist',
+        setNetlistReport,
+      )
     })
   }, [nodes, edges])
 
@@ -3310,14 +3342,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       const { verilog, unsupported, warnings } = serializeVerilog(file)
       const gateCount = (verilog.match(/^\s*(and|or|not|nand|nor|xor|xnor|buf) g\d+\(/gm) ?? [])
         .length
-      void bridge.saveVerilogData?.(verilog)
-      setNetlistReport({
-        kind: 'export',
-        count: gateCount,
-        unsupported,
-        warnings,
-        format: 'verilog',
-      })
+      void settleExportReport(
+        bridge.saveVerilogData?.(verilog),
+        {
+          kind: 'export',
+          count: gateCount,
+          unsupported,
+          warnings,
+          format: 'verilog',
+        },
+        'Verilog',
+        setNetlistReport,
+      )
     })
   }, [nodes, edges])
 
@@ -3990,7 +4026,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     if (bridge?.onExportGdsRequest === undefined) return
     bridge.onExportGdsRequest(() => {
       const plan = buildChipPlan()
-      void bridge.saveGdsData?.(writeGds(floorplanToGds(plan), new Date()))
       const warnings =
         plan.cells.length === 0
           ? ['The chip floorplan is empty — nothing to place.']
@@ -4003,13 +4038,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       if (drc.length > 0) warnings.push(summarizeDrc(drc))
       const lvs = namedCellLvs(plan.cells.map((c) => c.name))
       if (lvs.length > 0) warnings.push(summarizeLvs(lvs))
-      setNetlistReport({
-        kind: 'export',
-        count: plan.cells.length,
-        unsupported: [],
-        warnings,
-        format: 'gds',
-      })
+      void settleExportReport(
+        bridge.saveGdsData?.(writeGds(floorplanToGds(plan), new Date())),
+        {
+          kind: 'export',
+          count: plan.cells.length,
+          unsupported: [],
+          warnings,
+          format: 'gds',
+        },
+        'GDSII',
+        setNetlistReport,
+      )
     })
   }, [buildChipPlan])
 
@@ -4020,16 +4060,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     bridge.onExportLefRequest(() => {
       const plan = buildChipPlan()
       const { text, macros, fallbacks } = floorplanToLef(plan)
-      void bridge.saveLefData?.(text)
-      setNetlistReport({
-        kind: 'export',
-        count: macros,
-        unsupported: fallbacks,
-        warnings: [
-          'Standard-cell library (LEF) for OpenROAD: C5N λ-scaled teaching geometry on SKY130 layer names; the tech-LEF rules are the λ×0.3 µm cell rules (met1 0.9 / li1 0.6 / pitch 1.5), NOT SKY130 silicon rules. For placement inspection/re-placement — a full flow also needs a Liberty timing library. Unknown cell types fall back to a black-box macro.',
-        ],
-        format: 'lef',
-      })
+      void settleExportReport(
+        bridge.saveLefData?.(text),
+        {
+          kind: 'export',
+          count: macros,
+          unsupported: fallbacks,
+          warnings: [
+            'Standard-cell library (LEF) for OpenROAD: C5N λ-scaled teaching geometry on SKY130 layer names; the tech-LEF rules are the λ×0.3 µm cell rules (met1 0.9 / li1 0.6 / pitch 1.5), NOT SKY130 silicon rules. For placement inspection/re-placement — a full flow also needs a Liberty timing library. Unknown cell types fall back to a black-box macro.',
+          ],
+          format: 'lef',
+        },
+        'the LEF library',
+        setNetlistReport,
+      )
     })
   }, [buildChipPlan])
 
@@ -4041,16 +4085,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     bridge.onExportLibRequest(() => {
       const plan = buildChipPlan()
       const { text, cells, fallbacks } = floorplanToLib(plan)
-      void bridge.saveLibData?.(text)
-      setNetlistReport({
-        kind: 'export',
-        count: cells,
-        unsupported: fallbacks,
-        warnings: [
-          'Timing library (Liberty) for OpenROAD STA: real single-stage RC delays (t = ln2·R·C) from the app’s own timing engine, but at the DISCRETE 2N7000/BS250 constants (k, C_iss 60 pF) the app is built on — real physics at the ns scale of 5 V discrete logic, NOT on-chip C5N per-area silicon. Rise/fall share the worst-case drive R; input-slew dependence is not modelled; a composite cell (AND/OR/XOR) is timed at its output stage. Unknown cell types are omitted (an untimed cell would mislead the STA).',
-        ],
-        format: 'lib',
-      })
+      void settleExportReport(
+        bridge.saveLibData?.(text),
+        {
+          kind: 'export',
+          count: cells,
+          unsupported: fallbacks,
+          warnings: [
+            'Timing library (Liberty) for OpenROAD STA: real single-stage RC delays (t = ln2·R·C) from the app’s own timing engine, but at the DISCRETE 2N7000/BS250 constants (k, C_iss 60 pF) the app is built on — real physics at the ns scale of 5 V discrete logic, NOT on-chip C5N per-area silicon. Rise/fall share the worst-case drive R; input-slew dependence is not modelled; a composite cell (AND/OR/XOR) is timed at its output stage. Unknown cell types are omitted (an untimed cell would mislead the STA).',
+          ],
+          format: 'lib',
+        },
+        'the Liberty library',
+        setNetlistReport,
+      )
     })
   }, [buildChipPlan])
 
@@ -4066,7 +4114,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         chipFloorplan?.netlist ??
         extractTopNetlist(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[])
       const { text, components, nets, pins } = floorplanToDef(plan, { netlist })
-      void bridge.saveDefData?.(text)
       const warnings =
         plan.cells.length === 0
           ? ['The chip floorplan is empty — nothing to place.']
@@ -4077,13 +4124,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       if (drc.length > 0) warnings.push(summarizeDrc(drc))
       const lvs = namedCellLvs(plan.cells.map((c) => c.name))
       if (lvs.length > 0) warnings.push(summarizeLvs(lvs))
-      setNetlistReport({
-        kind: 'export',
-        count: components,
-        unsupported: [],
-        warnings,
-        format: 'def',
-      })
+      void settleExportReport(
+        bridge.saveDefData?.(text),
+        {
+          kind: 'export',
+          count: components,
+          unsupported: [],
+          warnings,
+          format: 'def',
+        },
+        'the DEF design',
+        setNetlistReport,
+      )
     })
   }, [buildChipPlan, chipFloorplan, nodes, edges])
 
@@ -4093,7 +4145,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     if (bridge?.onExportOasisRequest === undefined) return
     bridge.onExportOasisRequest(() => {
       const plan = buildChipPlan()
-      void bridge.saveOasisData?.(writeOasis(floorplanToOasis(plan)))
       const warnings =
         plan.cells.length === 0
           ? ['The chip floorplan is empty — nothing to place.']
@@ -4106,13 +4157,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       if (drc.length > 0) warnings.push(summarizeDrc(drc))
       const lvs = namedCellLvs(plan.cells.map((c) => c.name))
       if (lvs.length > 0) warnings.push(summarizeLvs(lvs))
-      setNetlistReport({
-        kind: 'export',
-        count: plan.cells.length,
-        unsupported: [],
-        warnings,
-        format: 'oas',
-      })
+      void settleExportReport(
+        bridge.saveOasisData?.(writeOasis(floorplanToOasis(plan))),
+        {
+          kind: 'export',
+          count: plan.cells.length,
+          unsupported: [],
+          warnings,
+          format: 'oas',
+        },
+        'OASIS',
+        setNetlistReport,
+      )
     })
   }, [buildChipPlan])
   // Drag a cell to a new spot → record a placement override (checkpointed for undo, like a board move).
@@ -4711,9 +4767,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setPcbExportNote(`not exported — ${fab.validation.problems.join(' ')}`)
       return
     }
-    void window.chipblocks?.saveFabZip?.(fab.bytes).then((r) => {
-      setPcbExportNote(r.ok && r.path !== undefined ? `manufacturing ZIP saved — ${r.path}` : null)
-    })
+    const save = window.chipblocks?.saveFabZip
+    if (save === undefined) return
+    void save(fab.bytes).then(
+      (result) => setPcbExportNote(manufacturingZipNote(result)),
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        setPcbExportNote(`not exported — ${message}`)
+      },
+    )
   }, [assembleFabInputs])
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
