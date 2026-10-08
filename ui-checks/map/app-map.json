@@ -1343,7 +1343,7 @@
       "invariants": []
     },
     "contentManager": {
-      "what": "Plugin & Content Manager dialog: intro paragraph (honesty notes), Install from local pack…, status message, 'Installed & catalog' list. Installed rows carry ENABLED / ENABLED · NOT LOADED / DISABLED (content-manager.ts installedPackStatusLabel); catalog rows say PLANNED · NOT INSTALLED.",
+      "what": "Plugin & Content Manager dialog: intro paragraph (honesty notes), trusted-publisher status, registry URL (empty by default — no registry ships), Install from registry, Install from local pack…, status message, 'Installed & catalog' list. Installed rows carry ENABLED / ENABLED · NOT LOADED / DISABLED (content-manager.ts installedPackStatusLabel); catalog rows say PLANNED · NOT INSTALLED. A signed installed pack shows content-manager-publisher-fingerprint, content-manager-trust-state, and content-manager-trust-toggle.",
       "reach": [
         {
           "dispatch": "chipblocks:content-manager",
@@ -1372,6 +1372,24 @@
             "name": "Install from local pack"
           },
           "does": "Pick a local pack (Electron bridge). In the browser it shows a 'needs the desktop app bridge' status instead."
+        },
+        "registryUrl": {
+          "sel": {
+            "testid": "content-manager-registry-url"
+          },
+          "does": "https index URL the user types. Empty until they set one. Nothing is downloaded by typing."
+        },
+        "registryStatus": {
+          "sel": {
+            "testid": "content-manager-registry-status"
+          },
+          "does": "Says no registry is configured when the URL is unset. ChipBlocks does not ship a registry."
+        },
+        "installFromRegistry": {
+          "sel": {
+            "testid": "content-manager-install-from-registry"
+          },
+          "does": "Install the chosen registry pack after hash and signature checks. In the browser it explains the desktop bridge is required."
         },
         "close": {
           "sel": {
@@ -1418,11 +1436,18 @@
           "why": "Core honesty claim of the panel."
         },
         {
-          "id": "cm.no-trust-pinning-claim",
+          "id": "cm.no-default-trust",
           "type": "text",
           "region": "contentManager",
-          "matches": "does not load ~/.chipblocks/trusted-publishers.json",
-          "why": "The panel must not imply pinned trust it cannot check."
+          "matches": "No publisher keys ship as trusted",
+          "why": "The app must not imply a built-in publisher key."
+        },
+        {
+          "id": "cm.no-default-registry",
+          "type": "text",
+          "region": "contentManager",
+          "matches": "No content registry is configured",
+          "why": "No registry exists to point at; the empty state must say so."
         }
       ],
       "laya": [
@@ -1451,6 +1476,11 @@
         "status": {
           "locator": {
             "testid": "content-manager-status"
+          }
+        },
+        "registryStatus": {
+          "locator": {
+            "testid": "content-manager-registry-status"
           }
         }
       }
@@ -1732,16 +1762,21 @@
     },
     {
       "id": "electron:contentPacks",
-      "feature": "Installed pack rows and their badges (ENABLED, ENABLED · NOT LOADED, DISABLED), Enable/Disable/Uninstall, signatures",
+      "feature": "Installed pack rows and their badges (ENABLED, ENABLED · NOT LOADED, DISABLED), Enable/Disable/Uninstall, publisher trust pins, registry download",
       "bridge": [
         "readContentIndex",
         "writeContentIndex",
         "readContentPack",
         "writeContentPack",
         "removeContentPack",
-        "pickLocalContentPack"
+        "pickLocalContentPack",
+        "readTrustedPublishers",
+        "writeTrustedPublishers",
+        "readContentRegistrySettings",
+        "writeContentRegistrySettings",
+        "downloadRegistryResource"
       ],
-      "browser": "Only the six PLANNED · NOT INSTALLED catalog rows; Install shows a bridge-needed status.",
+      "browser": "Only the six PLANNED · NOT INSTALLED catalog rows; Install shows a bridge-needed status. The registry URL is empty and the panel says no registry is configured.",
       "skip": "Installed packs live under ~/.chipblocks/libraries (Electron bridge)."
     },
     {

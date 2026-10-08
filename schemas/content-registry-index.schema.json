@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/content-registry-index.schema.json",
+  "title": "ChipBlocks content registry index",
+  "description": "Version 1 index a user points at with an https URL (file:// only for a local test or dev). ChipBlocks does not ship a registry URL. See schemas/content-registry-index.md. Download size cap in this schema matches REGISTRY_MAX_PACK_BYTES (2097152) in src/renderer/content-registry.ts. The runtime parser also refuses a downloadUrl that is not https or file, and checks that publicKey and sig are raw ed25519 lengths.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "packs"],
+  "properties": {
+    "format": { "const": "chipblocks-content-registry-index" },
+    "version": { "const": 1 },
+    "packs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pack" }
+    }
+  },
+  "$defs": {
+    "pack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "downloadUrl", "size", "sha256", "signature"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Same id the pack file declares, and the directory name under ~/.chipblocks/libraries/."
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Must equal the pack file's packVersion string. Compared as text, not guessed."
+        },
+        "downloadUrl": {
+          "type": "string",
+          "pattern": "^(https://|file://).+",
+          "description": "https pack file. file:// is for a local test or dev index only."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152,
+          "description": "Exact byte length of the downloaded file."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "SHA-256 of the exact downloaded bytes, hex. Compared case-insensitively."
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["alg", "publicKey", "sig"],
+          "description": "Must match the ed25519 signature object inside the pack file. Verified over the canonical pack body (integrity and signature fields removed) before anything is written into the packs directory.",
+          "properties": {
+            "alg": { "const": "ed25519" },
+            "publicKey": { "type": "string", "minLength": 1 },
+            "sig": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

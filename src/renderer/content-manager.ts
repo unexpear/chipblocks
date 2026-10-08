@@ -13,7 +13,9 @@
  * - Uninstall (drop index entry; main deletes the pack directory)
  *
  * What this REFUSES (honestly, with a reason — never "success" without validation):
- * - Remote URL / network installs (no silent download that claims success)
+ * - An arbitrary URL install (refuseRemoteInstall). A user-configured registry is a separate
+ *   path in content-registry.ts: https (or file:// for a local test), hash + signature checked
+ *   before any pack file is written, no registry URL shipped with the app
  * - Packs that fail deserializeContentPack (bad JSON, wrong format, future version, bad id)
  * - Packs whose license fails licenseGate (GPL/AGPL/LGPL/unknown)
  * - Marketplace / unsigned arbitrary code execution framing — this is local content registration
@@ -23,9 +25,15 @@
  */
 
 import { CITED_CONTENT_CATALOG, type ContentCatalogEntry } from './content-catalog.ts'
-import { type ContentPack, deserializeContentPack, licenseGate } from './content-pack.ts'
+import {
+  type ContentPack,
+  deserializeContentPack,
+  licenseGate,
+  serializeContentPack,
+} from './content-pack.ts'
 import {
   type IntegrityVerdict,
+  sha256Hex,
   trustNoteForVerdict,
   verifyPackIntegrity,
 } from './content-pack-integrity.ts'
@@ -47,8 +55,10 @@ export type InstalledPackRecord = {
   enabled: boolean
   /** ms epoch when the validated local install landed. */
   installedAt: number
-  /** Always local-pack for this slice — remote sources are refused. */
+  /** Always local-pack: the installed bytes live under ~/.chipblocks/libraries, not as a remote pointer. */
   source: 'local-pack'
+  /** How those bytes were obtained. Absent on rows from before registry install existed. */
+  acquiredFrom?: 'local-file' | 'registry'
   description?: string
   homepage?: string
   partCount: number
@@ -72,6 +82,20 @@ export type InstalledPackRecord = {
    * - valid-trusted: ed25519 ok against trusted-publishers pin
    */
   signatureStatus?: 'none' | 'valid-untrusted' | 'valid-trusted'
+  /**
+   * Lowercase hex of the ed25519 public key, recorded when install verified a signature.
+   * The on-disk pack.json is the normalized pack body (signature stripped), so the fingerprint
+   * shown later comes from here.
+   */
+  publisherKeyHex?: string
+}
+
+export type PackTrustStamp = {
+  trustNote: string
+  contentHash: string
+  integrityStatus: 'match' | 'undeclared'
+  signatureStatus?: 'none' | 'valid-untrusted' | 'valid-trusted'
+  publisherKeyHex?: string
 }
 
 export type ContentIndex = {
@@ -204,6 +228,12 @@ function validateRecord(raw: unknown): InstalledPackRecord | null {
   ) {
     record.signatureStatus = r.signatureStatus
   }
+  if (typeof r.publisherKeyHex === 'string' && /^[a-f0-9]{64}$/i.test(r.publisherKeyHex.trim())) {
+    record.publisherKeyHex = r.publisherKeyHex.trim().toLowerCase()
+  }
+  if (r.acquiredFrom === 'local-file' || r.acquiredFrom === 'registry') {
+    record.acquiredFrom = r.acquiredFrom
+  }
   if (typeof r.description === 'string' && r.description.trim() !== '') {
     record.description = r.description.trim()
   }
@@ -247,12 +277,7 @@ export function recordFromPack(
   pack: ContentPack,
   installedAt: number,
   enabled = true,
-  trust?: {
-    trustNote: string
-    contentHash: string
-    integrityStatus: 'match' | 'undeclared'
-    signatureStatus?: 'none' | 'valid-untrusted' | 'valid-trusted'
-  },
+  trust?: PackTrustStamp,
 ): InstalledPackRecord {
   const record: InstalledPackRecord = {
     id: pack.id,
@@ -272,6 +297,7 @@ export function recordFromPack(
     record.contentHash = trust.contentHash
     record.integrityStatus = trust.integrityStatus
     if (trust.signatureStatus !== undefined) record.signatureStatus = trust.signatureStatus
+    if (trust.publisherKeyHex !== undefined) record.publisherKeyHex = trust.publisherKeyHex
   }
   return record
 }
@@ -286,12 +312,7 @@ export function installLocalPack(
   index: ContentIndex,
   packText: string,
   installedAt: number = Date.now(),
-  trust?: {
-    trustNote: string
-    contentHash: string
-    integrityStatus: 'match' | 'undeclared'
-    signatureStatus?: 'none' | 'valid-untrusted' | 'valid-trusted'
-  },
+  trust?: PackTrustStamp,
 ): InstallResult {
   const parsed = deserializeContentPack(packText)
   if (!parsed.ok) return parsed
@@ -331,12 +352,35 @@ export async function installLocalPackVerified(
         : 'valid-untrusted'
   const integrityNote = trustNoteForVerdict(verdict)
   const signatureNote = trustNoteForSignature(sig)
-  return installLocalPack(index, packText, installedAt, {
+  const stamp: PackTrustStamp = {
     trustNote: `${integrityNote} ${signatureNote}`,
     contentHash: verdict.hash,
     integrityStatus: verdict.kind === 'match' ? 'match' : 'undeclared',
     signatureStatus,
-  })
+  }
+  if (sig.kind === 'valid-trusted' || sig.kind === 'valid-untrusted') {
+    stamp.publisherKeyHex = sig.publicKeyHex
+  }
+  return installLocalPack(index, packText, installedAt, stamp)
+}
+
+/**
+ * The bytes local install and registry install both write: normalized pack.json, plus the index
+ * row whose content hash is those bytes (the picked file's hash is only the install-time check).
+ */
+export async function installedPackFiles(installed: {
+  record: InstalledPackRecord
+  pack: ContentPack
+  index: ContentIndex
+}): Promise<{ onDiskText: string; record: InstalledPackRecord; index: ContentIndex }> {
+  const onDiskText = serializeContentPack(installed.pack)
+  const diskHash = await sha256Hex(onDiskText)
+  const record: InstalledPackRecord = { ...installed.record, contentHash: diskHash }
+  const index: ContentIndex = {
+    ...installed.index,
+    packs: installed.index.packs.map((pack) => (pack.id === record.id ? record : pack)),
+  }
+  return { onDiskText, record, index }
 }
 
 export function setPackEnabled(
