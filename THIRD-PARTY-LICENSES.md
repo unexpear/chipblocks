@@ -35,6 +35,14 @@ ChipBlocks depends on third-party software. This file lists each direct dependen
 - **NOTICE:** none (`ls node_modules/jsdom/NOTICE*` → absent)
 - **Usage tier:** dev-time only — the Vitest environment for renderer tests that need a document (panel open/close, shared key bindings). Not shipped.
 
+#### Playwright
+- **Package:** `playwright` ^1.64.0 (pulls in `playwright-core`, same license and notice)
+- **License:** Apache-2.0
+- **Copyright:** Copyright (c) Microsoft Corporation
+- **Source:** <https://github.com/microsoft/playwright>
+- **License text:** `node_modules/playwright/LICENSE` after `npm install`
+- **NOTICE:** `node_modules/playwright/NOTICE` - "Playwright, Copyright (c) Microsoft Corporation. This software contains code derived from the Puppeteer project (https://github.com/puppeteer/puppeteer), available under the Apache 2.0 license." Third-party notices: `node_modules/playwright/ThirdPartyNotices.txt`. Not 4(d)-binding on ChipBlocks because Playwright is never redistributed in the product.
+- **Usage tier:** dev-time only - drives the renderer in a browser for the `ui-checks/` click-through suite (`npm run ui-checks`). The browser itself comes from `npx playwright install chromium`. Not shipped.
 #### Biome
 - **Package:** `@biomejs/biome` ^2.4.16
 - **License:** MIT OR Apache-2.0 (dual — either grant satisfies)

@@ -1,0 +1,256 @@
+{
+  "name": "cross-screen-panels",
+  "title": "Panels and key bindings across screens (regression for #4 BUG-2/BUG-3: start screen + all project tabs stay mounted)",
+  "covers": ["workspace", "shortcuts", "start"],
+  "steps": [
+    {
+      "id": "two-projects",
+      "title": "Open two projects (Blank, then LED)",
+      "screen": "workspace",
+      "do": [
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplBlankCircuit"
+          }
+        },
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplLed"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    },
+    {
+      "id": "ctrl-k-in-led",
+      "title": "Ctrl+K in the LED tab opens Shortcuts there",
+      "screen": "shortcuts",
+      "do": [
+        {
+          "mouseClickAt": {
+            "sel": "workspace.focusCanvas",
+            "dx": 4,
+            "dy": 4
+          }
+        },
+        {
+          "open": "shortcuts"
+        }
+      ]
+    },
+    {
+      "id": "close-and-switch",
+      "title": "Close it, switch to the Blank tab: no Shortcuts panel should be open there",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "shortcuts.close"
+        },
+        {
+          "click": {
+            "role": "button",
+            "name": "MyCircuit",
+            "exact": true
+          }
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        },
+        {
+          "type": "absent",
+          "sel": "shortcuts.reset",
+          "id": "no-stray-shortcuts-panel",
+          "timeoutMs": 1000
+        }
+      ]
+    },
+    {
+      "id": "home-has-none",
+      "title": "…nor on the start screen",
+      "screen": "start",
+      "independent": true,
+      "do": [
+        {
+          "click": "workspace.homeTab"
+        },
+        {
+          "waitReady": "start"
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": "shortcuts.reset",
+          "id": "no-stray-shortcuts-panel",
+          "timeoutMs": 1000
+        }
+      ]
+    },
+    {
+      "id": "rebind-applies-everywhere",
+      "title": "Rebind the panel key to Ctrl+J in the LED tab; then in the Blank tab (stray panel closed first) Ctrl+J should open Shortcuts",
+      "screen": "workspace",
+      "independent": true,
+      "do": [
+        {
+          "click": {
+            "role": "button",
+            "name": "MyLED",
+            "exact": true
+          }
+        },
+        {
+          "waitReady": "workspace"
+        },
+        {
+          "ifVisible": "shortcuts.reset",
+          "then": [
+            {
+              "click": "shortcuts.close"
+            }
+          ]
+        },
+        {
+          "mouseClickAt": {
+            "sel": "workspace.focusCanvas",
+            "dx": 4,
+            "dy": 4
+          }
+        },
+        {
+          "press": "Control+K"
+        },
+        {
+          "waitReady": "shortcuts"
+        },
+        {
+          "click": "shortcuts.changeRow",
+          "with": {
+            "action": "shortcutsPanel"
+          }
+        },
+        {
+          "press": "Control+j"
+        },
+        {
+          "waitFor": {
+            "type": "attr",
+            "sel": {
+              "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+            },
+            "name": "data-binding",
+            "matches": "^Ctrl\\+J$",
+            "id": "w"
+          }
+        },
+        {
+          "click": "shortcuts.close"
+        },
+        {
+          "click": {
+            "role": "button",
+            "name": "MyCircuit",
+            "exact": true
+          }
+        },
+        {
+          "waitReady": "workspace"
+        },
+        {
+          "ifVisible": "shortcuts.reset",
+          "then": [
+            {
+              "click": "shortcuts.close"
+            }
+          ]
+        },
+        {
+          "waitFor": {
+            "type": "absent",
+            "sel": "shortcuts.reset"
+          }
+        },
+        {
+          "mouseClickAt": {
+            "sel": "workspace.focusCanvas",
+            "dx": 4,
+            "dy": 4
+          }
+        },
+        {
+          "press": "Control+J"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "shortcuts.reset",
+          "id": "ctrl-j-opens-in-other-tab",
+          "timeoutMs": 2000
+        },
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+          },
+          "name": "data-binding",
+          "matches": "^Ctrl\\+J$",
+          "id": "other-tab-shows-ctrl-j"
+        }
+      ]
+    },
+    {
+      "id": "other-tab-panel-shows-new-key",
+      "title": "Blank tab's Shortcuts panel (opened the way the native Settings menu does) lists the new Ctrl+J binding",
+      "screen": "shortcuts",
+      "independent": true,
+      "do": [
+        {
+          "ifVisible": "shortcuts.reset",
+          "then": [
+            {
+              "click": "shortcuts.close"
+            }
+          ]
+        },
+        {
+          "dispatch": "chipblocks:shortcuts"
+        },
+        {
+          "waitReady": "shortcuts"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"shortcutsPanel\"]"
+          },
+          "name": "data-binding",
+          "matches": "^Ctrl\\+J$",
+          "id": "shows-ctrl-j",
+          "timeoutMs": 2000
+        }
+      ]
+    }
+  ]
+}

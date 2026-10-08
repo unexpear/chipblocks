@@ -1,0 +1,211 @@
+{
+  "name": "pcb-led-panel",
+  "title": "PCB panel on the LED circuit: auto-placement, routing count, DRC, Export ZIP state, Board workspace agrees",
+  "covers": ["workspace", "pcbPanel", "boardWorkspace"],
+  "steps": [
+    {
+      "id": "create-led",
+      "title": "LED + resistor template",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    },
+    {
+      "id": "open-pcb",
+      "title": "PCB panel: 3 parts placed, all connections routed, DRC clean",
+      "screen": "pcbPanel",
+      "laya": true,
+      "do": {
+        "open": "pcbPanel"
+      },
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "pcbPanel.summary",
+          "name": "data-placed",
+          "check": [
+            {
+              "op": "eq",
+              "b": 3
+            }
+          ],
+          "id": "data-placed-3"
+        },
+        {
+          "type": "attrNumber",
+          "sel": "pcbPanel.summary",
+          "name": "data-drc",
+          "check": [
+            {
+              "op": "eq",
+              "b": 0
+            }
+          ],
+          "id": "data-drc-0"
+        },
+        {
+          "type": "numbers",
+          "region": "pcbPanel.summary",
+          "re": "^(\\d+) parts? placed · ([\\d.]+) × ([\\d.]+) mm board · (\\d+) of (\\d+) connections? routed",
+          "check": [
+            {
+              "op": "eq",
+              "a": "$1",
+              "b": 3
+            },
+            {
+              "op": "eq",
+              "a": "$4",
+              "b": "$5"
+            },
+            {
+              "op": "gt",
+              "a": "$5",
+              "b": 0
+            },
+            {
+              "op": "gt",
+              "a": "$2",
+              "b": 0
+            },
+            {
+              "op": "gt",
+              "a": "$3",
+              "b": 0
+            }
+          ],
+          "id": "placed-and-routed"
+        },
+        {
+          "type": "text",
+          "region": "pcbPanel.summary",
+          "matches": "DRC clean",
+          "id": "drc-clean"
+        },
+        {
+          "type": "enabled",
+          "sel": "pcbPanel.exportZip",
+          "id": "export-enabled"
+        },
+        {
+          "type": "attr",
+          "sel": "pcbPanel.exportZip",
+          "name": "title",
+          "matches": "^Export the manufacturing ZIP",
+          "id": "export-title-ready"
+        },
+        {
+          "type": "numbers",
+          "region": "pcbPanel.summary",
+          "re": "(\\d+) of (\\d+) connections? routed",
+          "check": [
+            {
+              "op": "eq",
+              "a": "$1",
+              "b": "$2"
+            }
+          ],
+          "id": "text-says-all-routed"
+        }
+      ]
+    },
+    {
+      "id": "capture-routed",
+      "title": "Remember the routed count",
+      "screen": "pcbPanel",
+      "do": {
+        "capture": {
+          "name": "routed",
+          "sel": "pcbPanel.summary",
+          "attr": "data-routed"
+        }
+      }
+    },
+    {
+      "id": "board-workspace",
+      "title": "Board breadcrumb: board-header agrees with the panel (3 parts, same routed count as data-routed)",
+      "screen": "boardWorkspace",
+      "do": [
+        {
+          "click": "pcbPanel.close"
+        },
+        {
+          "open": "boardWorkspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "numbers",
+          "region": "boardWorkspace.header",
+          "re": "^Board (\\d+) parts? · [\\d.]+ × [\\d.]+ mm · (\\d+)/(\\d+) routed",
+          "check": [
+            {
+              "op": "eq",
+              "a": "$1",
+              "b": 3
+            },
+            {
+              "op": "eq",
+              "a": "$2",
+              "b": "@routed"
+            },
+            {
+              "op": "eq",
+              "a": "$2",
+              "b": "$3"
+            }
+          ],
+          "id": "header-matches-panel"
+        },
+        {
+          "type": "visible",
+          "sel": "boardWorkspace.route",
+          "id": "route-tool"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "role": "button",
+            "name": "3D",
+            "exact": true
+          },
+          "id": "3d-view"
+        }
+      ]
+    },
+    {
+      "id": "back-to-circuit",
+      "title": "Circuit breadcrumb returns to the schematic unchanged",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.crumbCircuit"
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    }
+  ]
+}

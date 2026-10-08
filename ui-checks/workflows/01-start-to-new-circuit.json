@@ -1,0 +1,192 @@
+{
+  "name": "start-to-new-circuit",
+  "title": "Start screen → new circuit project → tab round trip",
+  "covers": ["start", "workspace"],
+  "steps": [
+    {
+      "id": "open-start",
+      "title": "Start screen loads with no template picked",
+      "screen": "start",
+      "do": {
+        "open": "start"
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "text": "Pick a template to see its details."
+          },
+          "id": "no-template-yet"
+        },
+        {
+          "type": "disabled",
+          "sel": "start.createProject",
+          "id": "create-disabled",
+          "why": "disabled={!template}"
+        }
+      ]
+    },
+    {
+      "id": "pick-blank-circuit",
+      "title": "Circuit ▸ Blank circuit enables Create and suggests MyCircuit",
+      "screen": "start",
+      "do": [
+        {
+          "click": "start.circuit"
+        },
+        {
+          "click": "start.tplBlankCircuit"
+        }
+      ],
+      "expect": [
+        {
+          "type": "enabled",
+          "sel": "start.createProject",
+          "id": "create-enabled"
+        },
+        {
+          "type": "value",
+          "sel": "start.projectName",
+          "equals": "MyCircuit",
+          "id": "name-suggested"
+        }
+      ]
+    },
+    {
+      "id": "name-project",
+      "title": "Type a custom project name",
+      "screen": "start",
+      "do": {
+        "fill": "start.projectName",
+        "value": "UiRunnerCircuit"
+      },
+      "expect": [
+        {
+          "type": "value",
+          "sel": "start.projectName",
+          "equals": "UiRunnerCircuit",
+          "id": "name-typed"
+        }
+      ]
+    },
+    {
+      "id": "create",
+      "title": "Create project opens an empty workspace tab with that name",
+      "screen": "workspace",
+      "laya": true,
+      "do": [
+        {
+          "click": "start.createProject"
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "button",
+            "name": "UiRunnerCircuit",
+            "exact": true
+          },
+          "id": "tab-named"
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        },
+        {
+          "type": "visible",
+          "sel": "workspace.crumbCircuit",
+          "id": "breadcrumb"
+        },
+        {
+          "type": "disabled",
+          "sel": "workspace.crumbSystem",
+          "id": "system-soon-disabled"
+        }
+      ]
+    },
+    {
+      "id": "home-tab",
+      "title": "⌂ My Projects returns to the start screen; the project tab stays",
+      "screen": "start",
+      "do": [
+        {
+          "click": "workspace.homeTab"
+        },
+        {
+          "waitReady": "start"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "button",
+            "name": "UiRunnerCircuit",
+            "exact": true
+          },
+          "id": "tab-still-open"
+        },
+        {
+          "type": "absent",
+          "sel": "workspace.addPart",
+          "id": "editor-hidden"
+        }
+      ]
+    },
+    {
+      "id": "back-to-tab",
+      "title": "Clicking the tab restores the same (empty) workspace",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": {
+            "role": "button",
+            "name": "UiRunnerCircuit",
+            "exact": true
+          }
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "close-tab",
+      "title": "× closes the project and falls back to the start screen",
+      "screen": "start",
+      "do": [
+        {
+          "click": "workspace.closeTab"
+        },
+        {
+          "waitReady": "start"
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "role": "button",
+            "name": "UiRunnerCircuit",
+            "exact": true
+          },
+          "id": "tab-gone"
+        }
+      ]
+    }
+  ]
+}

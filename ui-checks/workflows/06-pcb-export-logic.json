@@ -1,0 +1,174 @@
+{
+  "name": "pcb-export-logic",
+  "title": "Export ZIP enable/disable logic: empty board, unwired part, good board, validation-only export in the browser",
+  "covers": ["workspace", "pcbPanel"],
+  "steps": [
+    {
+      "id": "blank",
+      "title": "Blank circuit",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplBlankCircuit"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "empty-board",
+      "title": "Empty board: 0 parts, Export ZIP disabled with \"no parts\" reason",
+      "screen": "pcbPanel",
+      "laya": true,
+      "do": {
+        "open": "pcbPanel"
+      },
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "pcbPanel.summary",
+          "name": "data-placed",
+          "check": [
+            {
+              "op": "eq",
+              "b": 0
+            }
+          ],
+          "id": "data-placed-0"
+        },
+        {
+          "type": "text",
+          "region": "pcbPanel.summary",
+          "matches": "^0 parts placed",
+          "id": "zero-placed"
+        },
+        {
+          "type": "disabled",
+          "sel": "pcbPanel.exportZip",
+          "id": "export-disabled"
+        },
+        {
+          "type": "attr",
+          "sel": "pcbPanel.exportZip",
+          "name": "title",
+          "matches": "^The board isn't manufacturable yet:.*no parts",
+          "flags": "i",
+          "id": "title-says-why"
+        },
+        {
+          "type": "text",
+          "region": "pcbPanel",
+          "matches": "No parts have a footprint yet",
+          "id": "empty-hint"
+        }
+      ]
+    },
+    {
+      "id": "place-resistor",
+      "title": "Place one resistor: it lands on the board; Export state agrees with its tooltip",
+      "screen": "pcbPanel",
+      "do": {
+        "macro": "placePart",
+        "with": {
+          "query": "resistor"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "pcbPanel.summary",
+          "matches": "^1 part placed",
+          "id": "one-placed"
+        },
+        {
+          "type": "attrNumber",
+          "sel": "pcbPanel.summary",
+          "name": "data-placed",
+          "check": [
+            {
+              "op": "eq",
+              "b": 1
+            }
+          ],
+          "id": "data-placed-1"
+        }
+      ]
+    },
+    {
+      "id": "led-board",
+      "title": "LED board: Export ZIP enabled",
+      "screen": "pcbPanel",
+      "do": [
+        {
+          "click": "pcbPanel.close"
+        },
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplLed"
+          }
+        },
+        {
+          "open": "pcbPanel"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "pcbPanel.summary",
+          "matches": "DRC clean",
+          "id": "drc-clean"
+        },
+        {
+          "type": "enabled",
+          "sel": "pcbPanel.exportZip",
+          "id": "export-enabled"
+        }
+      ]
+    },
+    {
+      "id": "export-click-validates",
+      "title": "Export ZIP click: validation passes (no \"not exported —\" note)",
+      "screen": "pcbPanel",
+      "do": {
+        "click": "pcbPanel.exportZip"
+      },
+      "expect": [
+        {
+          "type": "any",
+          "of": [
+            {
+              "type": "absent",
+              "sel": {
+                "testid": "pcb-export-note"
+              }
+            },
+            {
+              "type": "text",
+              "region": "pcbPanel.exportNote",
+              "notMatches": "^not exported —"
+            }
+          ],
+          "id": "no-refusal-note",
+          "why": "pcb-export-note may be empty (no bridge to save) but must not say 'not exported —'."
+        }
+      ]
+    },
+    {
+      "id": "zip-written",
+      "title": "The ZIP is actually written to disk",
+      "screen": "pcbPanel",
+      "requires": ["electron:saveFabZip"],
+      "independent": true
+    }
+  ]
+}

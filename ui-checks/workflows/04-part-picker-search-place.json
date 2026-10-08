@@ -1,0 +1,298 @@
+{
+  "name": "part-picker-search-place",
+  "title": "Part picker: browse, search, place with Enter and with Place, no-match, Esc; undo/redo the placement",
+  "covers": ["workspace", "partPicker"],
+  "steps": [
+    {
+      "id": "blank",
+      "title": "Blank circuit",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplBlankCircuit"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "open-picker",
+      "title": "Add Part opens the picker: full count, sections, search focused",
+      "screen": "partPicker",
+      "laya": true,
+      "do": {
+        "open": "partPicker"
+      },
+      "expect": [
+        {
+          "type": "numbers",
+          "region": "partPicker.count",
+          "re": "^(\\d+) parts$",
+          "check": [
+            {
+              "op": "ge",
+              "a": "$1",
+              "b": 50
+            }
+          ],
+          "id": "full-count"
+        },
+        {
+          "type": "count",
+          "sel": "partPicker.sections",
+          "min": 5,
+          "id": "has-sections",
+          "why": "Browse mode groups parts under section headers (part-picker-section)."
+        },
+        {
+          "type": "text",
+          "region": "partPicker",
+          "matches": "Passives[\\s\\S]*Transistors",
+          "flags": "i",
+          "id": "passives-before-transistors"
+        },
+        {
+          "type": "focused",
+          "sel": "partPicker.search",
+          "id": "search-focused"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "role": "option",
+            "within": {
+              "role": "listbox",
+              "name": "Parts"
+            }
+          },
+          "min": 50,
+          "id": "options-listed"
+        }
+      ]
+    },
+    {
+      "id": "search-resist",
+      "title": "Search 'resist' narrows the list (k of N, k < N) and resistor is listed",
+      "screen": "partPicker",
+      "do": {
+        "fill": "partPicker.search",
+        "value": "resist"
+      },
+      "expect": [
+        {
+          "type": "numbers",
+          "region": "partPicker.count",
+          "re": "^(\\d+) of (\\d+)$",
+          "check": [
+            {
+              "op": "lt",
+              "a": "$1",
+              "b": "$2"
+            },
+            {
+              "op": "ge",
+              "a": "$1",
+              "b": 1
+            }
+          ],
+          "id": "narrowed"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "role": "option",
+            "nameRe": "^[Rr]esistor"
+          },
+          "id": "resistor-option"
+        },
+        {
+          "type": "count",
+          "sel": "partPicker.sections",
+          "eq": 0,
+          "id": "flat-when-searching",
+          "why": "A typed query gives a flat, ranked list (no headers)."
+        }
+      ]
+    },
+    {
+      "id": "enter-places",
+      "title": "Enter places the selected part: 1 component on the canvas",
+      "screen": "workspace",
+      "do": {
+        "press": "Enter"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": "partPicker.search",
+          "id": "picker-closed"
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 1 components, 0 wires",
+          "id": "status-1c-0w"
+        }
+      ]
+    },
+    {
+      "id": "undo",
+      "title": "Ctrl+Z undoes the placement",
+      "screen": "workspace",
+      "do": [
+        {
+          "mouseClickAt": {
+            "sel": "workspace.focusCanvas",
+            "dx": 4,
+            "dy": 4
+          }
+        },
+        {
+          "press": "Control+Z"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "redo",
+      "title": "Ctrl+Y redoes it",
+      "screen": "workspace",
+      "do": {
+        "press": "Control+Y"
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 1 components, 0 wires",
+          "id": "status-1c-0w"
+        }
+      ]
+    },
+    {
+      "id": "place-button",
+      "title": "Search 'capacitor', pick it, press Place → 2 components",
+      "screen": "workspace",
+      "do": [
+        {
+          "open": "partPicker"
+        },
+        {
+          "fill": "partPicker.search",
+          "value": "capacitor"
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "partPicker.count",
+            "matches": "^\\d+ of \\d+$"
+          }
+        },
+        {
+          "click": {
+            "role": "option",
+            "nameRe": "^[Cc]apacitor"
+          }
+        },
+        {
+          "click": "partPicker.place"
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": "partPicker.search",
+          "id": "picker-closed"
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 2 components, 0 wires",
+          "id": "status-2c-0w"
+        }
+      ]
+    },
+    {
+      "id": "no-match",
+      "title": "Nonsense query shows the no-match message and 0 results",
+      "screen": "partPicker",
+      "do": [
+        {
+          "open": "partPicker"
+        },
+        {
+          "fill": "partPicker.search",
+          "value": "zzqxv"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "No part matches"
+          },
+          "id": "no-match-text"
+        },
+        {
+          "type": "text",
+          "region": "partPicker.count",
+          "matches": "^0 of \\d+$",
+          "id": "zero-of-n"
+        },
+        {
+          "type": "disabled",
+          "sel": "partPicker.place",
+          "id": "place-disabled-with-nothing"
+        }
+      ]
+    },
+    {
+      "id": "esc-clears-then-closes",
+      "title": "Esc clears the query, a second Esc closes the picker",
+      "screen": "workspace",
+      "do": [
+        {
+          "press": "Escape"
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "partPicker.count",
+            "matches": "^\\d+ parts$"
+          }
+        },
+        {
+          "press": "Escape"
+        }
+      ],
+      "expect": [
+        {
+          "type": "absent",
+          "sel": "partPicker.search",
+          "id": "picker-closed"
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 2 components, 0 wires",
+          "id": "status-2c-0w"
+        }
+      ]
+    }
+  ]
+}

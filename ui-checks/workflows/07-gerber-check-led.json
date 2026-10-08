@@ -1,0 +1,256 @@
+{
+  "name": "gerber-check-led",
+  "title": "Gerber check on a good board at the default 1600×1000 window: plotted, no refusal, all layer tabs, benign footer; controls reachable (regression for #4 BUG-1)",
+  "covers": ["pcbPanel", "gerberCheck"],
+  "notes": "Before PR #4 the Close / Export ZIP / Check Gerbers buttons and the layer tabs were unreachable at this size (dock panel overflowed above its scroll origin).",
+  "steps": [
+    {
+      "id": "create-led",
+      "title": "LED + resistor template",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    },
+    {
+      "id": "open-gerber",
+      "title": "Check Gerbers: plot drawn, refusal banner absent, Stack + 9 layer tabs",
+      "screen": ["pcbPanel", "gerberCheck"],
+      "laya": true,
+      "do": {
+        "open": "gerberCheck"
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "gerberCheck.plot",
+          "id": "plot-drawn"
+        },
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "refusal-absent"
+        },
+        {
+          "type": "visible",
+          "sel": "gerberCheck.stack",
+          "id": "stack-tab"
+        },
+        {
+          "type": "all",
+          "of": [
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-F_Cu.gtl"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-B_Cu.gbl"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-F_Mask.gts"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-B_Mask.gbs"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-F_Paste.gtp"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-F_Silkscreen.gto"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-F_Fab.gbr"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board-Edge_Cuts.gm1"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-layer-tab",
+                "textIs": "board.drl"
+              }
+            }
+          ],
+          "id": "all-9-layer-tabs"
+        },
+        {
+          "type": "count",
+          "sel": "gerberCheck.tabs",
+          "eq": 9,
+          "id": "nine-layer-tabs"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck",
+          "matches": "All plotted layers, one frame\\.",
+          "id": "stack-mode-default"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck",
+          "matches": "Hidden empty files: board-B_Paste\\.gbp, board-B_Silkscreen\\.gbo \\(no bottom-mounted parts\\)",
+          "id": "bottom-paste-silk-hidden"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck",
+          "matches": "Not plotted \\(not a Gerber or drill file\\): .*README\\.txt",
+          "id": "footer-lists-non-gerbers"
+        },
+        {
+          "type": "noAlarms",
+          "region": "gerberCheck",
+          "id": "no-unexplained-alarms"
+        },
+        {
+          "type": "pressed",
+          "sel": "pcbPanel.checkGerbers",
+          "value": "true",
+          "id": "check-gerbers-pressed"
+        },
+        {
+          "type": "count",
+          "sel": {
+            "css": "[data-testid=\"gerber-layer-tab\"][aria-pressed=\"true\"]"
+          },
+          "eq": 0,
+          "id": "no-tab-pressed-in-stack"
+        }
+      ]
+    },
+    {
+      "id": "controls-reachable",
+      "title": "Close, Export ZIP, Check Gerbers, Stack and the layer tabs can actually be clicked at 1600×1000",
+      "screen": "gerberCheck",
+      "expect": [
+        {
+          "type": "clickable",
+          "sel": "pcbPanel.close",
+          "id": "close-clickable",
+          "timeoutMs": 1000
+        },
+        {
+          "type": "clickable",
+          "sel": "pcbPanel.exportZip",
+          "id": "export-clickable",
+          "timeoutMs": 1000
+        },
+        {
+          "type": "clickable",
+          "sel": "pcbPanel.checkGerbers",
+          "id": "check-gerbers-clickable",
+          "timeoutMs": 1000
+        },
+        {
+          "type": "clickable",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board.drl"
+          },
+          "id": "drl-tab-clickable",
+          "timeoutMs": 1000
+        },
+        {
+          "type": "clickable",
+          "sel": "gerberCheck.stack",
+          "id": "stack-clickable",
+          "timeoutMs": 1000
+        }
+      ]
+    },
+    {
+      "id": "drl-tab",
+      "title": "Open the board.drl tab like a user would",
+      "screen": "gerberCheck",
+      "do": {
+        "click": "gerberCheck.tab",
+        "with": {
+          "file": "board.drl"
+        }
+      },
+      "expect": [
+        {
+          "type": "pressed",
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "board.drl"
+          },
+          "value": "true",
+          "id": "drl-tab-pressed"
+        },
+        {
+          "type": "numbers",
+          "region": "gerberCheck.counts",
+          "re": "(\\d+) drills?",
+          "check": [
+            {
+              "op": "gt",
+              "a": "$1",
+              "b": 0
+            }
+          ],
+          "id": "drills-listed"
+        }
+      ]
+    },
+    {
+      "id": "fit-reachable",
+      "title": "Fit (lower in the panel) is still clickable",
+      "screen": "gerberCheck",
+      "do": {
+        "click": "gerberCheck.fit"
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": "gerberCheck.plot",
+          "id": "plot-still-drawn"
+        }
+      ]
+    }
+  ]
+}
