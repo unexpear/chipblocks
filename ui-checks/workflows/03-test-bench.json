@@ -1,0 +1,261 @@
+{
+  "name": "test-bench",
+  "title": "Simulation test bench: save, run (PASS), failing check (NOT PASSED), remove",
+  "covers": ["workspace", "testBench"],
+  "steps": [
+    {
+      "id": "create-led",
+      "title": "LED + resistor template",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    },
+    {
+      "id": "open-bench",
+      "title": "Tests and preflight opens the bench with no saved tests",
+      "screen": "testBench",
+      "do": {
+        "open": "testBench"
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "heading",
+            "name": "Saved tests (0)"
+          },
+          "id": "zero-saved"
+        }
+      ]
+    },
+    {
+      "id": "save-check",
+      "title": "Save a check: D1 / anode voltage = 1.99 ± 0.05 V",
+      "screen": "testBench",
+      "do": [
+        {
+          "fill": "testBench.name",
+          "value": "LED forward voltage"
+        },
+        {
+          "select": "testBench.terminal",
+          "option": "D1 / anode"
+        },
+        {
+          "select": "testBench.quantity",
+          "option": "Voltage"
+        },
+        {
+          "fill": "testBench.expected",
+          "value": "1.99"
+        },
+        {
+          "fill": "testBench.tolerance",
+          "value": "0.05"
+        },
+        {
+          "fill": "testBench.reference",
+          "value": "red LED datasheet Vf at 20 mA"
+        },
+        {
+          "click": "testBench.save"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "heading",
+            "name": "Saved tests (1)"
+          },
+          "id": "one-saved"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "role": "button",
+            "name": "Run LED forward voltage",
+            "exact": true
+          },
+          "id": "run-button"
+        }
+      ]
+    },
+    {
+      "id": "run-pass",
+      "title": "Run → PASS with the actual value shown",
+      "screen": "testBench",
+      "laya": true,
+      "do": {
+        "click": {
+          "role": "button",
+          "name": "Run LED forward voltage",
+          "exact": true
+        }
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "heading",
+            "name": "LED forward voltage: PASS",
+            "exact": true
+          },
+          "id": "pass-heading"
+        },
+        {
+          "type": "numbers",
+          "region": "testBench",
+          "re": "Expected 1\\.99 ± 0\\.05\\d*; actual ([\\d.]+)",
+          "check": [
+            {
+              "op": "between",
+              "a": "$1",
+              "min": 1.94,
+              "max": 2.04
+            }
+          ],
+          "id": "actual-within-tolerance"
+        }
+      ]
+    },
+    {
+      "id": "failing-check",
+      "title": "A deliberately wrong expectation (3.0 V) reports NOT PASSED",
+      "screen": "testBench",
+      "laya": true,
+      "do": [
+        {
+          "fill": "testBench.name",
+          "value": "Wrong Vf"
+        },
+        {
+          "select": "testBench.terminal",
+          "option": "D1 / anode"
+        },
+        {
+          "select": "testBench.quantity",
+          "option": "Voltage"
+        },
+        {
+          "fill": "testBench.expected",
+          "value": "3.0"
+        },
+        {
+          "fill": "testBench.tolerance",
+          "value": "0.05"
+        },
+        {
+          "fill": "testBench.reference",
+          "value": "deliberately wrong"
+        },
+        {
+          "click": "testBench.save"
+        },
+        {
+          "click": {
+            "role": "button",
+            "name": "Run Wrong Vf",
+            "exact": true
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "heading",
+            "name": "Saved tests (2)"
+          },
+          "id": "two-saved"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "role": "heading",
+            "name": "Wrong Vf: NOT PASSED",
+            "exact": true
+          },
+          "id": "not-passed-heading"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "role": "heading",
+            "name": "Wrong Vf: PASS",
+            "exact": true
+          },
+          "id": "no-false-pass"
+        }
+      ]
+    },
+    {
+      "id": "remove",
+      "title": "Remove the wrong check → Saved tests (1)",
+      "screen": "testBench",
+      "do": {
+        "click": {
+          "role": "button",
+          "name": "Remove Wrong Vf",
+          "exact": true
+        }
+      },
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "heading",
+            "name": "Saved tests (1)"
+          },
+          "id": "back-to-one"
+        },
+        {
+          "type": "absent",
+          "sel": {
+            "role": "button",
+            "name": "Run Wrong Vf",
+            "exact": true
+          },
+          "id": "wrong-gone"
+        }
+      ]
+    },
+    {
+      "id": "close-bench",
+      "title": "Close tests",
+      "screen": "workspace",
+      "do": {
+        "click": "testBench.close"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "role": "region",
+            "name": "Simulation test bench"
+          },
+          "id": "bench-closed"
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        }
+      ]
+    }
+  ]
+}

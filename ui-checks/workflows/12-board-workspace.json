@@ -1,0 +1,84 @@
+{
+  "name": "board-workspace",
+  "title": "Board / PCB ▸ Blank board opens straight into the Board workspace",
+  "covers": ["start", "boardWorkspace"],
+  "steps": [
+    {
+      "id": "blank-board",
+      "title": "Blank board template → Board workspace with 0 parts",
+      "screen": "boardWorkspace",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.board"
+        },
+        {
+          "click": "start.tplBlankBoard"
+        },
+        {
+          "click": "start.createProject"
+        },
+        {
+          "waitReady": "boardWorkspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "boardWorkspace.header",
+          "matches": "^Board 0 parts · ",
+          "id": "zero-parts"
+        },
+        {
+          "type": "visible",
+          "sel": "boardWorkspace.route",
+          "id": "route-tool"
+        },
+        {
+          "type": "visible",
+          "sel": "boardWorkspace.outline",
+          "id": "outline-tool"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "role": "button",
+            "name": "Flat",
+            "exact": true
+          },
+          "id": "flat-view"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "textRe": "^No parts with footprints on the board yet"
+          },
+          "id": "empty-board-hint"
+        }
+      ]
+    },
+    {
+      "id": "to-circuit",
+      "title": "Circuit breadcrumb opens the (empty) schematic",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.crumbCircuit"
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    }
+  ]
+}

@@ -19,7 +19,9 @@ import { clearCommunityPackParts, setCommunityPackParts } from './user-parts.ts'
 /**
  * Content Manager state + panel. Loads ~/.chipblocks/libraries/index.json (and each enabled
  * pack's pack.json) at mount; Tools → Plugin & Content Manager opens the panel via a window
- * event (broadcast from main.tsx, same shape as Shortcuts).
+ * event (broadcast from main.tsx, same shape as Shortcuts). The home tab and every project
+ * tab stay mounted and all hear that event — only the active screen opens its panel, so
+ * closing it on the visible tab does not leave a copy open on the others.
  */
 
 type Bridge = NonNullable<Window['chipblocks']>
@@ -121,13 +123,18 @@ function isRefuse(result: ContentIndex | { ok: false; reason: string }): result 
   return 'ok' in result && result.ok === false
 }
 
-export function useContentManager(light: boolean): {
+export function useContentManager(
+  light: boolean,
+  active = true,
+): {
   isOpen: boolean
   panel: ReactNode
 } {
   const [index, setIndex] = useState<ContentIndex>(emptyContentIndex)
   const [isOpen, setIsOpen] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const activeRef = useRef(active)
+  activeRef.current = active
   const [loadIssues, setLoadIssues] = useState<ReadonlyMap<string, PackLoadIssue>>(new Map())
   // Install / enable / uninstall all rewrite index.json from whatever they last read. The ref is
   // the copy those writes actually build on, updated as soon as a write is accepted, so a second
@@ -170,8 +177,15 @@ export function useContentManager(light: boolean): {
   }, [])
 
   useEffect(() => {
+    if (!active) setIsOpen(false)
+  }, [active])
+
+  useEffect(() => {
     const bridge = window.chipblocks
-    const open = () => setIsOpen(true)
+    const open = () => {
+      if (!activeRef.current) return
+      setIsOpen(true)
+    }
     window.addEventListener('chipblocks:content-manager', open)
 
     if (bridge?.readContentIndex !== undefined) {

@@ -1,0 +1,1875 @@
+{
+  "$schema": "./app-map.schema.md",
+  "app": "ChipBlocks renderer (src/renderer), browser-only via vite.renderer.config.ts",
+  "sourceCommit": "cursor/ui-panel-bugs-57f4 (PR #4: panel fixes + data-testids)",
+  "builtFrom": [
+    "src/renderer/main.tsx (bridge wiring, window events)",
+    "src/renderer/project-browser.tsx (start screen, CATEGORIES/templates, Create project, My Projects, My templates)",
+    "src/renderer/App.tsx (workspace: tabs, breadcrumb, status line, dock panels incl. PCB panel 11658-11790, Export ZIP gating pcbFabProblems 4425, onExportFabZip 4681, Gerber check reset on edit 4617)",
+    "src/renderer/toolbar.tsx (TOOLBAR_ACTIONS / TOOL_MODES labels + titles)",
+    "src/renderer/part-picker.tsx (Choose a part: combobox 'Search parts', listbox 'Parts', aria-live count, Place/Cancel)",
+    "src/renderer/pcb-gerber-view.tsx (GerberCheck: Stack + per-file tabs, counts line, data-testids gerber-plot/gerber-board/gerber-scale/gerber-unplotted, footer)",
+    "src/renderer/pcb-gerber-plot.ts + pcb-gerber-parse.ts (notes, refusal warnings)",
+    "src/renderer/content-manager-panel.tsx + use-content-manager.tsx + content-manager.ts (dialog, badges, bridge-less refusal)",
+    "src/renderer/shortcuts-panel.tsx + use-shortcuts.tsx + keybinds.ts (rebinding, MENU_ACTIONS, bindingProblem)",
+    "src/renderer/simulation-test-bench.tsx (region 'Simulation test bench')",
+    "src/renderer/math-panel.tsx (The math behind this circuit)",
+    "src/renderer/dockable-panel.tsx (data-panel-dock=<id> frames)",
+    "src/renderer/error-boundary.tsx (role=alert crash panel)",
+    "electron/preload.ts (the window.chipblocks bridge surface)"
+  ],
+  "defaults": {
+    "url": "http://localhost:5180/",
+    "viewport": {
+      "width": 1600,
+      "height": 1000
+    },
+    "assertTimeoutMs": 5000,
+    "readyTimeoutMs": 15000,
+    "clickAttempts": 3
+  },
+  "screens": {
+    "start": {
+      "what": "Project browser / new-project launcher. Left column = categories, middle = templates of the chosen category, right = details + Project name + Create project.",
+      "reach": [
+        {
+          "ifVisible": "workspace.homeTab",
+          "then": [
+            {
+              "click": "workspace.homeTab"
+            }
+          ],
+          "else": [
+            {
+              "goto": "/"
+            }
+          ],
+          "why": "Reuse the open session (tabs stay mounted); only load the page when nothing is open yet."
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "text": "— new project"
+          }
+        },
+        {
+          "type": "visible",
+          "sel": "start.createProject"
+        }
+      ],
+      "region": {
+        "anchor": "— new project",
+        "contains": ["Create project"]
+      },
+      "controls": {
+        "myProjects": {
+          "sel": {
+            "role": "button",
+            "name": "My Projects Open recent or saved work"
+          },
+          "does": "Category: saved .chipblocks files (scan + recent list). Needs the Electron bridge to list or open anything."
+        },
+        "myTemplates": {
+          "sel": {
+            "role": "button",
+            "name": "My templates Your saved starters"
+          },
+          "does": "Category: user templates from ~/.chipblocks/user-templates.json (Electron only)."
+        },
+        "circuit": {
+          "sel": {
+            "role": "button",
+            "name": "Circuit Schematic + live sim"
+          },
+          "does": "Category: circuit templates (Blank circuit, LED + resistor, Voltage divider, RC low-pass, Non-inverting amp, Common-emitter amp, Bridge rectifier)."
+        },
+        "component": {
+          "sel": {
+            "role": "button",
+            "name": "Component Design a real part"
+          },
+          "does": "Category: component starters with demo/bare variants. Selected on launch with no template picked."
+        },
+        "digital": {
+          "sel": {
+            "role": "button",
+            "name": "Digital / logic Gates to registers"
+          },
+          "does": "Category: logic templates."
+        },
+        "board": {
+          "sel": {
+            "role": "button",
+            "name": "Board / PCB Place parts, route copper, export Gerbers"
+          },
+          "does": "Category: Blank board (opens in the Board workspace)."
+        },
+        "chip": {
+          "sel": {
+            "role": "button",
+            "name": "Chip / IC Standard cells, floorplan, timing sign-off"
+          },
+          "does": "Category: Blank chip (opens in the Chip workspace)."
+        },
+        "system": {
+          "sel": {
+            "role": "button",
+            "name": "System Coming soon"
+          },
+          "does": "Placeholder category, no templates."
+        },
+        "tplBlankCircuit": {
+          "sel": {
+            "role": "button",
+            "name": "Blank circuit"
+          },
+          "does": "Template: empty schematic (default name MyCircuit)."
+        },
+        "tplLed": {
+          "sel": {
+            "role": "button",
+            "name": "LED + resistor"
+          },
+          "does": "Template: 5 V source, 150 Ω, LED, ground — wired (default name MyLED)."
+        },
+        "tplDivider": {
+          "sel": {
+            "role": "button",
+            "name": "Voltage divider"
+          },
+          "does": "Template: 10 V source, 10 kΩ + 10 kΩ (default name MyDivider)."
+        },
+        "tplBlankBoard": {
+          "sel": {
+            "role": "button",
+            "name": "Blank board"
+          },
+          "does": "Template: empty PCB, initialWorkspace = board (default name MyBoard)."
+        },
+        "projectName": {
+          "sel": {
+            "role": "textbox",
+            "name": "Project name"
+          },
+          "does": "Name for the new tab; auto-suggested per template until edited."
+        },
+        "createProject": {
+          "sel": {
+            "role": "button",
+            "name": "Create project",
+            "exact": true
+          },
+          "does": "Opens a workspace tab from the chosen template. Disabled until a template is chosen."
+        },
+        "openSaved": {
+          "sel": {
+            "role": "button",
+            "name": "Open a saved project"
+          },
+          "does": "My Projects → native open dialog (window.chipblocks.openCircuitDialog)."
+        },
+        "openRefusal": {
+          "sel": {
+            "testid": "open-refusal"
+          },
+          "does": "Why the last open/start attempt was refused (title + reason + Dismiss)."
+        }
+      },
+      "invariants": [
+        {
+          "id": "start.create-needs-template",
+          "type": "implies",
+          "if": {
+            "type": "visible",
+            "sel": {
+              "text": "Pick a template to see its details."
+            }
+          },
+          "then": {
+            "type": "disabled",
+            "sel": "start.createProject"
+          },
+          "why": "create() is a no-op without a template, so the button is disabled (project-browser.tsx 'disabled={!template}')."
+        }
+      ]
+    },
+    "workspace": {
+      "what": "Editor tab: tab bar (⌂ My Projects, <project tab>, ×), breadcrumb Circuit ▸ Board ▸ Chip ▸ System · soon, React Flow canvas (role=application), status line, dock panels (Hierarchy/Properties/Network overview/Tools…), toolbar.",
+      "reach": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "start.circuit"
+        },
+        {
+          "click": "start.tplBlankCircuit"
+        },
+        {
+          "click": "start.createProject"
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": "workspace.addPart"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "testid": "status-line"
+          }
+        },
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "ChipBlocks — \\d+ components, \\d+ wires"
+        }
+      ],
+      "regions": {
+        "status": {
+          "locator": {
+            "testid": "status-line"
+          }
+        },
+        "network": {
+          "locator": {
+            "testid": "network-overview"
+          }
+        },
+        "canvas": {
+          "locator": {
+            "role": "application"
+          }
+        }
+      },
+      "region": {
+        "locator": {
+          "testid": "network-overview"
+        }
+      },
+      "controls": {
+        "homeTab": {
+          "sel": {
+            "role": "button",
+            "name": "⌂ My Projects",
+            "exact": true
+          },
+          "does": "Back to the start screen (project tabs stay mounted, hidden)."
+        },
+        "crumbCircuit": {
+          "sel": {
+            "role": "button",
+            "name": "Circuit",
+            "exact": true
+          },
+          "does": "Schematic workspace."
+        },
+        "crumbBoard": {
+          "sel": {
+            "role": "button",
+            "name": "Board",
+            "exact": true
+          },
+          "does": "Board (PCB) workspace for this design."
+        },
+        "crumbChip": {
+          "sel": {
+            "role": "button",
+            "name": "Chip",
+            "exact": true
+          },
+          "does": "Chip / floorplan workspace."
+        },
+        "crumbSystem": {
+          "sel": {
+            "role": "button",
+            "name": "System · soon"
+          },
+          "does": "Disabled placeholder."
+        },
+        "testsPreflight": {
+          "sel": {
+            "role": "button",
+            "name": "Tests and preflight"
+          },
+          "does": "Opens the Simulation test bench (saved checks run on independent copies)."
+        },
+        "wire": {
+          "sel": {
+            "role": "button",
+            "name": "wire Wire"
+          },
+          "does": "Wire tool (TOOL_MODES)."
+        },
+        "connect": {
+          "sel": {
+            "role": "button",
+            "name": "Connect",
+            "exact": true
+          },
+          "does": "Auto-routed wire between two clicked dots."
+        },
+        "lasso": {
+          "sel": {
+            "role": "button",
+            "name": "Lasso",
+            "exact": true
+          },
+          "does": "Freeform selection."
+        },
+        "meter": {
+          "sel": {
+            "role": "button",
+            "name": "Meter",
+            "exact": true
+          },
+          "does": "Multimeter probes / clamp."
+        },
+        "solve": {
+          "sel": {
+            "role": "button",
+            "name": "Solve",
+            "exact": true
+          },
+          "does": "Run the physics now (matters when Always on is off)."
+        },
+        "alwaysOn": {
+          "sel": {
+            "role": "checkbox",
+            "name": "Always on"
+          },
+          "does": "Re-solve on every edit."
+        },
+        "addPart": {
+          "sel": {
+            "role": "button",
+            "name": "Add Part",
+            "exact": true
+          },
+          "does": "Opens the searchable part picker (Choose a part)."
+        },
+        "newPart": {
+          "sel": {
+            "role": "button",
+            "name": "New Part",
+            "exact": true
+          },
+          "does": "Author a custom part."
+        },
+        "newFootprint": {
+          "sel": {
+            "role": "button",
+            "name": "New Footprint",
+            "exact": true
+          },
+          "does": "Draw a physical package."
+        },
+        "scope": {
+          "sel": {
+            "role": "button",
+            "name": "Scope",
+            "exact": true
+          },
+          "does": "Transient run + waveform panel (probe by clicking dots)."
+        },
+        "bode": {
+          "sel": {
+            "role": "button",
+            "name": "Bode",
+            "exact": true
+          },
+          "does": "Frequency response."
+        },
+        "pcb": {
+          "sel": {
+            "role": "button",
+            "name": "PCB",
+            "exact": true
+          },
+          "does": "Toggles the PCB dock panel (placement summary, Export ZIP, Check Gerbers, board view)."
+        },
+        "plan": {
+          "sel": {
+            "role": "button",
+            "name": "Plan",
+            "exact": true
+          },
+          "does": "Manufacturing-readiness roadmap panel."
+        },
+        "math": {
+          "sel": {
+            "role": "button",
+            "name": "Math",
+            "exact": true
+          },
+          "does": "Every equation behind the solve, KCL re-summed per net."
+        },
+        "group": {
+          "sel": {
+            "role": "button",
+            "name": "Group",
+            "exact": true
+          },
+          "does": "Group selection into a block; disabled with nothing selected."
+        },
+        "tab": {
+          "sel": {
+            "role": "button",
+            "name": "{project}",
+            "exact": true
+          },
+          "does": "The project's tab (name from Project name)."
+        },
+        "closeTab": {
+          "sel": {
+            "role": "button",
+            "name": "×",
+            "exact": true
+          },
+          "does": "Close a project tab (title 'Close project'). First visible one when several are open."
+        },
+        "focusCanvas": {
+          "sel": {
+            "testid": "status-line"
+          },
+          "does": "The status line is a pointer-events:none overlay at the bottom of the canvas: a mouse click at its spot lands on empty canvas, giving the editor keyboard focus without selecting anything (used before keyboard shortcuts)."
+        }
+      },
+      "invariants": [
+        {
+          "id": "workspace.status-line",
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "ChipBlocks — \\d+ components, \\d+ wires",
+          "why": "Status line (data-testid=status-line) always reports counts."
+        },
+        {
+          "id": "workspace.system-soon-disabled",
+          "type": "disabled",
+          "sel": "workspace.crumbSystem",
+          "why": "System is a placeholder."
+        },
+        {
+          "id": "workspace.group-disabled-without-selection",
+          "type": "implies",
+          "if": {
+            "type": "text",
+            "region": "workspace.status",
+            "matches": "— 0 components"
+          },
+          "then": {
+            "type": "disabled",
+            "sel": "workspace.group"
+          },
+          "why": "Nothing to group on an empty canvas."
+        }
+      ],
+      "laya": [
+        {
+          "id": "crash",
+          "q": "Is a crash or error message visible?",
+          "truth": {
+            "type": "visible",
+            "sel": {
+              "role": "alert"
+            }
+          }
+        },
+        {
+          "id": "empty",
+          "q": "Is the canvas empty, with 0 components?",
+          "truth": {
+            "type": "text",
+            "region": "workspace.status",
+            "matches": "— 0 components"
+          }
+        }
+      ]
+    },
+    "math": {
+      "what": "The math behind this circuit — recomputed from the live solve: MNA step text with 'converged: yes|no', per-part laws with real numbers, KCL proof net by net ('… balanced'). Root carries data-testid=math-panel and data-converged=true|false.",
+      "reach": [
+        {
+          "click": "workspace.math"
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "testid": "math-panel"
+          }
+        },
+        {
+          "type": "text",
+          "region": "math",
+          "matches": "Kirchhoff.s current law"
+        }
+      ],
+      "region": {
+        "locator": {
+          "testid": "math-panel"
+        }
+      },
+      "controls": {
+        "close": {
+          "sel": {
+            "role": "button",
+            "name": "✕ Close"
+          },
+          "does": "Close the math view."
+        }
+      },
+      "invariants": [
+        {
+          "id": "math.converged",
+          "type": "attr",
+          "sel": {
+            "testid": "math-panel"
+          },
+          "name": "data-converged",
+          "matches": "^true$",
+          "why": "A circuit the canvas shows as solved must have a converged Newton solve (math-panel data-converged)."
+        },
+        {
+          "id": "math.kcl-balanced",
+          "type": "text",
+          "region": "math",
+          "notMatches": "unbalanced|NOT balanced",
+          "why": "Every net's current sum is recomputed; a net shows '⚠ NOT balanced' when it fails (math-panel.tsx 116).",
+          "flags": "i"
+        }
+      ],
+      "laya": [
+        {
+          "id": "converged",
+          "q": "Did the solver converge?",
+          "truth": {
+            "type": "attr",
+            "sel": {
+              "testid": "math-panel"
+            },
+            "name": "data-converged",
+            "matches": "^true$"
+          }
+        }
+      ]
+    },
+    "testBench": {
+      "what": "Simulation test bench (Tests and preflight): Create a check (Name, Analysis, Device terminal, Quantity, Expected value, Absolute tolerance, Reference or formula, Save check), Saved tests (n) with Run/Advanced/Remove, last-run snapshot headings '<name>: PASS|FAIL'.",
+      "reach": [
+        {
+          "click": "workspace.testsPreflight"
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "region",
+            "name": "Simulation test bench"
+          }
+        }
+      ],
+      "region": {
+        "locator": {
+          "role": "region",
+          "name": "Simulation test bench"
+        }
+      },
+      "controls": {
+        "close": {
+          "sel": {
+            "role": "button",
+            "name": "Close tests"
+          },
+          "does": "Close the bench."
+        },
+        "name": {
+          "sel": {
+            "role": "textbox",
+            "name": "Name",
+            "exact": true
+          },
+          "does": "Check name."
+        },
+        "analysis": {
+          "sel": {
+            "role": "combobox",
+            "name": "Analysis",
+            "exact": true
+          },
+          "does": "Steady / Time / Frequency / Digital."
+        },
+        "terminal": {
+          "sel": {
+            "role": "combobox",
+            "name": "Device terminal",
+            "exact": true
+          },
+          "does": "'<ref> / <terminal>' of every device incl. wires."
+        },
+        "quantity": {
+          "sel": {
+            "role": "combobox",
+            "name": "Quantity",
+            "exact": true
+          },
+          "does": "Voltage / Current / Current balance / Temperature."
+        },
+        "expected": {
+          "sel": {
+            "role": "textbox",
+            "name": "Expected value",
+            "exact": true
+          },
+          "does": "Expected number."
+        },
+        "tolerance": {
+          "sel": {
+            "role": "textbox",
+            "name": "Absolute tolerance",
+            "exact": true
+          },
+          "does": "Absolute tolerance."
+        },
+        "reference": {
+          "sel": {
+            "role": "textbox",
+            "name": "Reference or formula",
+            "exact": true
+          },
+          "does": "Independent reference (required by the bench's honesty rule)."
+        },
+        "save": {
+          "sel": {
+            "role": "button",
+            "name": "Save check",
+            "exact": true
+          },
+          "does": "Adds to Saved tests."
+        }
+      },
+      "invariants": [
+        {
+          "id": "bench.independent-copies",
+          "type": "text",
+          "region": "testBench",
+          "matches": "Tests run on independent copies",
+          "why": "Bench promises not to touch the live circuit."
+        }
+      ],
+      "laya": [
+        {
+          "id": "pass",
+          "q": "Does the latest test result say PASS?",
+          "truth": {
+            "type": "visible",
+            "sel": {
+              "role": "heading",
+              "nameRe": ": PASS$"
+            }
+          }
+        }
+      ]
+    },
+    "partPicker": {
+      "what": "Choose a part — modal (role=dialog 'Choose a part') listing every part, grouped under section headers (data-testid=part-picker-section) when the search box is empty; aria-live count '<n> parts' or '<k> of <n>'.",
+      "reach": [
+        {
+          "click": "workspace.addPart"
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "dialog",
+            "name": "Choose a part"
+          }
+        },
+        {
+          "type": "visible",
+          "sel": "partPicker.search"
+        },
+        {
+          "type": "visible",
+          "sel": {
+            "role": "listbox",
+            "name": "Parts"
+          }
+        }
+      ],
+      "region": {
+        "locator": {
+          "role": "dialog",
+          "name": "Choose a part"
+        }
+      },
+      "regions": {
+        "count": {
+          "leafRe": "^(\\d+ parts|\\d+ of \\d+)$"
+        }
+      },
+      "controls": {
+        "search": {
+          "sel": {
+            "role": "combobox",
+            "name": "Search parts"
+          },
+          "does": "Fuzzy search; Enter places the selected row."
+        },
+        "list": {
+          "sel": {
+            "role": "listbox",
+            "name": "Parts"
+          },
+          "does": "Options are parts; headers are plain text (not selectable)."
+        },
+        "clear": {
+          "sel": {
+            "role": "button",
+            "name": "Clear search",
+            "within": {
+              "role": "dialog",
+              "name": "Choose a part"
+            }
+          },
+          "does": "Clears the query."
+        },
+        "close": {
+          "sel": {
+            "role": "button",
+            "name": "Close",
+            "exact": true,
+            "within": {
+              "role": "dialog",
+              "name": "Choose a part"
+            }
+          },
+          "does": "Close (×)."
+        },
+        "cancel": {
+          "sel": {
+            "role": "button",
+            "name": "Cancel",
+            "exact": true,
+            "within": {
+              "role": "dialog",
+              "name": "Choose a part"
+            }
+          },
+          "does": "Close without placing."
+        },
+        "place": {
+          "sel": {
+            "role": "button",
+            "name": "Place",
+            "exact": true,
+            "within": {
+              "role": "dialog",
+              "name": "Choose a part"
+            }
+          },
+          "does": "Drop the selected part at the view centre."
+        },
+        "dialog": {
+          "sel": {
+            "role": "dialog",
+            "name": "Choose a part"
+          },
+          "does": "The picker modal (role=dialog)."
+        },
+        "sections": {
+          "sel": {
+            "testid": "part-picker-section",
+            "within": {
+              "role": "dialog",
+              "name": "Choose a part"
+            }
+          },
+          "does": "Section header rows (shown only while the search box is empty)."
+        }
+      },
+      "invariants": [
+        {
+          "id": "picker.count-shown",
+          "type": "text",
+          "region": "partPicker.count",
+          "matches": "^(\\d+ parts|\\d+ of \\d+)$",
+          "why": "aria-live count is always present."
+        }
+      ],
+      "laya": [
+        {
+          "id": "sections",
+          "q": "Is the part list grouped into sections such as Passives and Transistors?",
+          "truth": {
+            "type": "text",
+            "region": "partPicker",
+            "matches": "Passives[\\s\\S]*Transistors",
+            "flags": "i"
+          }
+        }
+      ]
+    },
+    "pcbPanel": {
+      "what": "PCB dock panel: summary '<n> parts placed · W × H mm board[ · a of b connections routed][ · vias][ · pins not on board][ · DRC clean | DRC: n violations][ · over-current not checked]', Export ZIP / Check Gerbers / Close, export note, Gerber check, board view (Flat/Layers/3D) + stack-up controls. Hooks: pcb-summary (data-placed/data-routed/data-drc), pcb-export-zip, pcb-check-gerbers, pcb-export-note.",
+      "reach": [
+        {
+          "click": "workspace.pcb"
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "testid": "pcb-summary"
+          }
+        },
+        {
+          "type": "text",
+          "region": "pcbPanel.summary",
+          "matches": "\\d+ parts? placed"
+        }
+      ],
+      "region": {
+        "locator": {
+          "css": "[data-panel-dock=\"pcb\"]"
+        }
+      },
+      "regions": {
+        "summary": {
+          "locator": {
+            "testid": "pcb-summary"
+          }
+        },
+        "exportNote": {
+          "locator": {
+            "testid": "pcb-export-note"
+          }
+        }
+      },
+      "controls": {
+        "exportZip": {
+          "sel": {
+            "testid": "pcb-export-zip"
+          },
+          "does": "Builds + validates the manufacturing ZIP, then window.chipblocks.saveFabZip. Disabled while pcbFabProblems is non-empty; the title lists why."
+        },
+        "checkGerbers": {
+          "sel": {
+            "testid": "pcb-check-gerbers"
+          },
+          "does": "Toggles the Gerber check (aria-pressed)."
+        },
+        "close": {
+          "sel": {
+            "role": "button",
+            "name": "Close",
+            "exact": true,
+            "within": {
+              "css": "[data-panel-dock=\"pcb\"]"
+            }
+          },
+          "does": "Closes the PCB panel."
+        },
+        "viewFlat": {
+          "sel": {
+            "role": "button",
+            "name": "Flat",
+            "exact": true
+          },
+          "does": "Board view: flat."
+        },
+        "view3d": {
+          "sel": {
+            "role": "button",
+            "name": "3D",
+            "exact": true
+          },
+          "does": "Board view: exploded 3-D."
+        },
+        "layerCount": {
+          "sel": {
+            "role": "combobox",
+            "name": "Copper layer count"
+          },
+          "does": "2/4/6 layers (export stays 2-layer)."
+        },
+        "summary": {
+          "sel": {
+            "testid": "pcb-summary"
+          },
+          "does": "Summary span; data-placed / data-routed / data-drc carry the counts."
+        }
+      },
+      "invariants": [
+        {
+          "id": "pcb.export-title-matches-state",
+          "type": "iff",
+          "a": {
+            "type": "disabled",
+            "sel": "pcbPanel.exportZip"
+          },
+          "b": {
+            "type": "attr",
+            "sel": "pcbPanel.exportZip",
+            "name": "title",
+            "matches": "^The board isn't manufacturable yet:"
+          },
+          "why": "disabled={pcbFabProblems.length > 0} and the title is built from the same list."
+        },
+        {
+          "id": "pcb.drc-violations-block-export",
+          "type": "implies",
+          "if": {
+            "type": "attrNumber",
+            "sel": {
+              "testid": "pcb-summary"
+            },
+            "name": "data-drc",
+            "check": [
+              {
+                "op": "gt",
+                "b": 0
+              }
+            ]
+          },
+          "then": {
+            "type": "disabled",
+            "sel": "pcbPanel.exportZip"
+          },
+          "why": "DRC violations are in pcbFabProblems."
+        },
+        {
+          "id": "pcb.unrouted-blocks-export",
+          "type": "implies",
+          "if": {
+            "type": "numbers",
+            "region": "pcbPanel.summary",
+            "re": "(\\d+) of (\\d+) connections? routed",
+            "check": [
+              {
+                "op": "lt",
+                "a": "$1",
+                "b": "$2"
+              }
+            ]
+          },
+          "then": {
+            "type": "disabled",
+            "sel": "pcbPanel.exportZip"
+          },
+          "why": "Unrouted connections are in pcbFabProblems."
+        },
+        {
+          "id": "pcb.empty-board-blocks-export",
+          "type": "implies",
+          "if": {
+            "type": "attrNumber",
+            "sel": {
+              "testid": "pcb-summary"
+            },
+            "name": "data-placed",
+            "check": [
+              {
+                "op": "eq",
+                "b": 0
+              }
+            ]
+          },
+          "then": {
+            "type": "disabled",
+            "sel": "pcbPanel.exportZip"
+          },
+          "why": "'no parts on the board' is a fab problem."
+        },
+        {
+          "id": "pcb.routed-count-sane",
+          "type": "implies",
+          "if": {
+            "type": "text",
+            "region": "pcbPanel.summary",
+            "matches": "connections? routed"
+          },
+          "then": {
+            "type": "numbers",
+            "region": "pcbPanel.summary",
+            "re": "(\\d+) of (\\d+) connections? routed",
+            "check": [
+              {
+                "op": "le",
+                "a": "$1",
+                "b": "$2"
+              }
+            ]
+          },
+          "why": "Routed can never exceed total."
+        },
+        {
+          "id": "pcb.drc-attr-matches-text",
+          "type": "iff",
+          "a": {
+            "type": "attrNumber",
+            "sel": {
+              "testid": "pcb-summary"
+            },
+            "name": "data-drc",
+            "check": [
+              {
+                "op": "eq",
+                "b": 0
+              }
+            ]
+          },
+          "b": {
+            "type": "text",
+            "region": "pcbPanel.summary",
+            "notMatches": "DRC: \\d+ violations?"
+          },
+          "why": "data-drc and the visible prose come from the same pcbDrc list."
+        }
+      ],
+      "laya": [
+        {
+          "id": "drc",
+          "q": "Is the board DRC clean?",
+          "truth": {
+            "type": "attrNumber",
+            "sel": {
+              "testid": "pcb-summary"
+            },
+            "name": "data-drc",
+            "check": [
+              {
+                "op": "eq",
+                "b": 0
+              }
+            ]
+          }
+        },
+        {
+          "id": "exportDisabled",
+          "q": "Is the Export ZIP button disabled?",
+          "truth": {
+            "type": "disabled",
+            "sel": "pcbPanel.exportZip"
+          }
+        },
+        {
+          "id": "allRouted",
+          "q": "Are all of the board's connections routed?",
+          "truth": {
+            "type": "numbers",
+            "region": "pcbPanel.summary",
+            "re": "(\\d+) of (\\d+) connections? routed",
+            "check": [
+              {
+                "op": "eq",
+                "a": "$1",
+                "b": "$2"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "gerberCheck": {
+      "what": "Gerber check inside the PCB panel: plots the Gerber + Excellon strings Export ZIP would write. Either (a) Stack + one tab per non-empty file, counts line, legend, notes, − + Fit [Zoom to thinnest line], svg 'Gerber plot' (testid gerber-plot); or (b) refusal 'Not plotted. Part of a file was skipped…' (testid gerber-unplotted) with per-file warnings; or (c) an empty message. Footer lists non-Gerber files.",
+      "reach": [
+        {
+          "open": "pcbPanel"
+        },
+        {
+          "click": "pcbPanel.checkGerbers"
+        }
+      ],
+      "ready": [
+        {
+          "type": "text",
+          "region": "gerberCheck",
+          "matches": "Gerber check — plots ChipBlocks output only"
+        },
+        {
+          "type": "any",
+          "of": [
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-plot"
+              }
+            },
+            {
+              "type": "visible",
+              "sel": {
+                "testid": "gerber-unplotted"
+              }
+            },
+            {
+              "type": "text",
+              "region": "gerberCheck",
+              "matches": "No artwork|No manufacturing files|No holes|No openings"
+            }
+          ]
+        }
+      ],
+      "region": {
+        "anchor": "Gerber check — plots ChipBlocks output only",
+        "up": 1
+      },
+      "regions": {
+        "counts": {
+          "locator": {
+            "testid": "gerber-counts"
+          }
+        }
+      },
+      "controls": {
+        "stack": {
+          "sel": {
+            "role": "button",
+            "name": "Stack",
+            "exact": true
+          },
+          "does": "All plotted layers in one frame."
+        },
+        "tab": {
+          "sel": {
+            "testid": "gerber-layer-tab",
+            "textIs": "{file}"
+          },
+          "does": "One file alone (data-testid=gerber-layer-tab, aria-pressed=true when active); the counts line (gerber-counts) shows flashes · strokes · drills · FileFunction · polarity."
+        },
+        "zoomOut": {
+          "sel": {
+            "role": "button",
+            "name": "−",
+            "exact": true
+          },
+          "does": "Zoom out (÷1.5, min 2 px/mm)."
+        },
+        "zoomIn": {
+          "sel": {
+            "role": "button",
+            "name": "+",
+            "exact": true
+          },
+          "does": "Zoom in (×1.5, max 80 px/mm)."
+        },
+        "fit": {
+          "sel": {
+            "role": "button",
+            "name": "Fit",
+            "exact": true
+          },
+          "does": "Back to fit."
+        },
+        "plot": {
+          "sel": {
+            "testid": "gerber-plot"
+          },
+          "does": "The svg (role img 'Gerber plot, millimetres, Y down')."
+        },
+        "refusal": {
+          "sel": {
+            "testid": "gerber-unplotted"
+          },
+          "does": "Refusal banner + per-file warnings."
+        },
+        "tabs": {
+          "sel": {
+            "testid": "gerber-layer-tab"
+          },
+          "does": "All layer tabs."
+        }
+      },
+      "expectedFiles": [
+        "board-F_Cu.gtl",
+        "board-B_Cu.gbl",
+        "board-F_Mask.gts",
+        "board-B_Mask.gbs",
+        "board-F_Paste.gtp",
+        "board-F_Silkscreen.gto",
+        "board-F_Fab.gbr",
+        "board-Edge_Cuts.gm1",
+        "board.drl"
+      ],
+      "invariants": [
+        {
+          "id": "gerber.refusal-xor-plot",
+          "type": "not",
+          "assert": {
+            "type": "all",
+            "of": [
+              {
+                "type": "visible",
+                "sel": {
+                  "testid": "gerber-unplotted"
+                }
+              },
+              {
+                "type": "visible",
+                "sel": {
+                  "testid": "gerber-plot"
+                }
+              }
+            ]
+          },
+          "why": "A refused file set is never drawn (refused ? banner : plot)."
+        },
+        {
+          "id": "gerber.footer-is-not-refusal",
+          "type": "implies",
+          "if": {
+            "type": "text",
+            "region": "gerberCheck",
+            "matches": "Not plotted \\(not a Gerber or drill file\\)"
+          },
+          "then": {
+            "type": "any",
+            "of": [
+              {
+                "type": "visible",
+                "sel": {
+                  "testid": "gerber-plot"
+                }
+              },
+              {
+                "type": "visible",
+                "sel": {
+                  "testid": "gerber-unplotted"
+                }
+              },
+              {
+                "type": "text",
+                "region": "gerberCheck",
+                "matches": "No artwork|No manufacturing files"
+              }
+            ]
+          },
+          "why": "The footer about README/BOM is informational and appears with any outcome."
+        }
+      ],
+      "laya": [
+        {
+          "id": "refusal",
+          "q": "Does the Gerber check show a 'Not plotted' refusal warning instead of a plot?",
+          "truth": {
+            "type": "visible",
+            "sel": {
+              "testid": "gerber-unplotted"
+            }
+          }
+        },
+        {
+          "id": "drawn",
+          "q": "Is the Gerber plot drawn, with layer tabs and a plot image shown?",
+          "truth": {
+            "type": "visible",
+            "sel": {
+              "testid": "gerber-plot"
+            }
+          }
+        }
+      ]
+    },
+    "boardWorkspace": {
+      "what": "Board workspace (breadcrumb Board, or Blank board template): header 'Board' + '<n> parts · W × H mm[ · a/b routed][ · DRC: n][ · over-current not checked]', Flat/Layers/3D, Route/Via/Measure/Outline tools, 'PCB layout' svg (only once parts have footprints; an empty board shows 'No parts with footprints on the board yet…').",
+      "reach": [
+        {
+          "click": "workspace.crumbBoard"
+        }
+      ],
+      "ready": [
+        {
+          "type": "text",
+          "region": "boardWorkspace.header",
+          "matches": "^Board \\d+ parts? · [\\d.]+ × [\\d.]+ mm"
+        }
+      ],
+      "region": {
+        "locator": {
+          "testid": "board-header"
+        }
+      },
+      "regions": {
+        "header": {
+          "locator": {
+            "testid": "board-header"
+          }
+        }
+      },
+      "controls": {
+        "route": {
+          "sel": {
+            "role": "button",
+            "name": "Route"
+          },
+          "does": "Route tool."
+        },
+        "via": {
+          "sel": {
+            "role": "button",
+            "name": "Via"
+          },
+          "does": "Via tool."
+        },
+        "measure": {
+          "sel": {
+            "role": "button",
+            "name": "Measure"
+          },
+          "does": "Measure tool."
+        },
+        "outline": {
+          "sel": {
+            "role": "button",
+            "name": "Outline"
+          },
+          "does": "Board outline editing."
+        },
+        "layout": {
+          "sel": {
+            "role": "img",
+            "name": "PCB layout"
+          },
+          "does": "The board view svg."
+        }
+      },
+      "invariants": []
+    },
+    "contentManager": {
+      "what": "Plugin & Content Manager dialog: intro paragraph (honesty notes), Install from local pack…, status message, 'Installed & catalog' list. Installed rows carry ENABLED / ENABLED · NOT LOADED / DISABLED (content-manager.ts installedPackStatusLabel); catalog rows say PLANNED · NOT INSTALLED.",
+      "reach": [
+        {
+          "dispatch": "chipblocks:content-manager",
+          "why": "Native menu Tools ▸ Plugin & Content Manager → main.tsx re-broadcasts this window event; the runner sends the same event."
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "dialog",
+            "name": "Plugin and Content Manager"
+          }
+        }
+      ],
+      "region": {
+        "locator": {
+          "role": "dialog",
+          "name": "Plugin and Content Manager"
+        }
+      },
+      "controls": {
+        "install": {
+          "sel": {
+            "role": "button",
+            "name": "Install from local pack"
+          },
+          "does": "Pick a local pack (Electron bridge). In the browser it shows a 'needs the desktop app bridge' status instead."
+        },
+        "close": {
+          "sel": {
+            "role": "button",
+            "name": "Close",
+            "exact": true,
+            "within": {
+              "role": "dialog",
+              "name": "Plugin and Content Manager"
+            }
+          },
+          "does": "Close."
+        },
+        "backdrop": {
+          "sel": {
+            "role": "button",
+            "name": "Close content manager backdrop"
+          },
+          "does": "Click-outside closes."
+        },
+        "rows": {
+          "sel": {
+            "role": "listitem",
+            "within": {
+              "role": "dialog",
+              "name": "Plugin and Content Manager"
+            }
+          },
+          "does": "Installed + catalog rows."
+        },
+        "badges": {
+          "sel": {
+            "testid": "content-manager-badge"
+          },
+          "does": "Installed-pack status badge (data-pack=<id>): ENABLED / ENABLED · NOT LOADED / DISABLED. Catalog rows have no testid (PLANNED · NOT INSTALLED text)."
+        }
+      },
+      "invariants": [
+        {
+          "id": "cm.not-a-marketplace",
+          "type": "text",
+          "region": "contentManager",
+          "matches": "does not download arbitrary remote code",
+          "why": "Core honesty claim of the panel."
+        },
+        {
+          "id": "cm.no-trust-pinning-claim",
+          "type": "text",
+          "region": "contentManager",
+          "matches": "does not load ~/.chipblocks/trusted-publishers.json",
+          "why": "The panel must not imply pinned trust it cannot check."
+        }
+      ],
+      "laya": [
+        {
+          "id": "notLoaded",
+          "q": "Does a pack show the badge ENABLED · NOT LOADED?",
+          "truth": {
+            "type": "text",
+            "region": "contentManager",
+            "matches": "ENABLED · NOT LOADED"
+          }
+        },
+        {
+          "id": "installed",
+          "q": "Is at least one content pack installed?",
+          "truth": {
+            "type": "count",
+            "sel": {
+              "testid": "content-manager-badge"
+            },
+            "min": 1
+          }
+        }
+      ],
+      "regions": {
+        "status": {
+          "locator": {
+            "testid": "content-manager-status"
+          }
+        }
+      }
+    },
+    "shortcuts": {
+      "what": "Shortcuts & controls panel (role=dialog 'Shortcuts and controls'): one row per action (data-testid=shortcut-row, data-action, data-binding) with Change/cancel; problem line; Reset all to defaults; fixed mouse/tool rows (shortcut-fixed-row). Opens with Ctrl+K in the editor or the chipblocks:shortcuts window event; only the screen on display responds.",
+      "reach": [
+        {
+          "press": "Control+K"
+        }
+      ],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "dialog",
+            "name": "Shortcuts and controls"
+          }
+        },
+        {
+          "type": "visible",
+          "sel": "shortcuts.reset"
+        }
+      ],
+      "region": {
+        "locator": {
+          "role": "dialog",
+          "name": "Shortcuts and controls"
+        }
+      },
+      "controls": {
+        "close": {
+          "sel": {
+            "role": "button",
+            "name": "✕ Close",
+            "within": {
+              "role": "dialog",
+              "name": "Shortcuts and controls"
+            }
+          },
+          "does": "Close (changes already applied)."
+        },
+        "reset": {
+          "sel": {
+            "role": "button",
+            "name": "Reset all to defaults",
+            "within": {
+              "role": "dialog",
+              "name": "Shortcuts and controls"
+            }
+          },
+          "does": "DEFAULT_KEYBINDS."
+        },
+        "changeRow": {
+          "sel": {
+            "role": "button",
+            "nameRe": "^(Change|cancel)$",
+            "within": {
+              "css": "[data-testid=\"shortcut-row\"][data-action=\"{action}\"]"
+            }
+          },
+          "does": "Start/stop capturing a new key for that action's row."
+        },
+        "row": {
+          "sel": {
+            "css": "[data-testid=\"shortcut-row\"][data-action=\"{action}\"]"
+          },
+          "does": "One rebindable action; data-binding is its current key."
+        },
+        "fixedRows": {
+          "sel": {
+            "testid": "shortcut-fixed-row"
+          },
+          "does": "Mouse/tool controls (not rebindable)."
+        }
+      },
+      "invariants": [
+        {
+          "id": "sc.all-actions",
+          "type": "count",
+          "sel": {
+            "testid": "shortcut-row",
+            "within": {
+              "role": "dialog",
+              "name": "Shortcuts and controls"
+            }
+          },
+          "eq": 14,
+          "why": "One row per KEYBIND_LABELS action (14 in DEFAULT_KEYBINDS)."
+        }
+      ],
+      "laya": [
+        {
+          "id": "undo",
+          "q": "Is Undo bound to Ctrl+Z?",
+          "truth": {
+            "type": "attr",
+            "sel": {
+              "css": "[data-testid=\"shortcut-row\"][data-action=\"undo\"]"
+            },
+            "name": "data-binding",
+            "matches": "^Ctrl\\+Z$"
+          }
+        }
+      ]
+    },
+    "errorBoundary": {
+      "what": "Crash panel: role=alert, heading 'Something went wrong rendering the editor', stack <pre>, Try again / Reload. Replaces the whole app.",
+      "reach": [],
+      "ready": [
+        {
+          "type": "visible",
+          "sel": {
+            "role": "alert"
+          }
+        }
+      ],
+      "region": {
+        "locator": {
+          "role": "alert"
+        }
+      },
+      "controls": {
+        "tryAgain": {
+          "sel": {
+            "role": "button",
+            "name": "Try again"
+          },
+          "does": "Re-render the subtree."
+        },
+        "reload": {
+          "sel": {
+            "role": "button",
+            "name": "Reload"
+          },
+          "does": "Reload the renderer."
+        }
+      },
+      "invariants": []
+    }
+  },
+  "globalWatch": {
+    "afterEveryStep": [
+      {
+        "id": "no-crash-panel",
+        "type": "absent",
+        "sel": {
+          "role": "heading",
+          "name": "Something went wrong rendering the editor"
+        },
+        "why": "ErrorBoundary replaced the app."
+      },
+      {
+        "id": "root-rendered",
+        "type": "visible",
+        "sel": {
+          "css": "#root > *"
+        },
+        "why": "Blank white screen = React root unmounted."
+      }
+    ],
+    "pageErrorsFail": true,
+    "consoleErrorsFail": true
+  },
+  "alarmWords": "\\b(error|errors|failed|failure|not plotted|refused|refuses|violations?|crash(ed)?|went wrong|cannot|could not|couldn't|not loaded|unbalanced|not manufacturable|isn't manufacturable)\\b",
+  "benignText": [
+    {
+      "pattern": "Not plotted \\(not a Gerber or drill file\\):[^.]*\\.",
+      "where": "gerberCheck footer",
+      "why": "Lists README.txt, bom.csv, placement.csv, netlist.cir, validation-report.txt, board-job.gbrjob, board-stackup.txt — files that are not artwork. Shown on every good board. NOT the refusal banner ('Not plotted. Part of a file was skipped…', testid gerber-unplotted)."
+    },
+    {
+      "pattern": "Hidden empty files: [^)]*\\(no bottom-mounted parts\\)\\.?",
+      "where": "gerberCheck",
+      "why": "board-B_Paste.gbp / board-B_Silkscreen.gbo are empty when nothing is mounted on the bottom."
+    },
+    {
+      "pattern": "PLANNED · NOT INSTALLED",
+      "where": "contentManager catalog rows",
+      "why": "Catalog entries that are planned community packs. Different from an installed pack's 'ENABLED · NOT LOADED' (integrity/load problem)."
+    },
+    {
+      "pattern": "Not available as an in-app download[^.]*\\.",
+      "where": "contentManager catalog rows",
+      "why": "By design: no remote downloads."
+    },
+    {
+      "pattern": "invalid signatures are refused",
+      "where": "contentManager intro",
+      "why": "Describes the policy."
+    },
+    {
+      "pattern": "a malformed or non-sha256 declaration is refused, not treated as \"no hash\"",
+      "where": "contentManager intro",
+      "why": "Describes the policy."
+    },
+    {
+      "pattern": "Unknown readings are not zero\\.",
+      "where": "network overview",
+      "why": "Honesty note."
+    },
+    {
+      "pattern": "A connected wire path does not prove a powered or conducting circuit\\.",
+      "where": "network overview",
+      "why": "Honesty note."
+    },
+    {
+      "pattern": "over-current not checked \\(no solved currents\\)",
+      "where": "pcbPanel summary",
+      "why": "Warning, not a failure: currents were not solved, so it is not reported as clean."
+    },
+    {
+      "pattern": "No parts have a footprint yet[^.]*\\.",
+      "where": "pcbPanel (empty board)",
+      "why": "Expected on a new/blank circuit."
+    },
+    {
+      "pattern": "Plated holes are not cut out of this copper image[^.]*\\.",
+      "where": "gerberCheck COPPER_NOTE",
+      "why": "Explains the drawing."
+    },
+    {
+      "pattern": "This file does not say FilePolarity\\.",
+      "where": "gerberCheck OMITTED_POLARITY_NOTE",
+      "why": "Explains the drawing."
+    },
+    {
+      "pattern": "Expected values need an independent reference; matching a captured result alone does not prove the physics\\.",
+      "where": "testBench",
+      "why": "Honesty note."
+    },
+    {
+      "pattern": "Tests run on independent copies\\. They do not change your live circuit\\.",
+      "where": "testBench",
+      "why": "Honesty note."
+    },
+    {
+      "pattern": "so it cannot mark a key as one you pinned\\.",
+      "where": "contentManager intro",
+      "why": "Honesty note about trust pinning."
+    }
+  ],
+  "consoleBenign": [
+    {
+      "pattern": "Download the React DevTools",
+      "why": "Dev-mode React banner."
+    },
+    {
+      "pattern": "\\[vite\\]",
+      "why": "Vite HMR client."
+    },
+    {
+      "pattern": "Failed to load resource: the server responded with a status of 404",
+      "onlyIf404Url": "/favicon\\.ico$",
+      "why": "The renderer index.html has no favicon; the dev server 404s it. Treated as benign only when every 404 seen is the favicon."
+    }
+  ],
+  "electronOnly": [
+    {
+      "id": "electron:saveFabZip",
+      "feature": "Saving the manufacturing ZIP",
+      "bridge": ["saveFabZip"],
+      "browser": "onExportFabZip validates, then window.chipblocks?.saveFabZip is undefined → nothing is written and no note appears.",
+      "skip": "Writing the ZIP needs the Electron bridge (saveFabZip). The runner still checks the validation half (no 'not exported —' note in pcb-export-note)."
+    },
+    {
+      "id": "electron:projects",
+      "feature": "My Projects list / Open a saved project / reopen recent",
+      "bridge": ["scanProjects", "openCircuitDialog", "readCircuitFile"],
+      "browser": "Scan and open are no-ops.",
+      "skip": "Opening or listing .chipblocks files needs the Electron file bridge."
+    },
+    {
+      "id": "electron:templates",
+      "feature": "My templates, File ▸ Save as Template",
+      "bridge": ["readUserTemplates", "writeUserTemplates", "onSaveTemplateRequest"],
+      "browser": "List stays empty.",
+      "skip": "User templates live in ~/.chipblocks/user-templates.json (Electron bridge)."
+    },
+    {
+      "id": "electron:contentPacks",
+      "feature": "Installed pack rows and their badges (ENABLED, ENABLED · NOT LOADED, DISABLED), Enable/Disable/Uninstall, signatures",
+      "bridge": [
+        "readContentIndex",
+        "writeContentIndex",
+        "readContentPack",
+        "writeContentPack",
+        "removeContentPack",
+        "pickLocalContentPack"
+      ],
+      "browser": "Only the six PLANNED · NOT INSTALLED catalog rows; Install shows a bridge-needed status.",
+      "skip": "Installed packs live under ~/.chipblocks/libraries (Electron bridge)."
+    },
+    {
+      "id": "electron:keybindPersistence",
+      "feature": "Saving rebinds across restarts and the native menu accelerators",
+      "bridge": ["getKeybinds", "setKeybinds"],
+      "browser": "Rebinds apply for the session only.",
+      "skip": "Persistence needs the Electron bridge."
+    },
+    {
+      "id": "electron:nativeMenus",
+      "feature": "Native menus (File, Edit, View, Settings ▸ Theme/Shortcuts, Tools ▸ Content Manager), saving/opening circuits, netlist/Verilog/GDS/OASIS/LEF/DEF/Liberty export",
+      "bridge": [
+        "onSaveRequest",
+        "saveCircuitData",
+        "onCircuitOpened",
+        "onExport*Request",
+        "save*Data",
+        "onTheme",
+        "onShortcutsOpen",
+        "onContentManagerOpen",
+        "onEdit*"
+      ],
+      "browser": "Not present. The runner reaches the Shortcuts and Content Manager panels through the same window events main.tsx broadcasts.",
+      "skip": "Native menus and file writes need Electron."
+    },
+    {
+      "id": "electron:chipDescription",
+      "feature": "AI chip description",
+      "bridge": ["requestChipDescription"],
+      "browser": "Not available.",
+      "skip": "Needs the Electron main process."
+    }
+  ],
+  "testidWishlist": [
+    {
+      "where": "content-manager-panel.tsx catalog rows",
+      "suggest": "data-testid=\"content-manager-badge\" data-pack=… data-status=\"PLANNED\" on catalog (not-installed) rows too, and data-status on installed badges",
+      "why": "Only installed rows carry the badge testid; catalog rows are matched by the text 'PLANNED · NOT INSTALLED'."
+    },
+    {
+      "where": "shortcuts-panel.tsx problem line",
+      "suggest": "role=\"alert\" or data-testid=\"shortcut-problem\"",
+      "why": "Rebinding refusals are matched by text."
+    },
+    {
+      "where": "App.tsx status line",
+      "suggest": "data-components / data-wires on data-testid=status-line",
+      "why": "Counts are still parsed from prose."
+    },
+    {
+      "where": "dockable-panel.tsx frame",
+      "suggest": "keep data-panel-dock, add data-panel-ids for grouped tabs",
+      "why": "data-panel-dock is the ACTIVE tab only when panels are grouped."
+    }
+  ],
+  "macros": {
+    "newProject": {
+      "why": "Start screen → category → template → [name] → Create project → workspace ready.",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "{category}"
+        },
+        {
+          "click": "{template}"
+        },
+        {
+          "click": "start.createProject"
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ]
+    },
+    "newNamedProject": {
+      "why": "Same, with a custom Project name.",
+      "do": [
+        {
+          "open": "start"
+        },
+        {
+          "click": "{category}"
+        },
+        {
+          "click": "{template}"
+        },
+        {
+          "fill": "start.projectName",
+          "value": "{name}"
+        },
+        {
+          "click": "start.createProject"
+        },
+        {
+          "waitReady": "workspace"
+        }
+      ]
+    },
+    "placePart": {
+      "why": "Add Part → search → Enter places the top match.",
+      "do": [
+        {
+          "open": "partPicker"
+        },
+        {
+          "fill": "partPicker.search",
+          "value": "{query}"
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "partPicker.count",
+            "matches": "^\\d+ of \\d+$"
+          }
+        },
+        {
+          "press": "Enter"
+        },
+        {
+          "waitFor": {
+            "type": "absent",
+            "sel": "partPicker.search"
+          }
+        }
+      ]
+    }
+  }
+}

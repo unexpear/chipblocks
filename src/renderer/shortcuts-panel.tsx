@@ -64,6 +64,8 @@ export function ShortcutsPanel({
 
   return (
     <div
+      role="dialog"
+      aria-label="Shortcuts and controls"
       style={{
         position: 'absolute',
         top: 16,
@@ -102,6 +104,9 @@ export function ShortcutsPanel({
       {(Object.keys(DEFAULT_KEYBINDS) as KeybindAction[]).map((action) => (
         <div
           key={action}
+          data-testid="shortcut-row"
+          data-action={action}
+          data-binding={binds[action]}
           style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}
         >
           <span style={{ flex: 1 }}>{KEYBIND_LABELS[action]}</span>
@@ -146,7 +151,11 @@ export function ShortcutsPanel({
         <div key={group}>
           <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 4px' }}>{group}</div>
           {FIXED_CONTROLS.filter((c) => c.group === group).map((c) => (
-            <div key={c.control} style={{ display: 'flex', gap: 10, padding: '2px 0' }}>
+            <div
+              key={c.control}
+              data-testid="shortcut-fixed-row"
+              style={{ display: 'flex', gap: 10, padding: '2px 0' }}
+            >
               <span style={{ minWidth: 190, color: dimColor }}>{c.control}</span>
               <span style={{ flex: 1 }}>{c.does}</span>
             </div>

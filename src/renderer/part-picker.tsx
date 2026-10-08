@@ -195,8 +195,9 @@ export function PartPicker({
         fontFamily: 'system-ui, sans-serif',
       }}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: the dialog stops backdrop clicks + carries the key handler */}
       <div
+        role="dialog"
+        aria-label="Choose a part"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
         style={{
@@ -325,6 +326,7 @@ export function PartPicker({
                   return (
                     <div
                       key={`header-${row.id}`}
+                      data-testid="part-picker-section"
                       style={{
                         fontSize: 10.5,
                         fontWeight: 700,

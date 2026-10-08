@@ -22,8 +22,8 @@ if (bridge !== undefined) {
     saveTheme(name)
     window.dispatchEvent(new CustomEvent('chipblocks:theme', { detail: name }))
   })
-  // The native Settings ▸ Shortcuts item opens the keybinds panel; broadcast it so whichever
-  // screen is mounted (project browser or editor) hears it and opens its panel.
+  // Settings ▸ Shortcuts and Tools ▸ Plugin & Content Manager. Every screen stays mounted and
+  // hears the event; only the active one opens its panel (a background tab ignores it).
   bridge.onShortcutsOpen?.(() => window.dispatchEvent(new Event('chipblocks:shortcuts')))
   bridge.onContentManagerOpen?.(() => window.dispatchEvent(new Event('chipblocks:content-manager')))
   bridge.onSymbolStyle?.((next) => {

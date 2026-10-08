@@ -1,0 +1,49 @@
+{
+  "name": "gerber-blank",
+  "title": "Gerber check on an empty board: honest empty state, no plot, no refusal",
+  "covers": ["pcbPanel", "gerberCheck"],
+  "steps": [
+    {
+      "id": "blank",
+      "title": "Blank circuit",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplBlankCircuit"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 0 components, 0 wires",
+          "id": "status-0c-0w"
+        }
+      ]
+    },
+    {
+      "id": "open-gerber",
+      "title": "Check Gerbers on an empty board shows an empty-state message",
+      "screen": ["pcbPanel", "gerberCheck"],
+      "laya": true,
+      "do": {
+        "open": "gerberCheck"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": "gerberCheck.refusal",
+          "id": "no-refusal"
+        },
+        {
+          "type": "text",
+          "region": "gerberCheck",
+          "matches": "No artwork|No manufacturing files|No holes|No openings|Stack",
+          "id": "empty-or-outline-only"
+        }
+      ]
+    }
+  ]
+}

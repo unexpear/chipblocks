@@ -191,6 +191,7 @@ export function DockablePanel({
       )}
       <div
         className="cb-scroll-hidden"
+        data-panel-scroll=""
         style={{
           display: 'flex',
           flexDirection: column ? 'column' : 'row',
@@ -199,7 +200,11 @@ export function DockablePanel({
           minWidth: 0,
           gap: 8,
           padding: 8,
-          alignItems: 'center',
+          // `safe center` centers a child that fits, and falls back to the start edge when it
+          // does not. Plain `center` with overflow:auto paints the extra height above the
+          // scrollport (the Gerber check's buttons sat at a negative y) where scrollTop
+          // cannot reach it.
+          alignItems: 'safe center',
           overflow: 'auto',
         }}
       >

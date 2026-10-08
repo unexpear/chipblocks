@@ -1,0 +1,50 @@
+{
+  "name": "voltage-divider",
+  "title": "Voltage divider template: Ohm's law in the Math panel",
+  "covers": ["workspace", "math"],
+  "steps": [
+    {
+      "id": "create-divider",
+      "title": "Voltage divider template",
+      "screen": "workspace",
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplDivider"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— [34] components",
+          "id": "parts-present"
+        }
+      ]
+    },
+    {
+      "id": "math",
+      "title": "Math: 500 µA through 10.00 kΩ, converged, balanced",
+      "screen": ["workspace", "math"],
+      "laya": true,
+      "do": {
+        "open": "math"
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "math",
+          "matches": "V = I·R = 500 [µμ]A × 10\\.00 kΩ = 5\\.00 V",
+          "id": "ohms-law"
+        },
+        {
+          "type": "text",
+          "region": "math",
+          "matches": "converged: yes",
+          "id": "converged"
+        }
+      ]
+    }
+  ]
+}

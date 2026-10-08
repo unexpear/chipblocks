@@ -117,6 +117,7 @@ export function ContentManagerPanel({
 
         {statusMessage !== null ? (
           <div
+            data-testid="content-manager-status"
             style={{
               marginBottom: 10,
               padding: '8px 10px',
@@ -197,6 +198,8 @@ function InstalledCard({
         <span style={{ color: dim }}>v{record.packVersion}</span>
         <span style={{ color: dim }}>{record.license}</span>
         <span
+          data-testid="content-manager-badge"
+          data-pack={record.id}
           style={{
             marginLeft: 'auto',
             fontSize: 10,

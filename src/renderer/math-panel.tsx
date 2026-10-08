@@ -24,6 +24,8 @@ export function MathPanel({
   return (
     <div
       className="nodrag nopan cb-hide-scrollbar"
+      data-testid="math-panel"
+      data-converged={view.converged ? 'true' : 'false'}
       style={{
         position: 'absolute',
         top: 16,

@@ -1,0 +1,168 @@
+{
+  "name": "led-circuit-simulate",
+  "title": "LED + resistor template: build, live solve, Math proof, Solve with Always on off",
+  "covers": ["start", "workspace", "math"],
+  "steps": [
+    {
+      "id": "create-led",
+      "title": "LED + resistor template opens with 4 parts and 4 wires",
+      "screen": "workspace",
+      "laya": true,
+      "do": {
+        "macro": "newProject",
+        "with": {
+          "category": "start.circuit",
+          "template": "start.tplLed"
+        }
+      },
+      "expect": [
+        {
+          "type": "text",
+          "region": "workspace.status",
+          "matches": "— 4 components, 4 wires",
+          "id": "status-4c-4w"
+        },
+        {
+          "type": "text",
+          "region": "workspace.network",
+          "matches": "3 wired nets · 4 canvas objects",
+          "id": "network-overview"
+        }
+      ]
+    },
+    {
+      "id": "open-math",
+      "title": "Math panel: converged solve, LED operating point ~2 V / 20 mA, KCL balanced",
+      "screen": ["workspace", "math"],
+      "laya": true,
+      "do": {
+        "open": "math"
+      },
+      "expect": [
+        {
+          "type": "attr",
+          "sel": {
+            "testid": "math-panel"
+          },
+          "name": "data-converged",
+          "matches": "^true$",
+          "id": "data-converged"
+        },
+        {
+          "type": "text",
+          "region": "math",
+          "matches": "converged: yes",
+          "id": "converged"
+        },
+        {
+          "type": "numbers",
+          "region": "math",
+          "re": "operating point: V = ([\\d.]+) V, I = ([\\d.]+) mA",
+          "check": [
+            {
+              "op": "between",
+              "a": "$1",
+              "min": 1.8,
+              "max": 2.2
+            },
+            {
+              "op": "between",
+              "a": "$2",
+              "min": 18,
+              "max": 22
+            }
+          ],
+          "id": "led-operating-point",
+          "why": "5 V − Vf over 150 Ω ≈ 20 mA; red LED Vf ≈ 2 V"
+        },
+        {
+          "type": "numbers",
+          "region": "math",
+          "re": "V = I·R = ([\\d.]+) mA × ([\\d.]+) Ω = ([\\d.]+) V",
+          "check": [
+            {
+              "op": "between",
+              "a": "$1",
+              "min": 18,
+              "max": 22
+            },
+            {
+              "op": "between",
+              "a": "$3",
+              "min": 2.7,
+              "max": 3.3
+            }
+          ],
+          "id": "resistor-ohms-law"
+        },
+        {
+          "type": "text",
+          "region": "math",
+          "matches": "balanced",
+          "id": "kcl-balanced"
+        }
+      ]
+    },
+    {
+      "id": "close-math",
+      "title": "✕ Close hides the math panel",
+      "screen": "workspace",
+      "do": {
+        "click": "math.close"
+      },
+      "expect": [
+        {
+          "type": "absent",
+          "sel": {
+            "text": "The math behind this circuit"
+          },
+          "id": "math-closed"
+        }
+      ]
+    },
+    {
+      "id": "always-on-off",
+      "title": "Untick Always on, then Solve still produces a converged solve",
+      "screen": ["workspace", "math"],
+      "do": [
+        {
+          "click": "workspace.alwaysOn"
+        },
+        {
+          "click": "workspace.solve"
+        },
+        {
+          "open": "math"
+        }
+      ],
+      "expect": [
+        {
+          "type": "checked",
+          "sel": "workspace.alwaysOn",
+          "value": false,
+          "id": "always-on-unticked"
+        },
+        {
+          "type": "text",
+          "region": "math",
+          "matches": "converged: yes",
+          "id": "converged-after-solve"
+        },
+        {
+          "type": "numbers",
+          "region": "math",
+          "re": "operating point: V = ([\\d.]+) V, I = ([\\d.]+) mA",
+          "check": [
+            {
+              "op": "between",
+              "a": "$2",
+              "min": 18,
+              "max": 22
+            }
+          ],
+          "id": "same-current"
+        }
+      ]
+    }
+  ]
+}

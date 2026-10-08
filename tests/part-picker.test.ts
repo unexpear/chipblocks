@@ -62,6 +62,8 @@ describe('the picker under a query', () => {
   test('a fresh mount renders the search box and the count', () => {
     const html = render('chip')
     expect(html).toContain('Choose a part')
+    expect(html).toContain('role="dialog"')
+    expect(html).toContain('data-testid="part-picker-section"')
     expect(html).toContain('parts') // the "<n> parts" live count
     expect(html).toContain('Search parts') // the aria-label / placeholder
   })
