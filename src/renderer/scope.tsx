@@ -581,12 +581,15 @@ export function ScopePlot({
   if (sweep === null) {
     if (solved && channels.length === 0) {
       return (
-        <div style={{ fontSize: 11, color: textColor, maxWidth: 320, fontFamily: 'system-ui' }}>
-          No probes attached. With the Scope open (and the plain select tool): CLICK a terminal dot
-          for that point's VOLTAGE, click a WIRE to clamp its CURRENT, or ALT+CLICK a part's body
-          for the part's own current — each becomes a colored channel, like clipping real leads
-          where you care. The same gesture again unclips it. Tip: a voltage channel as X and a part
-          current as Y in XY mode draws the part's I-V curve — the curve tracer.
+        <div style={{ fontFamily: 'system-ui, sans-serif' }}>
+          {horizRow}
+          <div style={{ fontSize: 11, color: textColor, maxWidth: 320 }}>
+            No probes attached. With the Scope open (and the plain select tool): CLICK a terminal
+            dot for that point's VOLTAGE, click a WIRE to clamp its CURRENT, or ALT+CLICK a part's
+            body for the part's own current — each becomes a colored channel, like clipping real
+            leads where you care. The same gesture again unclips it. Tip: a voltage channel as X and
+            a part current as Y in XY mode draws the part's I-V curve — the curve tracer.
+          </div>
         </div>
       )
     }

@@ -185,15 +185,21 @@
     },
     {
       "id": "timeline",
-      "title": "Front mode names itself",
+      "title": "To start names itself",
       "screen": "workspace",
       "do": [
         { "click": { "role": "button", "name": "Timeline", "exact": true } },
-        { "hover": { "role": "button", "name": "Front mode", "exact": true } }
+        { "click": { "css": "[data-dock-tab=\"timeline\"]" } },
+        { "hover": { "role": "button", "name": "To start", "exact": true } }
       ],
       "expect": [
         { "type": "visible", "sel": { "testid": "tooltip" }, "id": "tip" },
-        { "type": "text", "sel": { "testid": "tooltip-name" }, "matches": "^Front$", "id": "name" },
+        {
+          "type": "text",
+          "sel": { "testid": "tooltip-name" },
+          "matches": "^To start$",
+          "id": "name"
+        },
         { "type": "text", "sel": { "testid": "tooltip-summary" }, "matches": ".+", "id": "summary" }
       ]
     },
@@ -210,6 +216,7 @@
       "screen": "workspace",
       "do": [
         { "click": "workspace.bode" },
+        { "click": { "css": "[data-dock-tab=\"bode\"]" } },
         { "hover": { "role": "button", "name": "Pick Bode output", "exact": true } }
       ],
       "expect": [
@@ -236,6 +243,7 @@
       "screen": "workspace",
       "do": [
         { "click": { "role": "button", "name": "Reflect", "exact": true } },
+        { "click": { "css": "[data-dock-tab=\"reflection\"]" } },
         { "hover": { "role": "button", "name": "Pick reflection port", "exact": true } }
       ],
       "expect": [
@@ -262,6 +270,7 @@
       "screen": "workspace",
       "do": [
         { "click": { "role": "button", "name": "Distort", "exact": true } },
+        { "click": { "css": "[data-dock-tab=\"distortion\"]" } },
         { "hover": { "role": "button", "name": "Pick distortion output", "exact": true } }
       ],
       "expect": [
@@ -303,9 +312,12 @@
     },
     {
       "id": "stress-out",
-      "title": "The ambient tip goes away",
+      "title": "The ambient tip goes away, and the bench closes",
       "screen": "workspace",
-      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "do": [
+        { "mouseMove": { "x": 1100, "y": 12 } },
+        { "click": { "role": "button", "name": "Close stress", "exact": true } }
+      ],
       "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
     },
     {
@@ -329,9 +341,12 @@
     },
     {
       "id": "clipboard-out",
-      "title": "The clipboard tip goes away",
+      "title": "The clipboard tip goes away, and the panel closes",
       "screen": "workspace",
-      "do": [{ "mouseMove": { "x": 1100, "y": 12 } }],
+      "do": [
+        { "mouseMove": { "x": 1100, "y": 12 } },
+        { "click": { "role": "button", "name": "Close clipboard", "exact": true } }
+      ],
       "expect": [{ "type": "absent", "sel": { "testid": "tooltip" }, "id": "gone" }]
     },
     {
@@ -360,6 +375,7 @@
       "title": "Debug names itself",
       "screen": "workspace",
       "do": [
+        { "click": "workspace.plan" },
         { "click": { "role": "button", "name": "Verilog", "exact": true } },
         { "hover": { "role": "button", "name": "Debug" } }
       ],
@@ -467,7 +483,7 @@
       "screen": "start",
       "do": [
         { "click": "workspace.homeTab" },
-        { "click": "start.recent" },
+        { "click": "start.myProjects" },
         { "hover": { "role": "button", "name": "rescan", "exact": true } }
       ],
       "expect": [
