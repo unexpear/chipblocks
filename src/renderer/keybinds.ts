@@ -184,6 +184,11 @@ export const FIXED_CONTROLS: { group: string; control: string; does: string }[] 
   },
   { group: 'Canvas', control: 'Scroll wheel', does: 'Zoom in / out' },
   {
+    group: 'Canvas',
+    control: 'F (canvas, board, or Gerber check focused)',
+    does: 'Fit to View: zoom so everything fits',
+  },
+  {
     group: 'Clipboard',
     control: '📋 Clipboard button',
     does: 'Open the clipboard panel: the last 15 copies + the one cut — click any to paste it',

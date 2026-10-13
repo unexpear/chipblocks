@@ -633,7 +633,7 @@
     },
     {
       "id": "fit",
-      "title": "+ twice then Fit restores the fitted width",
+      "title": "+ twice then Fit to View restores the fitted width",
       "screen": "gerberCheck",
       "do": [
         {
@@ -658,6 +658,33 @@
             }
           ],
           "id": "fit-width"
+        }
+      ]
+    },
+    {
+      "id": "fit-key",
+      "title": "+ then F (Gerber check focused) restores the fitted width",
+      "screen": "gerberCheck",
+      "do": [
+        {
+          "click": "gerberCheck.zoomIn"
+        },
+        {
+          "press": "f"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "gerberCheck.plot",
+          "name": "width",
+          "check": [
+            {
+              "op": "eq",
+              "b": "@w0"
+            }
+          ],
+          "id": "f-fits"
         }
       ]
     },

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { isFitToViewKey } from './fit-bounds.ts'
 import { gerberRoleHelpId } from './help-text.ts'
 import type { ManufacturingFile } from './pcb-fab.ts'
 import type { MmPoint, PlotDraw } from './pcb-gerber-parse.ts'
@@ -248,8 +249,17 @@ export function GerberCheck({ files }: { files: readonly ManufacturingFile[] }) 
   const refused = model.incomplete.length > 0
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: focus target for the view's F (Fit to View) key
     <div
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (!isFitToViewKey(e)) return
+        e.preventDefault()
+        e.stopPropagation()
+        setPxOverride(null)
+      }}
       style={{
+        outline: 'none',
         display: 'flex',
         flexDirection: 'column',
         gap: 6,
@@ -400,8 +410,13 @@ export function GerberCheck({ files }: { files: readonly ManufacturingFile[] }) 
                   </button>
                 </HelpTip>
                 <HelpTip helpId="gerber.fit">
-                  <button type="button" onClick={() => setPxOverride(null)} style={zoomBtn}>
-                    Fit
+                  <button
+                    type="button"
+                    data-testid="gerber-fit-to-view"
+                    onClick={() => setPxOverride(null)}
+                    style={zoomBtn}
+                  >
+                    Fit to View
                   </button>
                 </HelpTip>
                 {thin !== null && (

@@ -17,12 +17,14 @@ import {
   useNodesState,
   useReactFlow,
 } from '@xyflow/react'
+import { CanvasFitToViewButton, useCanvasFitToView } from './canvas-fit-to-view.tsx'
 import { namedCellDrc, summarizeDrc } from './cell-drc.ts'
 import { chipSignature, type Floorplan, placeCells } from './cell-place.ts'
 import { mergeOverrides } from './chip-canvas.tsx'
 import { type ChipLayout, EMPTY_CHIP_LAYOUT } from './chip-layout.ts'
 import { ChipView } from './chip-workspace.tsx'
 import { floorplanToDef } from './def.ts'
+import { isFitToViewKey } from './fit-bounds.ts'
 import { floorplanToGds, writeGds } from './gds.ts'
 import { floorplanToLef } from './lef.ts'
 import { floorplanToLib } from './liberty.ts'
@@ -2882,6 +2884,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     readout: string | null
   } | null>(null)
   const { screenToFlowPosition, fitView, getNodes, deleteElements } = useReactFlow()
+  const fitCanvasToView = useCanvasFitToView()
   const updateNodeInternals = useCoalescedUpdateNodeInternals()
   // A loaded project resumes its id counter ABOVE the saved ids (so new drops never collide); a fresh
   // template project just counts its seeded parts.
@@ -10295,6 +10298,19 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                 minZoom={0.001}
                                 maxZoom={1000}
                                 fitView
+                                // Fit to View's F key works only while the canvas has focus: the pane
+                                // takes focus on mousedown (d3-zoom cancels the default, so it's explicit).
+                                tabIndex={-1}
+                                onMouseDown={(e) => {
+                                  if (!e.currentTarget.contains(document.activeElement))
+                                    e.currentTarget.focus({ preventScroll: true })
+                                }}
+                                onKeyDown={(e) => {
+                                  if (!isFitToViewKey(e)) return
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  fitCanvasToView()
+                                }}
                                 proOptions={{ hideAttribution: true }}
                                 snapToGrid={snapToGrid}
                                 snapGrid={SNAP_GRID}
@@ -10327,7 +10343,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                 ) : null}
                                 {/* Coordinate-graph axes through the origin + the four quadrants. */}
                                 <CoordinateAxes light={light} />
-                                <Controls>
+                                <Controls showFitView={false}>
                                   <HelpTip
                                     helpId="canvas.snap"
                                     detail={
@@ -10413,6 +10429,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                       </ControlButton>
                                     </span>
                                   </HelpTip>
+                                  <CanvasFitToViewButton />
                                 </Controls>
                                 <MeterProbes red={redProbe} black={blackProbe} />
                                 {/* Scope channel probes (S19-v3-77): one colored clip per

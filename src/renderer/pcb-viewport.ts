@@ -6,6 +6,8 @@
  * point on screen maps to those units through the SVG's on-screen rectangle.
  */
 
+import { fitBounds } from './fit-bounds.ts'
+
 export type View = { x: number; y: number; w: number; h: number }
 export type Rect = { left: number; top: number; width: number; height: number }
 export type Bounds = { x: number; y: number; w: number; h: number }
@@ -15,12 +17,18 @@ export type Bounds = { x: number; y: number; w: number; h: number }
  *  dimension is too tight for the pane aspect is widened. */
 export function fitView(bounds: Bounds, aspect: number, pad = 0.08): View {
   const safeAspect = aspect > 0 && Number.isFinite(aspect) ? aspect : 1
-  const w0 = Math.max(1e-6, bounds.w) * (1 + pad * 2)
-  const h0 = Math.max(1e-6, bounds.h) * (1 + pad * 2)
-  const [vw, vh] = w0 / h0 > safeAspect ? [w0, w0 / safeAspect] : [h0 * safeAspect, h0]
-  const cx = bounds.x + bounds.w / 2
-  const cy = bounds.y + bounds.h / 2
-  return { x: cx - vw / 2, y: cy - vh / 2, w: vw, h: vh }
+  // The shared Fit to View math, in a pane of safeAspect × 1: the viewBox is that pane in content units.
+  const fit = fitBounds(bounds, safeAspect, 1, { margin: pad }) ?? {
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  }
+  return {
+    x: -fit.offsetX / fit.scale,
+    y: -fit.offsetY / fit.scale,
+    w: safeAspect / fit.scale,
+    h: 1 / fit.scale,
+  }
 }
 
 /** A client (screen) point → canvas units, given the SVG's on-screen rectangle. */

@@ -135,6 +135,49 @@
       }
     },
     {
+      "id": "pcb-fit",
+      "title": "Board view Fit to View keeps the board framed (same viewBox width as the auto-fit)",
+      "screen": "pcbPanel",
+      "do": [
+        {
+          "capture": {
+            "name": "vw0",
+            "sel": "pcbPanel.boardView",
+            "attr": "data-view-w"
+          }
+        },
+        {
+          "click": "pcbPanel.fitToView"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "pcbPanel.boardView",
+          "name": "data-view-w",
+          "check": [
+            {
+              "op": "eq",
+              "b": "@vw0"
+            }
+          ],
+          "id": "fit-width"
+        },
+        {
+          "type": "attrNumber",
+          "sel": "pcbPanel.boardView",
+          "name": "data-view-w",
+          "check": [
+            {
+              "op": "gt",
+              "b": 0
+            }
+          ],
+          "id": "width-positive"
+        }
+      ]
+    },
+    {
       "id": "board-workspace",
       "title": "Board breadcrumb: board-header agrees with the panel (3 parts, same routed count as data-routed)",
       "screen": "boardWorkspace",

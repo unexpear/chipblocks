@@ -1,3 +1,4 @@
+import { fitBounds } from './fit-bounds.ts'
 import {
   isHiddenEmptyBottom,
   type MmPoint,
@@ -290,8 +291,13 @@ export function viewBoxFor(frame: MmBounds): ViewBox {
 /** Fit the whole frame in the pane. Per-layer cropping made a pad and the outline look like different boards. */
 export function fitPxPerMm(frame: MmBounds, maxW = 720, maxH = 400): number {
   const box = viewBoxFor(frame)
-  const raw = Math.min(maxW / box.w, maxH / box.h)
-  return Math.min(48, Math.max(2, raw))
+  // viewBoxFor already adds the plot's own margin, so the shared fit runs with none of its own.
+  const fit = fitBounds({ x: box.minX, y: box.minY, w: box.w, h: box.h }, maxW, maxH, {
+    margin: 0,
+    minScale: 2,
+    maxScale: 48,
+  })
+  return fit?.scale ?? 14
 }
 
 export function scaleBarMm(spanMm: number): number {
