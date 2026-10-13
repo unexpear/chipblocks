@@ -577,8 +577,10 @@ export const HELP: Record<string, HelpEntry> = {
     summary: 'Enlarge the plot.',
   },
   'gerber.fit': {
-    name: 'Fit',
-    summary: 'Scale the plot so the whole board fits in the frame.',
+    name: 'Fit to View',
+    summary: 'Scale the plot so the whole board fits in the frame, with a small margin.',
+    detail: 'Undoes − and +. Press F while the Gerber check has focus to do the same.',
+    shortcutText: 'F',
   },
   'gerber.zoomThin': {
     name: 'Zoom to thinnest line',
@@ -972,6 +974,20 @@ export const HELP: Record<string, HelpEntry> = {
   'canvas.zoomSelection': {
     name: 'Zoom to selection',
     summary: 'Frame the selected parts. With nothing selected, frame the whole sheet.',
+  },
+  'canvas.fitView': {
+    name: 'Fit to View',
+    summary: 'Zoom and pan so every part on the sheet fits, with a small margin.',
+    detail:
+      'An empty sheet goes back to the default zoom. Press F while the canvas has focus to do the same.',
+    shortcutText: 'F',
+  },
+  'pcb.fitView': {
+    name: 'Fit to View',
+    summary: 'Zoom and pan so the whole board fits, with a small margin.',
+    detail:
+      'Same as double-clicking the board. Press F while the board view has focus to do the same.',
+    shortcutText: 'F',
   },
   'project.close': {
     name: 'Close project',

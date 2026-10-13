@@ -239,7 +239,7 @@
     },
     {
       "id": "fit-reachable",
-      "title": "Fit (lower in the panel) is still clickable",
+      "title": "Fit to View (lower in the panel) is still clickable",
       "screen": "gerberCheck",
       "do": {
         "click": "gerberCheck.fit"

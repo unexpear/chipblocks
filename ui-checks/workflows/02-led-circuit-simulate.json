@@ -31,6 +31,113 @@
       ]
     },
     {
+      "id": "canvas-fit",
+      "title": "Fit to View frames the circuit (remember that zoom)",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.fitToView"
+        },
+        {
+          "capture": {
+            "name": "z0",
+            "sel": "workspace.fitToView",
+            "attr": "data-zoom"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "workspace.fitToView",
+          "name": "data-zoom",
+          "check": [
+            {
+              "op": "gt",
+              "b": 0
+            }
+          ],
+          "id": "zoom-positive"
+        }
+      ]
+    },
+    {
+      "id": "canvas-zoom-in",
+      "title": "+ twice zooms the canvas in past the fit",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.zoomIn"
+        },
+        {
+          "click": "workspace.zoomIn"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "workspace.fitToView",
+          "name": "data-zoom",
+          "check": [
+            {
+              "op": "gt",
+              "b": "@z0"
+            }
+          ],
+          "id": "zoomed-in"
+        }
+      ]
+    },
+    {
+      "id": "canvas-fit-again",
+      "title": "Fit to View returns to the same fitted zoom",
+      "screen": "workspace",
+      "do": {
+        "click": "workspace.fitToView"
+      },
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "workspace.fitToView",
+          "name": "data-zoom",
+          "check": [
+            {
+              "op": "eq",
+              "b": "@z0"
+            }
+          ],
+          "id": "fit-zoom"
+        }
+      ]
+    },
+    {
+      "id": "canvas-fit-key",
+      "title": "+ then F (canvas focused) fits again",
+      "screen": "workspace",
+      "do": [
+        {
+          "click": "workspace.zoomIn"
+        },
+        {
+          "press": "f"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attrNumber",
+          "sel": "workspace.fitToView",
+          "name": "data-zoom",
+          "check": [
+            {
+              "op": "eq",
+              "b": "@z0"
+            }
+          ],
+          "id": "f-fits"
+        }
+      ]
+    },
+    {
       "id": "open-math",
       "title": "Math panel: converged solve, LED operating point ~2 V / 20 mA, KCL balanced",
       "screen": ["workspace", "math"],

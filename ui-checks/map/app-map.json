@@ -510,6 +510,18 @@
             "role": "application"
           },
           "does": "The React Flow canvas. Electron workflows click 60 px in from its top-left corner (empty pane) to give the canvas keyboard focus: at 1440×900 the sheet's title-block fields sit under the status line, so focusCanvas would land in a text field."
+        },
+        "fitToView": {
+          "sel": {
+            "testid": "canvas-fit-to-view"
+          },
+          "does": "Fit to View (⛶ in the canvas zoom controls, under ⊙; F while the canvas is focused): frames every part with a small margin; an empty sheet resets to zoom 1. data-zoom is the live canvas zoom."
+        },
+        "zoomIn": {
+          "sel": {
+            "css": ".react-flow__controls-zoomin"
+          },
+          "does": "React Flow's + in the canvas zoom controls."
         }
       },
       "invariants": [
@@ -979,6 +991,21 @@
             "testid": "pcb-summary"
           },
           "does": "Summary span; data-placed / data-routed / data-drc carry the counts."
+        },
+        "fitToView": {
+          "sel": {
+            "testid": "pcb-fit-to-view",
+            "within": {
+              "css": "[data-panel-dock=\"pcb\"]"
+            }
+          },
+          "does": "Fit to View (top-right over the board view; F while the board view is focused, or double-click): frames the board outline with a small margin."
+        },
+        "boardView": {
+          "sel": {
+            "css": "[data-panel-dock=\"pcb\"] svg[aria-label=\"PCB layout\"]"
+          },
+          "does": "The board view svg. data-view-w is the visible viewBox width (content px)."
         }
       },
       "invariants": [
@@ -1153,7 +1180,7 @@
       ]
     },
     "gerberCheck": {
-      "what": "Gerber check inside the PCB panel: plots the Gerber + Excellon strings Export ZIP would write. Either (a) Stack + one tab per non-empty file, counts line, legend, notes, − + Fit [Zoom to thinnest line], svg 'Gerber plot' (testid gerber-plot); or (b) refusal 'Not plotted. Part of a file was skipped…' (testid gerber-unplotted) with per-file warnings; or (c) an empty message. Footer lists non-Gerber files.",
+      "what": "Gerber check inside the PCB panel: plots the Gerber + Excellon strings Export ZIP would write. Either (a) Stack + one tab per non-empty file, counts line, legend, notes, − + Fit to View [Zoom to thinnest line], svg 'Gerber plot' (testid gerber-plot); or (b) refusal 'Not plotted. Part of a file was skipped…' (testid gerber-unplotted) with per-file warnings; or (c) an empty message. Footer lists non-Gerber files.",
       "reach": [
         {
           "open": "pcbPanel"
@@ -1236,11 +1263,9 @@
         },
         "fit": {
           "sel": {
-            "role": "button",
-            "name": "Fit",
-            "exact": true
+            "testid": "gerber-fit-to-view"
           },
-          "does": "Back to fit."
+          "does": "Fit to View (F while the check is focused): back to the fitted scale."
         },
         "plot": {
           "sel": {
