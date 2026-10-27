@@ -74,6 +74,8 @@ Electron target (`npm run ui-checks:electron`):
 | electron-save-open-projects | first Save asks (Documents/UicLed.chipblocks, JSON: format, 4 nodes, 4 wires, window title); second Save is silent and rewrites (5 nodes); Save As to Desktop; My Projects lists both (scan count); open a file from elsewhere via the open dialog; recent list; reopen; a broken file is refused with an error box; the list survives a relaunch |
 | electron-user-templates | File ▸ Save as Template → toast + `~/.chipblocks/user-templates.json`; listed under My templates ("4 parts · schematic"); survives a relaunch; start a project from it; delete asks to confirm, then empties the file |
 | electron-content-packs | three packs built at test time with a throwaway ed25519 key (signed MIT, signature broken after signing, GPL-3.0); signed install from a local file → ENABLED badge, trust note, `libraries/<id>/pack.json` + `index.json` (valid-untrusted / match); bad signature and copyleft refused; disable / enable badges; the pack's part in the picker; survives a relaunch; tampered pack.json → `ENABLED · NOT LOADED` + SHA-256 mismatch note; uninstall |
+| electron-trusted-publisher-pin | real `~/.chipblocks` snapshotted first (names, sizes, mtimes; read-only); a signed local pack installs valid-untrusted with no pin file; Trust this publisher… → Confirm trust → `valid-trusted`, "1 publisher key pinned", and `{home}/.chipblocks/trusted-publishers.json` (sandbox) holds exactly that key; still pinned after a relaunch; Stop trusting → the key leaves the file; the real `~/.chipblocks` is unchanged after every step |
+| electron-registry-install | a local test registry built in the sandbox (file:// index, four packs, each with its own throwaway ed25519 key, no network); Save + Load the index URL (four packs listed, nothing installed, `content-registry.json` in the sandbox); bad SHA-256, signature broken after signing, and an index naming a different publisher key are each refused with their own reason and leave no `libraries/` folder; the good pack installs ENABLED / valid-untrusted / `acquiredFrom: registry` and `libraries/` holds only `index.json` + `reg_good/pack.json`; the three refusals again leave it unchanged; the pack's part is in Add Part; real `~/.chipblocks` unchanged |
 | electron-keybind-persistence | rebind Shortcuts panel → Ctrl+J and Rotate → T; `userData/keybinds.json` and the native menu accelerator follow; relaunch; Ctrl+K is dead and Ctrl+J opens the panel; Reset; defaults survive a relaunch |
 | electron-fab-zip | PCB panel on the LED circuit; cancelled Export ZIP writes nothing; Export ZIP saves through the dialog with the "manufacturing ZIP saved — …" note; the ZIP is parsed (central directory, sizes, CRC-32): copper/mask/silkscreen/Edge_Cuts Gerbers with FileFunction, the PTH Excellon drill (`M48`), job file, BOM, placement, netlist, validation report, README, stackup, none empty |
 | electron-fpga-chip-description | File ▸ Read an FPGA Chip File… on the repo's iCE40-384 fixture: refusal asking for the chip description, choose it (open dialog title), decoded card, remembered in `~/.chipblocks/fpga-chip-descriptions.json`, asked once on reopen, remembered after a relaunch |
@@ -81,9 +83,9 @@ Electron target (`npm run ui-checks:electron`):
 **Not covered by either target** (listed in `map.electron.notCovered` and in the Electron report):
 the other imports / exports and Compile to iCE40 (listed and reachable, not driven end to end),
 View-menu window roles, accelerators delivered by the OS menu (checked on the menu items instead),
-the look of real native dialogs (stubbed), writing a publisher pin and installing from a
-registry index (a local signed pack's fingerprint and untrusted state are checked; the Trust
-click and the registry download are not driven), and the packaged electron-builder build.
+the look of real native dialogs (stubbed), the registry download over https (the app refuses
+plain http, so the end-to-end registry workflow uses a file:// test index; the https fetch is covered
+by vitest), and the packaged electron-builder build.
 
 ## Electron mode
 
@@ -164,7 +166,8 @@ questions; English model; panel text only, known-benign text removed, capped at 
 | `src/run.mjs` | CLI, dev-server / Electron lifecycle, step loop |
 | `src/electron.mjs` | build check, sandbox, `_electron` launch, isolation check, dialog stubs, native menu access |
 | `src/isolate.cjs` | main-process preload that points every app folder at the sandbox |
-| `src/pack-fixture.mjs` | content packs signed with a throwaway in-memory ed25519 key |
+| `src/pack-fixture.mjs` | content packs signed with a throwaway in-memory ed25519 key; a local file:// test registry (good / bad SHA-256 / bad signature / wrong publisher key) |
+| `src/home-guard.mjs` | read-only before/after snapshot of the real `~/.chipblocks` (names, sizes, mtimes) |
 | `src/zip.mjs` | dependency-free ZIP reader (central directory, inflate, CRC-32) |
 | `src/engine.mjs` | selectors, regions, polling asserts, hit-tested clicks, console watch, artifacts, Laya checkpoint |
 | `src/laya.mjs` | Laya sidecar client |
@@ -178,8 +181,9 @@ Regions: `{locator}`, `{anchor, contains, up}`, `{leafRe}`.
 Asserts: visible, absent, count, enabled, disabled, checked, pressed, focused, value, attr,
 attrNumber, text, numbers, clickable, noAlarms, not, all, any, implies, iff, equalsVar;
 Electron: menuItem, windowTitle, dialogs (this step's), file (exists / size / regex / JSON paths),
-zip (entries by name, size, first bytes, content).
+zip (entries by name, size, first bytes, content), dir (a folder's exact entries),
+realHomeUnchanged (the real `~/.chipblocks` matches a `realHomeSnapshot`).
 Actions: open, macro, waitReady, ifVisible, goto, click, dblclick, fill, select, type, press,
 dispatch, waitFor, capture, setViewport, mouseClickAt, settle; Electron: menu, dialog
-(`open` / `save` / `cancel`), relaunch, writeFile, editFile, makePack (all writes stay inside the
-sandbox). `goto` reloads the window in Electron.
+(`open` / `save` / `cancel`), relaunch, writeFile, editFile, makePack (`keyVar` → `{keyVar}`),
+makeRegistry (sets `{registryUrl}`), realHomeSnapshot (all writes stay inside the sandbox). `goto` reloads the window in Electron.

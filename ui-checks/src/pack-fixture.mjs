@@ -61,3 +61,58 @@ export function makePack({
   }
   return { text: JSON.stringify(pack, null, 2), publicKeyHex }
 }
+
+/**
+ * A local content registry for a test: pack files + a chipblocks-content-registry-index, written
+ * under `dir` (inside the Electron sandbox) and addressed by file:// URLs, which the app accepts
+ * only for a local test or dev index. Nothing touches the network. Every pack gets its own
+ * throwaway ed25519 key, held in memory only. `fault` makes one entry wrong on purpose:
+ *  - 'sha'    the index's sha256 is not the hash of the bytes served
+ *  - 'sig'    the pack body was edited after signing (hash + size in the index still match)
+ *  - 'key'    the index names a different publisher key than the one that signed the pack
+ */
+export function makeRegistry({ dir, packs, writeFile, fileUrl }) {
+  const entries = []
+  for (const p of packs) {
+    const { text, publicKeyHex } = makePack({
+      id: p.id,
+      name: p.name,
+      packVersion: p.version ?? '1.0.0',
+      editAfterSigning: p.fault === 'sig',
+    })
+    const file = `${dir}/packs/${p.id}.json`
+    writeFile(file, text)
+    const bytes = Buffer.from(text, 'utf8')
+    const declared = JSON.parse(text).signature
+    let sha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+    if (p.fault === 'sha')
+      sha256 = crypto
+        .createHash('sha256')
+        .update(Buffer.concat([bytes, Buffer.from('\n')]))
+        .digest('hex')
+    let publicKey = publicKeyHex
+    if (p.fault === 'key') {
+      const other = crypto.generateKeyPairSync('ed25519').publicKey
+      publicKey = Buffer.from(other.export({ format: 'jwk' }).x, 'base64url').toString('hex')
+    }
+    entries.push({
+      id: p.id,
+      name: p.name,
+      version: p.version ?? '1.0.0',
+      downloadUrl: fileUrl(file),
+      size: bytes.byteLength,
+      sha256,
+      signature: { alg: 'ed25519', publicKey, sig: declared.sig },
+    })
+  }
+  const indexFile = `${dir}/index.json`
+  writeFile(
+    indexFile,
+    JSON.stringify(
+      { format: 'chipblocks-content-registry-index', version: 1, packs: entries },
+      null,
+      2,
+    ),
+  )
+  return { indexUrl: fileUrl(indexFile), entries }
+}

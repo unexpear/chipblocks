@@ -1,0 +1,268 @@
+{
+  "name": "electron-trusted-publisher-pin",
+  "targets": ["electron"],
+  "title": "Trust a publisher: the pin is written only to the sandbox home's trusted-publishers.json, survives a relaunch, and unpinning removes it; the real ~/.chipblocks is untouched",
+  "covers": ["contentManager"],
+  "notes": "The pack is signed at test time with a throwaway in-memory ed25519 key (src/pack-fixture.mjs). The real ~/.chipblocks of the person running the checks is snapshotted (names, sizes, mtimes; read-only) before the first step and compared after the pin, the relaunch, and the unpin.",
+  "steps": [
+    {
+      "id": "setup",
+      "title": "Snapshot the real ~/.chipblocks; make a signed pack; open the Content Manager (fresh sandbox home: nothing pinned)",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/pin_pack.json",
+            "id": "pin_pack",
+            "name": "Pin Pack",
+            "keyVar": "pinKey"
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "exists": false,
+          "id": "no-pin-file"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "install",
+      "title": "Install the signed pack from a local file: valid signature, key not pinned",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/pin_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "pin_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "badge"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "pin_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "trust-valid-untrusted"
+        },
+        {
+          "type": "visible",
+          "sel": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "pin_pack"
+          },
+          "id": "trust-toggle"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "exists": false,
+          "id": "still-no-pin-file"
+        }
+      ]
+    },
+    {
+      "id": "pin",
+      "title": "Trust this publisher… → Confirm trust: pinned, written to the sandbox home only",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "pin_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "pin_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "trust-valid-trusted"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Pinned the publisher key from \"pin_pack\"\\.",
+          "id": "status-pinned"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^1 publisher key pinned in ~/\\.chipblocks/trusted-publishers\\.json",
+          "id": "one-pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "format",
+              "eq": "chipblocks-trusted-publishers"
+            },
+            {
+              "at": "version",
+              "eq": 1
+            },
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{pinKey}"
+            }
+          ],
+          "id": "pin-file-in-sandbox"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "pin-survives-relaunch",
+      "title": "Quit and relaunch on the same sandbox: still pinned (read back from the file)",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "pin_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "trust-valid-trusted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "1 publisher key",
+          "id": "one-pinned-after-relaunch"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{pinKey}"
+            }
+          ],
+          "id": "pin-file-kept"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "unpin",
+      "title": "Stop trusting this publisher… → Confirm untrust: the key leaves the file",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "pin_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "pin_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "trust-valid-untrusted"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 0
+            }
+          ],
+          "id": "pin-file-empty"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched-at-end"
+        }
+      ]
+    }
+  ]
+}
