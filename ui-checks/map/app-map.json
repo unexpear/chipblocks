@@ -1602,6 +1602,12 @@
             "css": "[data-testid=\"content-manager-trust-toggle\"][data-pack=\"{pack}\"]"
           },
           "does": "Trust this publisher… / Stop trusting this publisher…. Disabled until the fingerprint is ready. Confirm writes ~/.chipblocks/trusted-publishers.json."
+        },
+        "trustConfirmYes": {
+          "sel": {
+            "testid": "content-manager-trust-confirm-yes"
+          },
+          "does": "Confirm trust / Confirm untrust in the pin confirmation. Writes ~/.chipblocks/trusted-publishers.json."
         }
       },
       "invariants": [
@@ -1621,10 +1627,18 @@
         },
         {
           "id": "cm.no-default-registry",
-          "type": "text",
-          "region": "contentManager",
-          "matches": "No content registry is configured",
-          "why": "No registry exists to point at; the empty state must say so."
+          "type": "implies",
+          "if": {
+            "type": "value",
+            "sel": "contentManager.registryUrl",
+            "equals": ""
+          },
+          "then": {
+            "type": "text",
+            "region": "contentManager",
+            "matches": "No content registry is configured"
+          },
+          "why": "No registry ships with the app: while no index URL is set, the empty state must say so. Once the user sets their own URL (workflow electron-registry-install) the status reports that URL instead."
         }
       ],
       "laya": [
@@ -2120,8 +2134,8 @@
         "why": "Stubbed in the main process; the runner checks what the app asked for (title, filters, default name) and what it did with the answer."
       },
       {
-        "feature": "Writing a publisher pin and installing from a registry index",
-        "why": "A local signed pack shows its fingerprint and the untrusted state (workflow electron-content-packs). Clicking Trust and downloading a registry pack are not driven."
+        "feature": "Registry download over https",
+        "why": "Pinning a publisher (workflow electron-trusted-publisher-pin) and installing from a registry index (workflow electron-registry-install) are driven end to end, against a file:// test registry built in the sandbox. The app refuses plain http and the runner has no trusted TLS certificate, so the https fetch itself is covered by the vitest suite (registry-download), not here."
       },
       {
         "feature": "Packaged build (electron-builder) and auto-update",

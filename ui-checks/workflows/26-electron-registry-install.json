@@ -1,0 +1,439 @@
+{
+  "name": "electron-registry-install",
+  "targets": ["electron"],
+  "title": "Install from a local test registry (file:// index, generated keys, no network): good pack installs and reaches Add Part; bad SHA-256, bad signature, and a wrong publisher key are refused with nothing left in the packs folder; real ~/.chipblocks untouched",
+  "covers": ["contentManager", "partPicker"],
+  "notes": "The registry is built at test time inside the sandbox (src/pack-fixture.mjs makeRegistry): four packs, each signed with its own throwaway in-memory ed25519 key, plus a chipblocks-content-registry-index whose entries point at them by file:// URL. The app accepts file:// only for a local test or dev index and refuses plain http, so no server or network is involved; the sandbox (and the registry with it) is deleted after the workflow. The https download path is covered by the vitest suite, not here.",
+  "steps": [
+    {
+      "id": "setup",
+      "title": "Snapshot the real ~/.chipblocks; build the registry; open the Content Manager",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makeRegistry": {
+            "dir": "{files}/registry",
+            "packs": [
+              {
+                "id": "reg_good",
+                "name": "Reg Good"
+              },
+              {
+                "id": "reg_badsha",
+                "name": "Reg Bad SHA",
+                "fault": "sha"
+              },
+              {
+                "id": "reg_badsig",
+                "name": "Reg Bad Signature",
+                "fault": "sig"
+              },
+              {
+                "id": "reg_wrongkey",
+                "name": "Reg Wrong Key",
+                "fault": "key"
+              }
+            ]
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "none-installed"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.registryStatus",
+          "matches": "No content registry is configured",
+          "id": "no-registry"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "load-index",
+      "title": "Type the file:// index URL, Save, Load: four packs listed, nothing installed",
+      "screen": "contentManager",
+      "do": [
+        {
+          "fill": "contentManager.registryUrl",
+          "value": "{registryUrl}"
+        },
+        {
+          "click": "contentManager.registrySave"
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "contentManager.registryStatus",
+            "matches": "^Registry index saved: file:"
+          }
+        },
+        {
+          "click": "contentManager.registryLoad"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.registryStatus",
+          "matches": "^Loaded 4 packs from the registry index\\. Nothing was installed\\.$",
+          "id": "loaded-4"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.registryPack",
+          "matches": "^No pack chosen Reg Good 1\\.0\\.0 Reg Bad SHA 1\\.0\\.0 Reg Bad Signature 1\\.0\\.0 Reg Wrong Key 1\\.0\\.0$",
+          "id": "four-packs-offered"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/content-registry.json",
+          "json": [
+            {
+              "at": "format",
+              "eq": "chipblocks-content-registry-settings"
+            },
+            {
+              "at": "indexUrl",
+              "matches": "^file:///.*/registry/index\\.json$"
+            }
+          ],
+          "id": "settings-in-sandbox"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-packs-folder-yet"
+        }
+      ]
+    },
+    {
+      "id": "bad-sha-refused",
+      "title": "Bad SHA-256: refused with expected vs got; no pack folder, no index",
+      "screen": "contentManager",
+      "do": [
+        {
+          "select": "contentManager.registryPack",
+          "option": "Reg Bad SHA 1.0.0"
+        },
+        {
+          "click": "contentManager.installFromRegistry"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^SHA-256 of the download for \"reg_badsha\" does not match the registry index\\. Expected [0-9a-f]{64}, got [0-9a-f]{64}\\. Nothing was written\\.$",
+          "id": "status-sha"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "no-badge"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-packs-folder"
+        }
+      ]
+    },
+    {
+      "id": "bad-signature-refused",
+      "title": "Pack edited after signing (hash + size match the index): signature refused; nothing written",
+      "screen": "contentManager",
+      "do": [
+        {
+          "select": "contentManager.registryPack",
+          "option": "Reg Bad Signature 1.0.0"
+        },
+        {
+          "click": "contentManager.installFromRegistry"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "signature does not verify over the canonical pack body.*Nothing was written\\.$",
+          "id": "status-sig"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "no-badge"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-packs-folder"
+        }
+      ]
+    },
+    {
+      "id": "wrong-key-refused",
+      "title": "Index names a different publisher key than the one that signed the pack: refused; nothing written",
+      "screen": "contentManager",
+      "do": [
+        {
+          "select": "contentManager.registryPack",
+          "option": "Reg Wrong Key 1.0.0"
+        },
+        {
+          "click": "contentManager.installFromRegistry"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^The downloaded pack's publisher key does not match the registry entry for \"reg_wrongkey\"\\. Nothing was written\\.$",
+          "id": "status-key"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "no-badge"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-packs-folder"
+        }
+      ]
+    },
+    {
+      "id": "good-installs",
+      "title": "Good pack: hash + signature verified, installed ENABLED (key not pinned); only its own folder exists",
+      "screen": "contentManager",
+      "do": [
+        {
+          "select": "contentManager.registryPack",
+          "option": "Reg Good 1.0.0"
+        },
+        {
+          "click": "contentManager.installFromRegistry"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Installed \"Reg Good\" v1\\.0\\.0 from the registry \\(publisher signature valid, key not pinned\\)\\. 1 part\\(s\\), 0 footprint\\(s\\)\\.$",
+          "id": "status-installed"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "reg_good"
+          },
+          "matches": "^ENABLED$",
+          "id": "badge"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "reg_good"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "trust-valid-untrusted"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 1,
+          "id": "one-installed"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries",
+          "entries": ["index.json", "reg_good"],
+          "id": "packs-folder-only-good"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries/reg_good",
+          "entries": ["pack.json"],
+          "id": "good-folder-one-file"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].id",
+              "eq": "reg_good"
+            },
+            {
+              "at": "packs[0].acquiredFrom",
+              "eq": "registry"
+            },
+            {
+              "at": "packs[0].signatureStatus",
+              "eq": "valid-untrusted"
+            },
+            {
+              "at": "packs[0].enabled",
+              "eq": true
+            }
+          ],
+          "id": "index-on-disk"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "exists": false,
+          "id": "nothing-pinned"
+        }
+      ]
+    },
+    {
+      "id": "refusals-after-install",
+      "title": "The three bad packs again, with a pack installed: still refused, packs folder unchanged",
+      "screen": "contentManager",
+      "do": [
+        {
+          "select": "contentManager.registryPack",
+          "option": "Reg Bad SHA 1.0.0"
+        },
+        {
+          "click": "contentManager.installFromRegistry"
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "contentManager.status",
+            "matches": "^SHA-256 of the download for \"reg_badsha\""
+          }
+        },
+        {
+          "select": "contentManager.registryPack",
+          "option": "Reg Bad Signature 1.0.0"
+        },
+        {
+          "click": "contentManager.installFromRegistry"
+        },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "contentManager.status",
+            "matches": "signature does not verify"
+          }
+        },
+        {
+          "select": "contentManager.registryPack",
+          "option": "Reg Wrong Key 1.0.0"
+        },
+        {
+          "click": "contentManager.installFromRegistry"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "publisher key does not match the registry entry for \"reg_wrongkey\"",
+          "id": "status-key"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 1,
+          "id": "still-one"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries",
+          "entries": ["index.json", "reg_good"],
+          "id": "packs-folder-unchanged"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            }
+          ],
+          "id": "index-unchanged"
+        }
+      ]
+    },
+    {
+      "id": "part-in-picker",
+      "title": "The registry pack's part is offered by Add Part",
+      "screen": "partPicker",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "macro": "newProject",
+          "with": {
+            "category": "start.circuit",
+            "template": "start.tplBlankCircuit"
+          }
+        },
+        {
+          "open": "partPicker"
+        },
+        {
+          "fill": "partPicker.search",
+          "value": "Reg Good Buffer"
+        }
+      ],
+      "expect": [
+        {
+          "type": "visible",
+          "sel": {
+            "text": "Reg Good Buffer",
+            "exact": true,
+            "within": {
+              "role": "dialog",
+              "name": "Choose a part"
+            }
+          },
+          "id": "offered"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched-at-end"
+        }
+      ]
+    }
+  ]
+}

@@ -3,8 +3,10 @@
 // asks Laya (advisory only) at checkpoints.
 import fs from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { chipblocksSnapshot, snapshotDiff } from './home-guard.mjs'
 import { compactForLaya } from './laya.mjs'
-import { makePack } from './pack-fixture.mjs'
+import { makePack, makeRegistry } from './pack-fixture.mjs'
 import { readZip } from './zip.mjs'
 
 export class StepError extends Error {
@@ -580,6 +582,35 @@ export class Engine {
           detail: bad.length ? `${file}: ${bad.join('; ')}` : `${file} (${st.size} bytes)`,
         }
       }
+      case 'dir': {
+        // A folder's direct entries, exactly (sorted names). `entries: []` = exists and empty.
+        const f = this.fill(a, params)
+        const dir = path.resolve(f.path)
+        if (!fs.existsSync(dir)) return { ok: false, detail: `${dir} does not exist` }
+        const names = fs.readdirSync(dir).sort()
+        const want = [...(f.entries ?? [])].sort()
+        return {
+          ok: JSON.stringify(names) === JSON.stringify(want),
+          detail: `${dir}: [${names.join(', ')}]${JSON.stringify(names) === JSON.stringify(want) ? '' : ` expected [${want.join(', ')}]`}`,
+        }
+      }
+      case 'realHomeUnchanged': {
+        // The real ~/.chipblocks (outside the sandbox) is exactly as the snapshot left it.
+        const before = this.vars[`realHome:${a.since}`]
+        if (before === undefined) return { ok: false, detail: `no realHomeSnapshot "${a.since}"` }
+        const now = chipblocksSnapshot()
+        const sandboxHome = path.resolve(this.pathVars.home ?? '')
+        if (path.resolve(now.root).startsWith(sandboxHome))
+          return { ok: false, detail: `real home ${now.root} resolved inside the sandbox` }
+        const { gone, added } = snapshotDiff(before, now)
+        return {
+          ok: gone.length === 0 && added.length === 0,
+          detail:
+            gone.length === 0 && added.length === 0
+              ? `${now.root}: ${now.lines[0] === 'absent' ? 'absent, as before' : `${now.lines.length} entries unchanged`}`
+              : `${now.root} changed: -[${gone.slice(0, 5).join('; ')}] +[${added.slice(0, 5).join('; ')}]`,
+        }
+      }
       case 'zip': {
         const f = this.fill(a, params)
         const file = path.resolve(f.path)
@@ -851,13 +882,32 @@ export class Engine {
       }
       if (e.append !== undefined) t += e.append
       fs.writeFileSync(file, t, 'utf8')
+    } else if (act.realHomeSnapshot) {
+      this.vars[`realHome:${act.realHomeSnapshot}`] = chipblocksSnapshot()
+    } else if (act.makeRegistry) {
+      const m = act.makeRegistry
+      const dir = this.sandboxed(m.dir, 'makeRegistry')
+      const { indexUrl } = makeRegistry({
+        dir,
+        packs: m.packs,
+        writeFile: (file, text) => {
+          const f = this.sandboxed(file, 'makeRegistry')
+          fs.mkdirSync(path.dirname(f), { recursive: true })
+          fs.writeFileSync(f, text, 'utf8')
+        },
+        fileUrl: (file) => pathToFileURL(path.resolve(file)).href,
+      })
+      this.pathVars.registryUrl = indexUrl
     } else if (act.makePack) {
       const m = act.makePack
       const file = this.sandboxed(m.path, 'makePack')
       fs.mkdirSync(path.dirname(file), { recursive: true })
       const { text, publicKeyHex } = makePack(m)
       fs.writeFileSync(file, text, 'utf8')
-      if (m.keyVar) this.vars[m.keyVar] = publicKeyHex
+      if (m.keyVar) {
+        this.vars[m.keyVar] = publicKeyHex
+        this.pathVars[m.keyVar] = publicKeyHex // usable as {keyVar} in later asserts
+      }
     } else {
       throw new StepError('driver', `unknown action ${JSON.stringify(act)}`)
     }
