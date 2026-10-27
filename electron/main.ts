@@ -10,12 +10,14 @@ import {
   type MenuItemConstructorOptions,
   session,
 } from 'electron'
+import { packIdProblem } from '../src/renderer/content-pack.ts'
 import {
   REGISTRY_DOWNLOAD_TIMEOUT_MS,
   REGISTRY_MAX_PACK_BYTES,
 } from '../src/renderer/content-registry.ts'
 import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
 import type { SaveDialogOutcome } from '../src/renderer/save-outcome.ts'
+import { writeFileAtomic } from './atomic-write.ts'
 import { type CanvasLoadingItemId, canvasLoadingItems } from './canvas-menu.ts'
 import { planChipDescriptionRequest } from './chip-description.ts'
 import { type CircuitOpenDecision, decideCircuitOpen } from './circuit-open.ts'
@@ -651,7 +653,9 @@ const trustedPublishersPath = () =>
 const contentRegistrySettingsPath = () =>
   join(app.getPath('home'), '.chipblocks', 'content-registry.json')
 
-const PACK_ID_RE = /^[a-z][a-z0-9_]*$/
+// Every pack path is built from an id that is also a safe folder name (no ../, no absolute
+// path, no Windows device name), checked here as well as in the renderer.
+const isPackId = (id: unknown): id is string => packIdProblem(id) === null
 
 function registerContentManagerHandlers(window: BrowserWindow): void {
   ipcMain.removeHandler('content:index-read')
@@ -683,7 +687,7 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
       const path = contentIndexPath()
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(path, text, 'utf8')
+        await writeFileAtomic(path, text)
         return { ok: true, path }
       } catch (error) {
         dialog.showErrorBox(
@@ -696,7 +700,7 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
   )
 
   ipcMain.handle('content:pack-read', async (_event, id: string): Promise<string | null> => {
-    if (typeof id !== 'string' || !PACK_ID_RE.test(id)) return null
+    if (!isPackId(id)) return null
     try {
       return await readFile(contentPackPath(id), 'utf8')
     } catch {
@@ -711,14 +715,14 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
       id: string,
       text: string,
     ): Promise<{ ok: boolean; path?: string; reason?: string }> => {
-      if (typeof id !== 'string' || !PACK_ID_RE.test(id)) {
+      if (!isPackId(id)) {
         return { ok: false, reason: 'Invalid pack id.' }
       }
       if (typeof text !== 'string') return { ok: false, reason: 'Pack text must be a string.' }
       const path = contentPackPath(id)
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(path, text, 'utf8')
+        await writeFileAtomic(path, text)
         return { ok: true, path }
       } catch (error) {
         return { ok: false, reason: `Writing pack failed: ${String(error)}` }
@@ -729,7 +733,7 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
   ipcMain.handle(
     'content:pack-remove',
     async (_event, id: string): Promise<{ ok: boolean; reason?: string }> => {
-      if (typeof id !== 'string' || !PACK_ID_RE.test(id)) {
+      if (!isPackId(id)) {
         return { ok: false, reason: 'Invalid pack id.' }
       }
       const dir = join(contentLibrariesDir(), id)
@@ -784,7 +788,7 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
       const path = trustedPublishersPath()
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(path, text, 'utf8')
+        await writeFileAtomic(path, text)
         return { ok: true, path }
       } catch (error) {
         dialog.showErrorBox('Could not save trusted publishers', `Writing failed: ${String(error)}`)
@@ -808,7 +812,7 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
       const path = contentRegistrySettingsPath()
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(path, text, 'utf8')
+        await writeFileAtomic(path, text)
         return { ok: true, path }
       } catch (error) {
         dialog.showErrorBox(

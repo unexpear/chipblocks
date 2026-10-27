@@ -7,9 +7,11 @@ import {
   installedPackFiles,
   installLocalPackVerified,
   type PackLoadIssue,
+  readIndexForWrite,
   serializeContentIndex,
   setPackEnabled,
   uninstallPack,
+  writeInstalledPack,
 } from './content-manager.ts'
 import { ContentManagerPanel, type PublisherCard } from './content-manager-panel.tsx'
 import { type ContentPack, deserializeContentPack } from './content-pack.ts'
@@ -48,6 +50,10 @@ import { clearCommunityPackParts, setCommunityPackParts } from './user-parts.ts'
  */
 
 type Bridge = NonNullable<Window['chipblocks']>
+
+// One write queue for every Content Manager in this window. The home tab and each project tab
+// mount their own copy of this hook; their index writes must not interleave.
+let sharedIndexWriteChain: Promise<void> = Promise.resolve()
 
 async function persistIndex(bridge: Bridge, index: ContentIndex): Promise<boolean> {
   if (bridge.writeContentIndex === undefined) return false
@@ -175,7 +181,6 @@ export function useContentManager(
   const indexRef = useRef(index)
   const indexReady = useRef(false)
   const indexWritable = useRef(false)
-  const writeChain = useRef(Promise.resolve())
   const trustedRef = useRef(trusted)
   const trustedReady = useRef(false)
   const trustWriteChain = useRef(Promise.resolve())
@@ -194,8 +199,20 @@ export function useContentManager(
   }, [])
 
   const enqueueIndexWrite = useCallback((task: () => Promise<void>) => {
-    writeChain.current = writeChain.current.then(task, task)
+    sharedIndexWriteChain = sharedIndexWriteChain.then(task, task)
   }, [])
+
+  // Every index write starts from the file on disk. Another tab or window may have installed,
+  // removed, or toggled a pack since this tab last read it.
+  const latestIndex = useCallback(async (): Promise<ContentIndex | null> => {
+    const latest = await readIndexForWrite(window.chipblocks?.readContentIndex, indexRef.current)
+    if (!latest.ok) {
+      setStatusMessage(latest.reason)
+      return null
+    }
+    commitIndex(latest.index)
+    return latest.index
+  }, [commitIndex])
 
   const indexWritesAllowed = useCallback((): boolean => {
     if (!indexReady.current) {
@@ -227,6 +244,32 @@ export function useContentManager(
     const open = () => {
       if (!activeRef.current) return
       setIsOpen(true)
+      // Show what is on disk now; another tab may have changed the index or the pins.
+      if (indexReady.current && indexWritable.current && bridge?.readContentIndex !== undefined) {
+        const read = bridge.readContentIndex
+        sharedIndexWriteChain = sharedIndexWriteChain.then(async () => {
+          try {
+            const text = await read()
+            const result = text === null ? null : deserializeContentIndex(text)
+            if (result?.ok) commitIndex(result.index)
+            if (text === null) commitIndex(emptyContentIndex())
+          } catch {
+            // The next write re-reads and reports a failure; opening the panel does not.
+          }
+        })
+      }
+      if (trustedReady.current && bridge?.readTrustedPublishers !== undefined) {
+        void bridge
+          .readTrustedPublishers()
+          .then((text) => {
+            const effective = effectiveTrustedPublishers(text)
+            commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
+          })
+          .catch((error: unknown) => {
+            const effective = effectiveTrustedPublishers(null, String(error))
+            commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
+          })
+      }
     }
     window.addEventListener('chipblocks:content-manager', open)
 
@@ -370,8 +413,10 @@ export function useContentManager(
         setStatusMessage('No pack file text returned.')
         return
       }
+      const base = await latestIndex()
+      if (base === null) return
       const installed = await installLocalPackVerified(
-        indexRef.current,
+        base,
         picked.text,
         Date.now(),
         trustedRef.current,
@@ -387,16 +432,34 @@ export function useContentManager(
       const record = files.record
       const onDiskText = files.onDiskText
       const nextIndex = files.index
-      const written = await writePack(pack.id, onDiskText)
-      if (!written.ok) {
+      const writeIndex = bridge.writeContentIndex
+      const removePack = bridge.removeContentPack
+      if (writeIndex === undefined || removePack === undefined) {
         setStatusMessage(
-          written.reason ?? 'Could not write the pack under ~/.chipblocks/libraries/.',
+          'Install from local pack needs the desktop app bridge (pick file + write under ~/.chipblocks/libraries/).',
         )
         return
       }
-      const saved = await persistIndex(bridge, nextIndex)
-      if (!saved) {
-        setStatusMessage('Pack file written, but the install index could not be saved.')
+      const readPack = bridge.readContentPack
+      const saved = await writeInstalledPack({
+        id: pack.id,
+        onDiskText,
+        index: nextIndex,
+        hadPrevious: base.packs.some((row) => row.id === pack.id),
+        io: {
+          writePack,
+          writeIndex: async (text) => {
+            const result = await writeIndex(text)
+            return result.ok
+              ? { ok: true }
+              : { ok: false, reason: 'The install index could not be saved.' }
+          },
+          removePack,
+          ...(readPack !== undefined ? { readPack } : {}),
+        },
+      })
+      if (!saved.ok) {
+        setStatusMessage(saved.reason)
         return
       }
       commitIndex(nextIndex)
@@ -412,12 +475,15 @@ export function useContentManager(
         `Installed "${record.name}" v${record.packVersion} (${record.license}; ${trustBit}). Enabled — ${registered}.`,
       )
     })
-  }, [commitIndex, enqueueIndexWrite, indexWritesAllowed])
+  }, [commitIndex, enqueueIndexWrite, indexWritesAllowed, latestIndex])
 
   const onSetEnabled = useCallback(
     (id: string, enabled: boolean) => {
       enqueueIndexWrite(async () => {
-        const next = setPackEnabled(indexRef.current, id, enabled)
+        if (window.chipblocks?.writeContentIndex !== undefined && !indexWritesAllowed()) return
+        const base = await latestIndex()
+        if (base === null) return
+        const next = setPackEnabled(base, id, enabled)
         if (isRefuse(next)) {
           setStatusMessage(next.reason)
           return
@@ -452,20 +518,22 @@ export function useContentManager(
         )
       })
     },
-    [commitIndex, enqueueIndexWrite, indexWritesAllowed, rememberLoads],
+    [commitIndex, enqueueIndexWrite, indexWritesAllowed, latestIndex, rememberLoads],
   )
 
   const onUninstall = useCallback(
     (id: string) => {
       enqueueIndexWrite(async () => {
-        const next = uninstallPack(indexRef.current, id)
-        if (isRefuse(next)) {
-          setStatusMessage(next.reason)
-          return
-        }
         const bridge = window.chipblocks
         if (bridge?.writeContentIndex !== undefined || bridge?.removeContentPack !== undefined) {
           if (!indexWritesAllowed()) return
+        }
+        const base = await latestIndex()
+        if (base === null) return
+        const next = uninstallPack(base, id)
+        if (isRefuse(next)) {
+          setStatusMessage(next.reason)
+          return
         }
         clearCommunityPackParts(id)
         clearCommunityPackFootprints(id)
@@ -487,7 +555,7 @@ export function useContentManager(
         setStatusMessage(`Uninstalled "${id}".`)
       })
     },
-    [commitIndex, enqueueIndexWrite, indexWritesAllowed],
+    [commitIndex, enqueueIndexWrite, indexWritesAllowed, latestIndex],
   )
 
   const onTrustPublisher = useCallback(
@@ -594,7 +662,7 @@ export function useContentManager(
         setRegistryPacks([])
         return
       }
-      const parsed = parseRegistryIndex(text)
+      const parsed = parseRegistryIndex(text, url)
       if (!parsed.ok) {
         setRegistryStatus(parsed.reason)
         setStatusMessage(parsed.reason)
@@ -649,8 +717,10 @@ export function useContentManager(
         setStatusMessage(downloaded.reason)
         return
       }
+      const base = await latestIndex()
+      if (base === null) return
       const installed = await installDownloadedRegistryPack({
-        index: indexRef.current,
+        index: base,
         entry,
         body: downloaded.bytes,
         trusted: trustedRef.current,
@@ -680,7 +750,14 @@ export function useContentManager(
         `Installed "${installed.record.name}" v${installed.record.packVersion} from the registry (${trustBit}). ${partsKept} part(s), ${fpKept} footprint(s).`,
       )
     })
-  }, [commitIndex, enqueueIndexWrite, indexWritesAllowed, registryPacks, registrySelection])
+  }, [
+    commitIndex,
+    enqueueIndexWrite,
+    indexWritesAllowed,
+    latestIndex,
+    registryPacks,
+    registrySelection,
+  ])
 
   const publisherByPack: Record<string, PublisherCard> = {}
   for (const pack of index.packs) {

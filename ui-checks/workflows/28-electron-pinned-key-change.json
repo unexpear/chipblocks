@@ -1,0 +1,249 @@
+{
+  "name": "electron-pinned-key-change",
+  "targets": ["electron"],
+  "title": "A pack installed from a pinned publisher key cannot be replaced by a file signed with another key or unsigned; unpinning keeps the pack enabled and lifts that guard; a corrupt trusted-publishers.json is reported and never overwritten",
+  "covers": ["contentManager"],
+  "notes": "All three keyed_pack files share one pack id. Each signed file gets its own throwaway ed25519 key (src/pack-fixture.mjs). Everything is written in the sandbox home; the real ~/.chipblocks is snapshotted read-only and compared at the end of each step.",
+  "steps": [
+    {
+      "id": "install-and-pin",
+      "title": "Install keyed_pack 1.0.0 and pin its publisher key",
+      "screen": "contentManager",
+      "do": [
+        { "realHomeSnapshot": "start" },
+        {
+          "makePack": {
+            "path": "{files}/keyed_v1.json",
+            "id": "keyed_pack",
+            "name": "Keyed Pack",
+            "keyVar": "keyOne"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/keyed_other_key.json",
+            "id": "keyed_pack",
+            "name": "Keyed Pack",
+            "packVersion": "1.1.0",
+            "keyVar": "keyTwo"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/keyed_unsigned.json",
+            "id": "keyed_pack",
+            "name": "Keyed Pack",
+            "packVersion": "1.2.0",
+            "sign": false
+          }
+        },
+        { "menu": "Tools ▸ Plugin & Content Manager" },
+        { "waitReady": "contentManager" },
+        { "dialog": { "open": "{files}/keyed_v1.json" } },
+        { "click": "contentManager.install" },
+        { "click": "contentManager.trustToggleFor", "with": { "pack": "keyed_pack" } },
+        { "click": "contentManager.trustConfirmYes" }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": { "pack": "keyed_pack" },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [{ "at": "keys[0].publicKey", "eq": "{keyOne}" }],
+          "id": "pin-file"
+        },
+        { "type": "realHomeUnchanged", "since": "start", "id": "real-home-untouched" }
+      ]
+    },
+    {
+      "id": "other-key-refused",
+      "title": "Install a keyed_pack signed by a different key: refused, the pinned pack stays",
+      "screen": "contentManager",
+      "do": [
+        { "dialog": { "open": "{files}/keyed_other_key.json" } },
+        { "click": "contentManager.install" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^\"keyed_pack\" is installed from a publisher key you pinned\\. This file is signed by a different publisher key, so it was not installed over it\\. Nothing was written\\.",
+          "id": "refused-honestly"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            { "at": "packs.length", "eq": 1 },
+            { "at": "packs[0].packVersion", "eq": "1.0.0" },
+            { "at": "packs[0].publisherKeyHex", "eq": "{keyOne}" }
+          ],
+          "id": "index-unchanged"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/keyed_pack/pack.json",
+          "json": [{ "at": "packVersion", "eq": "1.0.0" }],
+          "id": "pack-file-unchanged"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": { "pack": "keyed_pack" },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "still-pinned"
+        }
+      ]
+    },
+    {
+      "id": "unsigned-refused",
+      "title": "Install an unsigned keyed_pack: refused for the same reason",
+      "screen": "contentManager",
+      "do": [
+        { "dialog": { "open": "{files}/keyed_unsigned.json" } },
+        { "click": "contentManager.install" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "This file has no publisher signature, so it was not installed over it\\. Nothing was written\\.",
+          "id": "refused-unsigned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            { "at": "packs[0].packVersion", "eq": "1.0.0" },
+            { "at": "packs[0].publisherKeyHex", "eq": "{keyOne}" }
+          ],
+          "id": "index-unchanged"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries/keyed_pack",
+          "entries": ["pack.json"],
+          "id": "no-temp-files-left"
+        }
+      ]
+    },
+    {
+      "id": "unpin-while-enabled",
+      "title": "Unpin while the pack is enabled: it stays ENABLED, shows as not pinned, and the other key may now replace it",
+      "screen": "contentManager",
+      "do": [
+        { "click": "contentManager.trustToggleFor", "with": { "pack": "keyed_pack" } },
+        { "click": "contentManager.trustConfirmYes" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": { "pack": "keyed_pack" },
+          "matches": "^ENABLED$",
+          "id": "still-enabled"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": { "pack": "keyed_pack" },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "not-pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [{ "at": "keys.length", "eq": 0 }],
+          "id": "pin-removed"
+        }
+      ]
+    },
+    {
+      "id": "other-key-after-unpin",
+      "title": "With no pin on the old key, the 1.1.0 file from the other key installs as valid but not pinned",
+      "screen": "contentManager",
+      "do": [
+        { "dialog": { "open": "{files}/keyed_other_key.json" } },
+        { "click": "contentManager.install" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Installed \"Keyed Pack\" v1\\.1\\.0",
+          "id": "installed"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            { "at": "packs.length", "eq": 1 },
+            { "at": "packs[0].packVersion", "eq": "1.1.0" },
+            { "at": "packs[0].publisherKeyHex", "eq": "{keyTwo}" },
+            { "at": "packs[0].signatureStatus", "eq": "valid-untrusted" }
+          ],
+          "id": "index-updated"
+        },
+        { "type": "realHomeUnchanged", "since": "start", "id": "real-home-untouched" }
+      ]
+    },
+    {
+      "id": "corrupt-pin-file",
+      "title": "Break trusted-publishers.json and relaunch: the reason is shown, no key counts as pinned, and a trust click does not overwrite the file",
+      "screen": "contentManager",
+      "do": [
+        { "click": "contentManager.close" },
+        {
+          "editFile": {
+            "path": "{home}/.chipblocks/trusted-publishers.json",
+            "append": "\n}broken"
+          }
+        },
+        { "relaunch": true },
+        { "waitReady": "start" },
+        { "menu": "Tools ▸ Plugin & Content Manager" },
+        { "waitReady": "contentManager" },
+        { "click": "contentManager.trustToggleFor", "with": { "pack": "keyed_pack" } },
+        { "click": "contentManager.trustConfirmYes" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^trusted-publishers file is not valid JSON\\. No publisher key from that file is trusted\\. Nothing will be written over it\\.$",
+          "id": "corrupt-reported"
+        },
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^trusted-publishers file is not valid JSON\\. Nothing was written, so the trusted-publishers file was left as it is\\.$",
+          "id": "trust-refused"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": { "pack": "keyed_pack" },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "not-pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "matches": "\\n\\}broken$",
+          "id": "file-left-as-is"
+        },
+        { "type": "realHomeUnchanged", "since": "start", "id": "real-home-untouched-at-end" }
+      ]
+    }
+  ]
+}

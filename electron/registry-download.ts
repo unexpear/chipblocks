@@ -77,11 +77,22 @@ export async function readHttpsBounded(
     return { ok: false, reason: 'The download had no body. Nothing was kept.' }
   }
   const reader = response.body.getReader()
-  return collectBounded(async () => {
-    const step = await reader.read()
-    if (step.done) return null
-    return step.value
-  }, maxBytes)
+  try {
+    const collected = await collectBounded(async () => {
+      const step = await reader.read()
+      if (step.done) return null
+      return step.value
+    }, maxBytes)
+    // Stop the connection once the limit is hit instead of draining the rest.
+    if (!collected.ok) await reader.cancel().catch(() => undefined)
+    return collected
+  } catch (error) {
+    if (signal.aborted) {
+      return { ok: false, reason: 'The download timed out. Nothing was kept.' }
+    }
+    const detail = error instanceof Error ? error.message : String(error)
+    return { ok: false, reason: `The download did not complete (${detail}). Nothing was kept.` }
+  }
 }
 
 export async function readFileUrlBounded(url: URL, maxBytes: number): Promise<DownloadResult> {
@@ -91,6 +102,13 @@ export async function readFileUrlBounded(url: URL, maxBytes: number): Promise<Do
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     return { ok: false, reason: `That file URL is not a local path (${detail}). Nothing was read.` }
+  }
+  // \\server\share or //server/share: opening it would sign this computer in to that server.
+  if (path.startsWith('\\\\') || path.startsWith('//')) {
+    return {
+      ok: false,
+      reason: 'That file URL points at a network share, not this computer. Nothing was read.',
+    }
   }
   try {
     const info = await stat(path)
