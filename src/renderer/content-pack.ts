@@ -88,6 +88,37 @@ export type LicenseGateResult = { ok: true; license: string } | { ok: false; rea
 
 const ID_RE = /^[a-z][a-z0-9_]*$/
 
+/** The pack id is also a folder name under ~/.chipblocks/libraries, so it is capped. */
+export const PACK_ID_MAX_LENGTH = 64
+
+// Windows device names. Node can create a folder with one of these names, but Explorer and
+// PowerShell then cannot delete it, so a pack id must never be one.
+const WINDOWS_DEVICE_NAMES = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  ...Array.from({ length: 10 }, (_, i) => `com${i}`),
+  ...Array.from({ length: 10 }, (_, i) => `lpt${i}`),
+])
+
+/**
+ * Why a pack id cannot be a folder under ~/.chipblocks/libraries, or null when it can.
+ * Shared by the pack parser, the registry index parser, and the desktop process.
+ */
+export function packIdProblem(id: unknown): string | null {
+  if (typeof id !== 'string' || !ID_RE.test(id)) {
+    return 'Pack id must be snake_case (letter, then letters/digits/underscores).'
+  }
+  if (id.length > PACK_ID_MAX_LENGTH) {
+    return `Pack id is ${id.length} characters; the limit is ${PACK_ID_MAX_LENGTH}.`
+  }
+  if (WINDOWS_DEVICE_NAMES.has(id)) {
+    return `Pack id "${id}" is a Windows device name and cannot be a folder name.`
+  }
+  return null
+}
+
 /** Normalize a license string for whitelist comparison. */
 export function normalizeLicense(raw: string): string {
   return raw.trim().replace(/[_\s]+/g, '-')
@@ -150,10 +181,11 @@ export function deserializeContentPack(text: string): PackParseResult {
       reason: `Unsupported content-pack version ${String(file.version)} (this build reads ${CONTENT_PACK_VERSION}).`,
     }
   }
-  if (typeof file.id !== 'string' || !ID_RE.test(file.id)) {
+  const idProblem = packIdProblem(file.id)
+  if (idProblem !== null || typeof file.id !== 'string') {
     return {
       ok: false,
-      reason: 'Pack id must be snake_case (letter, then letters/digits/underscores).',
+      reason: idProblem ?? 'Pack id must be snake_case (letter, then letters/digits/underscores).',
     }
   }
   if (typeof file.name !== 'string' || file.name.trim() === '') {

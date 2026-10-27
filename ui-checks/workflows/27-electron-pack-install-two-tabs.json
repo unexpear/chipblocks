@@ -1,0 +1,109 @@
+{
+  "name": "electron-pack-install-two-tabs",
+  "targets": ["electron"],
+  "title": "Install one pack from the home tab and another from a project tab, then disable from the home tab: the install index keeps both packs (no lost update between Content Manager instances)",
+  "covers": ["contentManager"],
+  "notes": "The home tab and every project tab keep their own Content Manager mounted, each with the index it read at mount. Every index write must build on the index on disk, not on that tab's copy. Packs are signed at test time with throwaway keys (src/pack-fixture.mjs).",
+  "steps": [
+    {
+      "id": "install-from-home",
+      "title": "Home tab: install tab_a from a local file",
+      "screen": "contentManager",
+      "do": [
+        { "realHomeSnapshot": "start" },
+        { "makePack": { "path": "{files}/tab_a.json", "id": "tab_a", "name": "Tab A" } },
+        { "makePack": { "path": "{files}/tab_b.json", "id": "tab_b", "name": "Tab B" } },
+        { "menu": "Tools ▸ Plugin & Content Manager" },
+        { "waitReady": "contentManager" },
+        { "dialog": { "open": "{files}/tab_a.json" } },
+        { "click": "contentManager.install" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": { "pack": "tab_a" },
+          "matches": "^ENABLED$",
+          "id": "a-enabled"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [{ "at": "packs.length", "eq": 1 }],
+          "id": "index-has-a"
+        }
+      ]
+    },
+    {
+      "id": "install-from-project-tab",
+      "title": "New project tab: install tab_b from its own Content Manager",
+      "screen": "contentManager",
+      "do": [
+        { "click": "contentManager.close" },
+        {
+          "macro": "newProject",
+          "with": { "category": "start.circuit", "template": "start.tplBlankCircuit" }
+        },
+        { "menu": "Tools ▸ Plugin & Content Manager" },
+        { "waitReady": "contentManager" },
+        { "dialog": { "open": "{files}/tab_b.json" } },
+        { "click": "contentManager.install" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": { "pack": "tab_b" },
+          "matches": "^ENABLED$",
+          "id": "b-enabled"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [{ "at": "packs.length", "eq": 2 }],
+          "id": "index-has-both"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries",
+          "entries": ["index.json", "tab_a", "tab_b"],
+          "id": "both-folders"
+        }
+      ]
+    },
+    {
+      "id": "disable-from-home-tab",
+      "title": "Back on the home tab, whose Content Manager has not seen tab_b: disable tab_a there; tab_b must stay in the index",
+      "screen": "contentManager",
+      "do": [
+        { "click": "contentManager.close" },
+        { "click": "workspace.homeTab" },
+        { "menu": "Tools ▸ Plugin & Content Manager" },
+        { "waitReady": "contentManager" },
+        { "click": "contentManager.packButton", "with": { "pack": "tab_a", "button": "Disable" } }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": { "pack": "tab_a" },
+          "matches": "^DISABLED$",
+          "id": "a-disabled"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            { "at": "packs.length", "eq": 2 },
+            { "at": "packs[0].id", "eq": "tab_a" },
+            { "at": "packs[0].enabled", "eq": false },
+            { "at": "packs[1].id", "eq": "tab_b" },
+            { "at": "packs[1].enabled", "eq": true }
+          ],
+          "id": "index-still-both"
+        },
+        { "type": "realHomeUnchanged", "since": "start", "id": "real-home-untouched-at-end" }
+      ]
+    }
+  ]
+}

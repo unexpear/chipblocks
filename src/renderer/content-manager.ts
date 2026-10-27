@@ -38,6 +38,7 @@ import {
   verifyPackIntegrity,
 } from './content-pack-integrity.ts'
 import {
+  canonicalPublicKeyHex,
   type SignatureVerdict,
   type TrustedPublishers,
   trustNoteForSignature,
@@ -344,6 +345,8 @@ export async function installLocalPackVerified(
   if (sig.kind === 'invalid') {
     return { ok: false, reason: sig.reason }
   }
+  const keyChange = pinnedKeyChange(index, packText, sig, trustedPublishers)
+  if (keyChange !== null) return { ok: false, reason: keyChange }
   const signatureStatus: 'none' | 'valid-untrusted' | 'valid-trusted' =
     sig.kind === 'undeclared'
       ? 'none'
@@ -362,6 +365,145 @@ export async function installLocalPackVerified(
     stamp.publisherKeyHex = sig.publicKeyHex
   }
   return installLocalPack(index, packText, installedAt, stamp)
+}
+
+/**
+ * An installed pack whose publisher key you pinned may only be replaced by a file signed with
+ * that same key. A different key, or no signature, could be anyone reusing the pack id.
+ */
+function pinnedKeyChange(
+  index: ContentIndex,
+  packText: string,
+  sig: SignatureVerdict,
+  trusted: TrustedPublishers | undefined,
+): string | null {
+  if (trusted === undefined) return null
+  let id: unknown
+  try {
+    id = (JSON.parse(packText) as Record<string, unknown>).id
+  } catch {
+    return null
+  }
+  const previous = index.packs.find((pack) => pack.id === id)
+  if (previous?.publisherKeyHex === undefined) return null
+  const pinnedKeys = new Set(
+    trusted.keys
+      .map((key) => canonicalPublicKeyHex(key.publicKey))
+      .filter((key): key is string => key !== null),
+  )
+  const oldKey = previous.publisherKeyHex.toLowerCase()
+  if (!pinnedKeys.has(oldKey)) return null
+  const newKey =
+    sig.kind === 'valid-trusted' || sig.kind === 'valid-untrusted' ? sig.publicKeyHex : null
+  if (newKey === oldKey) return null
+  const what =
+    newKey === null
+      ? 'This file has no publisher signature'
+      : 'This file is signed by a different publisher key'
+  return `"${previous.id}" is installed from a publisher key you pinned. ${what}, so it was not installed over it. Nothing was written. If the publisher really changed keys, uninstall the old pack first, then install this one and decide whether to pin its key.`
+}
+
+/**
+ * Read the install index from disk right before a write, so a change builds on what is there
+ * now and not on a copy another window or tab read earlier. Without a reader (no desktop
+ * bridge) the caller's copy is used. A read that fails, or a file that does not parse, refuses.
+ */
+export async function readIndexForWrite(
+  read: (() => Promise<string | null>) | undefined,
+  fallback: ContentIndex,
+): Promise<IndexResult> {
+  if (read === undefined) return { ok: true, index: fallback }
+  let text: string | null
+  try {
+    text = await read()
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `The content-manager index could not be read (${String(error)}). Nothing was written.`,
+    }
+  }
+  if (text === null) return { ok: true, index: emptyContentIndex() }
+  const parsed = deserializeContentIndex(text)
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      reason: `${parsed.reason} Nothing was written over that index file.`,
+    }
+  }
+  return parsed
+}
+
+export type PackFileIO = {
+  writePack: (id: string, text: string) => Promise<{ ok: boolean; reason?: string }>
+  writeIndex: (text: string) => Promise<{ ok: boolean; reason?: string }>
+  readPack?: (id: string) => Promise<string | null>
+  removePack: (id: string) => Promise<{ ok: boolean; reason?: string }>
+}
+
+/**
+ * Write pack.json, then index.json. If either write fails, a new pack directory is removed and
+ * an update puts the previous pack.json back when it was readable, so a failed install does
+ * not leave a pack file that the index does not describe.
+ */
+export async function writeInstalledPack(args: {
+  id: string
+  onDiskText: string
+  index: ContentIndex
+  hadPrevious: boolean
+  io: PackFileIO
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const { id, io } = args
+  let previousText: string | null = null
+  if (args.hadPrevious && io.readPack !== undefined) {
+    try {
+      previousText = await io.readPack(id)
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `The installed pack "${id}" could not be read before update (${String(error)}). Nothing was written.`,
+      }
+    }
+  }
+  const written = await io.writePack(id, args.onDiskText)
+  if (!written.ok) {
+    const cleanup = args.hadPrevious
+      ? 'The previous pack file was not replaced.'
+      : await removeNewPackDir(id, io)
+    return {
+      ok: false,
+      reason: `${written.reason ?? `Could not write the pack "${id}".`} The index was not changed. ${cleanup}`,
+    }
+  }
+  const saved = await io.writeIndex(serializeContentIndex(args.index))
+  if (saved.ok) return { ok: true }
+  const restored = args.hadPrevious
+    ? await putPreviousBack(id, previousText, io)
+    : await removeNewPackDir(id, io)
+  return {
+    ok: false,
+    reason: `The pack file for "${id}" was not left half-installed. ${saved.reason ?? 'The install index could not be saved.'} ${restored}`,
+  }
+}
+
+async function removeNewPackDir(id: string, io: PackFileIO): Promise<string> {
+  const removed = await io.removePack(id)
+  return removed.ok
+    ? 'The new pack directory was removed.'
+    : `The new pack directory could not be removed (${removed.reason ?? 'no reason'}).`
+}
+
+async function putPreviousBack(
+  id: string,
+  previousText: string | null,
+  io: PackFileIO,
+): Promise<string> {
+  if (previousText === null) {
+    return 'The previous pack file was not readable, so it was not put back. The index was not updated.'
+  }
+  const putBack = await io.writePack(id, previousText)
+  return putBack.ok
+    ? 'The previous pack file was put back. The index was not updated.'
+    : `The previous pack file could not be put back (${putBack.reason ?? 'no reason'}). The index was not updated.`
 }
 
 /**

@@ -10,8 +10,10 @@ import {
   type InstallResult,
   installedPackFiles,
   installLocalPackVerified,
-  serializeContentIndex,
+  type PackFileIO,
+  writeInstalledPack,
 } from './content-manager.ts'
+import { packIdProblem } from './content-pack.ts'
 import { sha256HexBytes } from './content-pack-integrity.ts'
 import {
   bytesToHex,
@@ -40,7 +42,6 @@ export const NO_REGISTRY_CONFIGURED =
 export const TRUSTED_PUBLISHERS_UNAVAILABLE =
   'This window has no desktop bridge, so ~/.chipblocks/trusted-publishers.json stays unread. No publisher key is treated as pinned.'
 
-const PACK_ID_RE = /^[a-z][a-z0-9_]*$/
 const HEX64 = /^[a-f0-9]{64}$/i
 
 export type RegistrySignature = {
@@ -94,7 +95,18 @@ export function classifyRegistryUrl(raw: string): RegistryUrlClass {
       reason: 'Registry URLs must not include a username or password. Nothing was downloaded.',
     }
   }
-  if (url.protocol === 'file:') return { ok: true, scheme: 'file', url }
+  if (url.protocol === 'file:') {
+    // A file URL with a host, or a //server path, is a network share. On Windows, opening one
+    // makes the computer sign in to that server, so it is refused before anything is read.
+    const host = url.hostname.toLowerCase()
+    if ((host !== '' && host !== 'localhost') || url.pathname.startsWith('//')) {
+      return {
+        ok: false,
+        reason: `file:// registry URLs must point at a file on this computer, not a network share (${trimmed}). Nothing was downloaded.`,
+      }
+    }
+    return { ok: true, scheme: 'file', url }
+  }
   if (url.protocol === 'https:') {
     if (url.hostname === '') {
       return { ok: false, reason: 'That https URL has no host. Nothing was downloaded.' }
@@ -155,8 +167,9 @@ function parsePackEntry(
   if (extra !== null) {
     return { ok: false, reason: `${label} has unknown field ${JSON.stringify(extra)}.` }
   }
-  if (typeof p.id !== 'string' || !PACK_ID_RE.test(p.id)) {
-    return { ok: false, reason: `${label} id must be snake_case.` }
+  const idProblem = packIdProblem(p.id)
+  if (idProblem !== null || typeof p.id !== 'string') {
+    return { ok: false, reason: `${label}: ${idProblem ?? 'id must be snake_case.'}` }
   }
   if (typeof p.version !== 'string' || p.version.trim() === '' || p.version.trim().length > 64) {
     return { ok: false, reason: `${label} (${p.id}) needs a version string.` }
@@ -202,8 +215,14 @@ function parsePackEntry(
   return { ok: true, entry }
 }
 
-/** Strict index reader. One bad pack refuses the whole index — bad rows are not skipped. */
-export function parseRegistryIndex(text: string): RegistryIndex {
+/**
+ * Strict index reader. One bad pack refuses the whole index — bad rows are not skipped.
+ * When `indexUrl` is given and is https, every downloadUrl must be https too: an index from
+ * the network may not send the app to read files on this computer.
+ */
+export function parseRegistryIndex(text: string, indexUrl?: string): RegistryIndex {
+  const from = indexUrl === undefined ? null : classifyRegistryUrl(indexUrl)
+  const remoteIndex = from?.ok === true && from.scheme === 'https'
   let raw: unknown
   try {
     raw = JSON.parse(text)
@@ -238,6 +257,12 @@ export function parseRegistryIndex(text: string): RegistryIndex {
   for (let i = 0; i < file.packs.length; i++) {
     const parsed = parsePackEntry(file.packs[i], i)
     if (!parsed.ok) return parsed
+    if (remoteIndex && !parsed.entry.downloadUrl.toLowerCase().startsWith('https:')) {
+      return {
+        ok: false,
+        reason: `Registry pack ${i + 1} (${parsed.entry.id}): an https registry index may only list https downloads. Refused ${parsed.entry.downloadUrl}. Nothing was downloaded.`,
+      }
+    }
     if (seen.has(parsed.entry.id)) {
       return { ok: false, reason: `The registry index lists "${parsed.entry.id}" more than once.` }
     }
@@ -375,17 +400,13 @@ export async function checkRegistryDownload(
   return { ok: true, text }
 }
 
-export type RegistryInstallIO = {
-  writePack: (id: string, text: string) => Promise<{ ok: boolean; reason?: string }>
-  writeIndex: (text: string) => Promise<{ ok: boolean; reason?: string }>
-  readPack?: (id: string) => Promise<string | null>
-  removePack: (id: string) => Promise<{ ok: boolean; reason?: string }>
-}
+export type RegistryInstallIO = PackFileIO
 
 /**
  * Verify, then install through the same pack + index write as a local file.
- * Verification failure does not call writePack. If the index cannot be saved, a new pack
- * directory is removed and an update puts the previous pack.json back when it was readable.
+ * Verification failure does not call writePack. If the pack or the index cannot be saved, a new
+ * pack directory is removed and an update puts the previous pack.json back when it was readable.
+ * An older version than the one installed is refused: a registry must not roll a pack back.
  */
 export async function installDownloadedRegistryPack(args: {
   index: ContentIndex
@@ -397,6 +418,13 @@ export async function installDownloadedRegistryPack(args: {
 }): Promise<InstallResult> {
   const url = classifyRegistryUrl(args.entry.downloadUrl)
   if (!url.ok) return url
+  const have = args.index.packs.find((pack) => pack.id === args.entry.id)
+  if (have !== undefined && isNewerRegistryVersion(args.entry.version, have.packVersion)) {
+    return {
+      ok: false,
+      reason: `"${args.entry.id}" ${have.packVersion} is installed, and the registry offers the older ${args.entry.version}. A registry install does not go back a version. Nothing was written. Uninstall first if you mean to go back.`,
+    }
+  }
   const checked = await checkRegistryDownload(args.entry, args.body)
   if (!checked.ok) return checked
   const installed = await installLocalPackVerified(
@@ -425,54 +453,15 @@ export async function installDownloadedRegistryPack(args: {
     ...files.index,
     packs: files.index.packs.map((pack) => (pack.id === record.id ? record : pack)),
   }
-  const hadPrevious = args.index.packs.some((pack) => pack.id === record.id)
-  let previousText: string | null = null
-  if (hadPrevious && args.io.readPack !== undefined) {
-    try {
-      previousText = await args.io.readPack(record.id)
-    } catch (error) {
-      return {
-        ok: false,
-        reason: `The installed pack "${record.id}" could not be read before update (${String(error)}). Nothing was written.`,
-      }
-    }
-  }
-  const written = await args.io.writePack(record.id, files.onDiskText)
-  if (!written.ok) {
-    return {
-      ok: false,
-      reason:
-        written.reason ?? `Could not write the pack "${record.id}". Nothing else was changed.`,
-    }
-  }
-  const saved = await args.io.writeIndex(serializeContentIndex(index))
-  if (saved.ok) return { ok: true, record, pack: installed.pack, index }
-  const restored = await restorePackAfterFailedIndex(record.id, hadPrevious, previousText, args.io)
-  return {
-    ok: false,
-    reason: `The pack file for "${record.id}" was not left half-installed. ${saved.reason ?? 'The install index could not be saved.'} ${restored}`,
-  }
-}
-
-async function restorePackAfterFailedIndex(
-  id: string,
-  hadPrevious: boolean,
-  previousText: string | null,
-  io: RegistryInstallIO,
-): Promise<string> {
-  if (!hadPrevious) {
-    const removed = await io.removePack(id)
-    return removed.ok
-      ? 'The new pack directory was removed.'
-      : `The new pack directory could not be removed (${removed.reason ?? 'no reason'}).`
-  }
-  if (previousText === null) {
-    return 'The previous pack file was not readable, so it was not put back. The index was not updated.'
-  }
-  const putBack = await io.writePack(id, previousText)
-  return putBack.ok
-    ? 'The previous pack file was put back. The index was not updated.'
-    : `The previous pack file could not be put back (${putBack.reason ?? 'no reason'}). The index was not updated.`
+  const saved = await writeInstalledPack({
+    id: record.id,
+    onDiskText: files.onDiskText,
+    index,
+    hadPrevious: have !== undefined,
+    io: args.io,
+  })
+  if (!saved.ok) return saved
+  return { ok: true, record, pack: installed.pack, index }
 }
 
 export type RegistrySettings = { ok: true; indexUrl: string } | { ok: false; reason: string }
