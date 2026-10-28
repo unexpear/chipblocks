@@ -127,6 +127,7 @@
       "id": "tools-content-manager",
       "title": "Tools ▸ Plugin & Content Manager opens the dialog on the launcher (nothing installed in a fresh home)",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         {
           "menu": "Tools ▸ Plugin & Content Manager"
@@ -175,6 +176,7 @@
       "id": "shortcuts-menu",
       "title": "Shortcuts ▸ View / Change Shortcuts… opens the panel with the default keys",
       "screen": "shortcuts",
+      "laya": true,
       "do": [
         {
           "menu": "Shortcuts ▸ View / Change Shortcuts"
@@ -214,6 +216,7 @@
       "id": "led-project",
       "title": "LED project: the three canvas-loading items light up",
       "screen": "workspace",
+      "laya": true,
       "do": {
         "macro": "newProject",
         "with": {

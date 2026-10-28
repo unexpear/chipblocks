@@ -9,6 +9,7 @@
       "id": "install-from-home",
       "title": "Home tab: install tab_a from a local file",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         { "realHomeSnapshot": "start" },
         { "makePack": { "path": "{files}/tab_a.json", "id": "tab_a", "name": "Tab A" } },

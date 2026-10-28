@@ -9,6 +9,7 @@
       "id": "blank",
       "title": "Blank circuit (the File item needs a canvas)",
       "screen": "workspace",
+      "laya": true,
       "do": {
         "macro": "newProject",
         "with": {

@@ -16,7 +16,8 @@ npm run ui-checks:fast              # every workflow, Laya off (the CI-friendly 
 npm run ui-checks                   # every workflow; Laya advisor too if it is configured
 node ui-checks/src/run.mjs --workflow gerber-check-led      # one workflow (comma-separate for more)
 node ui-checks/src/run.mjs --list                           # workflow names and targets
-npm run ui-checks:electron          # the Electron workflows against the real app (Laya off)
+npm run ui-checks:electron          # the Electron workflows against the real app; Laya too if configured
+npm run ui-checks:electron:fast     # the Electron workflows, Laya off
 ```
 
 The runner starts `vite --config vite.renderer.config.ts --port 5180` itself when nothing is
@@ -100,7 +101,8 @@ self-signed server; plain http is refused by the app), and the packaged electron
 ## Electron mode
 
 ```sh
-npm run ui-checks:electron                                   # = run.mjs --target electron --no-laya
+npm run ui-checks:electron                                   # = run.mjs --target electron (Laya if configured)
+npm run ui-checks:electron:fast                              # = run.mjs --target electron --no-laya
 node ui-checks/src/run.mjs --target electron --workflow electron-fab-zip --keep-sandbox
 ```
 
@@ -172,7 +174,21 @@ LAYA_SIDECAR=/path/to/laya_sidecar.py LAYA_PYTHON=/path/to/python npm run ui-che
 
 One warm sidecar per run; one batched request per checkpoint with all of that screen's
 questions; English model; panel text only, known-benign text removed, capped at 1200 chars
-(`--laya-raw` keeps the benign text). `--no-laya` forces it off.
+(`--laya-raw` keeps the benign text). `--no-laya` forces it off. Both targets ask Laya the same
+way: Electron workflows carry `laya: true` checkpoints too (Content Manager, Shortcuts, PCB panel,
+workspace), and `npm run ui-checks:electron` turns Laya on when a sidecar is configured.
+
+The state has to fit Laya's real input: 512 tokens for question + answer options + state, which
+leaves at least 465 tokens of state (`LAYA_STATE_TOKENS`). Laya does not refuse a longer state; it
+silently drops the end. Characters are not a safe proxy (dense net lists run 2.3 chars per token), so
+`compactForLaya` also holds an upper token estimate (`estimateLayaTokens`, checked against the v2
+tokenizer on 898 real states) under that room. A plain line over 200 chars is cut there exactly as
+before (the v2 checkpoint was fine-tuned on that format). A line with an alert (refusal,
+`NOT LOADED`, error, untrusted, …) is kept whole up to 600 chars, is otherwise shortened only by
+whole sentences, never loses an alert sentence, and has its hex digests shortened to 8 characters.
+An over-long state drops plain lines before alert lines (the line just above an alert, which names
+the pack or file, stays). A refusal therefore reaches Laya as the sentence the app showed, not as
+its first 200 characters.
 
 ## Files
 

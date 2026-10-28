@@ -1906,7 +1906,7 @@
       "why": "Describes the policy."
     },
     {
-      "pattern": "a malformed or non-sha256 declaration is refused, not treated as \"no hash\"",
+      "pattern": "a malformed or non-sha256 declaration is refused, not treated as \\\\?\"no hash\\\\?\"",
       "where": "contentManager intro",
       "why": "Describes the policy."
     },

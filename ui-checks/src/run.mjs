@@ -3,7 +3,8 @@
 //   npm run ui-checks                                  every workflow (Laya only if configured)
 //   npm run ui-checks:fast                             every workflow, Laya off
 //   node ui-checks/src/run.mjs --workflow <name>[,…]   one or more workflows
-//   npm run ui-checks:electron                         the Electron workflows (real app, Laya off)
+//   npm run ui-checks:electron                         the Electron workflows (real app, Laya only if configured)
+//   npm run ui-checks:electron:fast                    the Electron workflows, Laya off
 //   node ui-checks/src/run.mjs --list                  workflow names and targets
 // Flags: --target browser|electron (default browser)  --no-laya  --laya-sidecar <path>
 //        --laya-python <exe>  --laya-raw  --headed  --url <u>  --repo <path>  --out <dir>
