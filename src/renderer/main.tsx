@@ -28,6 +28,8 @@ if (bridge !== undefined) {
   // hears the event; only the active one opens its panel (a background tab ignores it).
   bridge.onShortcutsOpen?.(() => window.dispatchEvent(new Event('chipblocks:shortcuts')))
   bridge.onContentManagerOpen?.(() => window.dispatchEvent(new Event('chipblocks:content-manager')))
+  // Installed packs or pins changed on disk: every tab's Content Manager re-reads.
+  bridge.onContentChanged?.(() => window.dispatchEvent(new Event('chipblocks:content-changed')))
   bridge.onSymbolStyle?.((next) => {
     window.dispatchEvent(new CustomEvent(SYMBOL_STYLE_EVENT, { detail: next }))
   })

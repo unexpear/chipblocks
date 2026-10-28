@@ -1,0 +1,521 @@
+{
+  "name": "electron-tampered-pack-untrusted",
+  "targets": ["electron"],
+  "title": "A signed pack keeps its signature on disk and its trust is re-verified on every load: editing the pack file or the install index (even with the content hash rewritten to match) drops it to untrusted with a reason, and a reinstall verifies it again",
+  "covers": ["contentManager"],
+  "notes": "tamperInstalledPack edits the sandbox home only, the way someone who can write ~/.chipblocks could, and rewrites the index row's contentHash so the edit is not caught by the hash check alone. Packs are signed at test time with throwaway ed25519 keys (src/pack-fixture.mjs). The real ~/.chipblocks is snapshotted read-only and compared after every step.",
+  "steps": [
+    {
+      "id": "install-and-pin",
+      "title": "Install a signed pack and pin its key: pack.json keeps the signature and the signer key",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/tamper_pack.json",
+            "id": "tamper_pack",
+            "name": "Tamper Pack",
+            "keyVar": "pinKey"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/plain_pack.json",
+            "id": "plain_pack",
+            "name": "Plain Pack",
+            "sign": false
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/other_key.json",
+            "id": "other_key_pack",
+            "name": "Other Key",
+            "keyVar": "otherKey"
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "dialog": {
+            "open": "{files}/tamper_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "tamper_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "trusted"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/tamper_pack/pack.json",
+          "json": [
+            {
+              "at": "signature.alg",
+              "eq": "ed25519"
+            },
+            {
+              "at": "signature.publicKey",
+              "eq": "{pinKey}"
+            },
+            {
+              "at": "name",
+              "eq": "Tamper Pack"
+            }
+          ],
+          "id": "signed-original-kept"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "relaunch-reverifies",
+      "title": "Relaunch: trust comes from verifying the file again, and it still holds",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "still-trusted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "enabled"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "edited-pack-untrusted",
+      "title": "Edit the signed pack's name and rewrite the index hash to match, relaunch: it loads, but as unverified with the reason and no pin button",
+      "screen": "contentManager",
+      "do": [
+        {
+          "tamperInstalledPack": {
+            "pack": "tamper_pack",
+            "setName": "Tamper Pack (edited)"
+          }
+        },
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "still-loads"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "name": "data-trust",
+          "matches": "^unverified$",
+          "id": "unverified"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustReasonFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "matches": "^The pack file no longer matches its publisher signature, so it was edited after install\\..*Treated as untrusted\\. Reinstall it from a file you trust\\.$",
+          "id": "reason"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "eq": 0,
+          "id": "no-pin-button"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{pinKey}"
+            }
+          ],
+          "id": "pin-kept"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "reinstall-verifies",
+      "title": "Reinstall from the original file: verified and pinned again",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/tamper_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "trusted-again"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "stripped-signature-untrusted",
+      "title": "Strip the signature from pack.json (what a pack installed before this change looks like), rewrite the hash, relaunch: unverified, reinstall to re-verify",
+      "screen": "contentManager",
+      "do": [
+        {
+          "tamperInstalledPack": {
+            "pack": "tamper_pack",
+            "stripSignature": true
+          }
+        },
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "name": "data-trust",
+          "matches": "^unverified$",
+          "id": "unverified"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustReasonFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "matches": "^The install record says this pack was signed, but its pack file carries no signature\\. Packs installed before ChipBlocks kept the signed original need a reinstall to re-verify",
+          "id": "reason"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "eq": 0,
+          "id": "no-pin-button"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "reinstall-again",
+      "title": "Reinstall from the original file again: verified and pinned",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/tamper_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "trusted-again"
+        }
+      ]
+    },
+    {
+      "id": "index-key-swapped-untrusted",
+      "title": "Change only the publisher key recorded in index.json, relaunch: unverified",
+      "screen": "contentManager",
+      "do": [
+        {
+          "tamperInstalledPack": {
+            "pack": "tamper_pack",
+            "index": {
+              "publisherKeyHex": "{otherKey}"
+            }
+          }
+        },
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "name": "data-trust",
+          "matches": "^unverified$",
+          "id": "unverified"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustReasonFor",
+          "with": {
+            "pack": "tamper_pack"
+          },
+          "matches": "signed by a different publisher key than the one recorded at install",
+          "id": "reason"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "install-unsigned",
+      "title": "Install an unsigned pack: no publisher signature",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/plain_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "plain_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "installed"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "plain_pack"
+          },
+          "eq": 0,
+          "id": "no-trust-state"
+        }
+      ]
+    },
+    {
+      "id": "forged-index-claim-untrusted",
+      "title": "Forge the unsigned pack's index row as signed by the pinned key, relaunch: unverified, never trusted",
+      "screen": "contentManager",
+      "do": [
+        {
+          "tamperInstalledPack": {
+            "pack": "plain_pack",
+            "index": {
+              "signatureStatus": "valid-trusted",
+              "publisherKeyHex": "{pinKey}"
+            }
+          }
+        },
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "plain_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "loads"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "plain_pack"
+          },
+          "name": "data-trust",
+          "matches": "^unverified$",
+          "id": "not-trusted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustReasonFor",
+          "with": {
+            "pack": "plain_pack"
+          },
+          "matches": "carries no signature",
+          "id": "reason"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "plain_pack"
+          },
+          "eq": 0,
+          "id": "no-pin-button"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched-at-end"
+        }
+      ]
+    }
+  ]
+}

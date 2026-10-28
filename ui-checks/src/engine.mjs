@@ -1,13 +1,16 @@
 // App-aware click-through engine: resolves the app map, drives Playwright, evaluates coded asserts
 // (the source of truth), runs per-screen invariants + the global crash watch after every step, and
 // asks Laya (advisory only) at checkpoints.
+import { spawnSync } from 'node:child_process'
+import crypto, { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chipblocksSnapshot, snapshotDiff } from './home-guard.mjs'
 import { startHttpsRegistry } from './https-fixture.mjs'
 import { compactForLaya } from './laya.mjs'
-import { makePack, makeRegistry } from './pack-fixture.mjs'
+import { makePack, makeRegistry, rotationsFor } from './pack-fixture.mjs'
 import { readZip } from './zip.mjs'
 
 export class StepError extends Error {
@@ -362,13 +365,15 @@ export class Engine {
           }
         let ok = true
         let why = ''
-        if (a.matches) {
-          const m = new RegExp(a.matches, a.flags ?? '').test(t)
+        // {var} placeholders (e.g. a key fingerprint made earlier in the run) in the patterns.
+        const pat = this.fill({ matches: a.matches, notMatches: a.notMatches }, params)
+        if (pat.matches) {
+          const m = new RegExp(pat.matches, a.flags ?? '').test(t)
           ok &&= m
-          if (!m) why = `no /${a.matches}/`
+          if (!m) why = `no /${pat.matches}/`
         }
-        if (a.notMatches) {
-          const mm = t.match(new RegExp(a.notMatches, a.flags ?? ''))
+        if (pat.notMatches) {
+          const mm = t.match(new RegExp(pat.notMatches, a.flags ?? ''))
           ok &&= !mm
           if (mm) why = `found "${mm[0]}"`
         }
@@ -893,6 +898,65 @@ export class Engine {
       }
       if (e.append !== undefined) t += e.append
       fs.writeFileSync(file, t, 'utf8')
+    } else if (act.tamperInstalledPack) {
+      // Simulate someone who can write the chipblocks home: edit an installed pack.json and/or
+      // its index.json row, and (by default) rewrite the row's contentHash so the edit is not
+      // caught by the hash check alone. Sandbox only.
+      const t = act.tamperInstalledPack
+      const lib = this.sandboxed(
+        path.join(this.pathVars.home, '.chipblocks', 'libraries'),
+        'tamperInstalledPack',
+      )
+      const packFile = path.join(lib, t.pack, 'pack.json')
+      const indexFile = path.join(lib, 'index.json')
+      if (!fs.existsSync(packFile) || !fs.existsSync(indexFile))
+        throw new StepError('precondition', `tamperInstalledPack: ${t.pack} is not installed`)
+      let packText = fs.readFileSync(packFile, 'utf8')
+      if (t.replaceWith !== undefined) {
+        // Put another file in its place (e.g. an older, genuinely signed version: a rollback).
+        packText = fs.readFileSync(this.sandboxed(t.replaceWith, 'tamperInstalledPack'), 'utf8')
+        fs.writeFileSync(packFile, packText, 'utf8')
+      }
+      if (t.setName !== undefined || t.stripSignature) {
+        const doc = JSON.parse(packText)
+        if (t.setName !== undefined) doc.name = t.setName
+        if (t.stripSignature) delete doc.signature
+        packText = JSON.stringify(doc, null, 2)
+        fs.writeFileSync(packFile, packText, 'utf8')
+      }
+      const index = JSON.parse(fs.readFileSync(indexFile, 'utf8'))
+      const row = index.packs.find((p) => p.id === t.pack)
+      if (!row) throw new StepError('precondition', `tamperInstalledPack: no index row ${t.pack}`)
+      if (t.index) Object.assign(row, t.index)
+      if (t.rehash !== false) row.contentHash = createHash('sha256').update(packText).digest('hex')
+      fs.writeFileSync(indexFile, JSON.stringify(index, null, 2), 'utf8')
+    } else if (act.writeContentLock) {
+      // Stand in for a second ChipBlocks window holding ~/.chipblocks/content.lock (sandbox only).
+      // live: owned by this runner process (alive); dead: owned by a process that has exited.
+      const w = act.writeContentLock
+      const file = this.sandboxed(
+        path.join(this.pathVars.home, '.chipblocks', 'content.lock'),
+        'writeContentLock',
+      )
+      let pid = process.pid
+      if (w.owner === 'dead') {
+        pid = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore' }).pid
+      } else if (w.owner !== 'live') {
+        throw new StepError('precondition', `writeContentLock: owner must be live or dead`)
+      }
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          pid,
+          host: os.hostname(),
+          token: `uic-${w.owner}`,
+          acquiredAt: Date.now(),
+        }),
+        'utf8',
+      )
+      this.vars.lockPid = String(pid)
+      this.pathVars.lockPid = String(pid)
     } else if (act.realHomeSnapshot) {
       this.vars[`realHome:${act.realHomeSnapshot}`] = chipblocksSnapshot()
     } else if (act.makeRegistry) {
@@ -934,11 +998,31 @@ export class Engine {
       const m = act.makePack
       const file = this.sandboxed(m.path, 'makePack')
       fs.mkdirSync(path.dirname(file), { recursive: true })
-      const { text, publicKeyHex } = makePack(m)
+      // keyName: packs made with the same name share one in-memory ed25519 key (never written).
+      let keyPair = null
+      if (m.keyName) {
+        this.signingKeys ??= {}
+        this.signingKeys[m.keyName] ??= crypto.generateKeyPairSync('ed25519')
+        keyPair = this.signingKeys[m.keyName]
+      }
+      // rotations: key rotation statements between named keys (see pack-fixture rotationsFor).
+      let rotations = null
+      if (m.rotations) {
+        this.signingKeys ??= {}
+        rotations = rotationsFor(m.rotations, m.id, (name) => {
+          this.signingKeys[name] ??= crypto.generateKeyPairSync('ed25519')
+          return this.signingKeys[name]
+        })
+      }
+      const { text, publicKeyHex } = makePack({ ...m, keyPair, rotations })
       fs.writeFileSync(file, text, 'utf8')
       if (m.keyVar) {
         this.vars[m.keyVar] = publicKeyHex
         this.pathVars[m.keyVar] = publicKeyHex // usable as {keyVar} in later asserts
+        // {keyVar}Fp: SHA-256 fingerprint of the raw key, as the Content Manager shows it.
+        const fp = createHash('sha256').update(Buffer.from(publicKeyHex, 'hex')).digest('hex')
+        this.vars[`${m.keyVar}Fp`] = fp
+        this.pathVars[`${m.keyVar}Fp`] = fp
       }
     } else {
       throw new StepError('driver', `unknown action ${JSON.stringify(act)}`)

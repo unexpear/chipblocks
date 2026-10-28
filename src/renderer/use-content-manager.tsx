@@ -6,6 +6,7 @@ import {
   enabledPackIds,
   installedPackFiles,
   installLocalPackVerified,
+  KEY_ROTATION_INSTALL_NOTE,
   type PackLoadIssue,
   readIndexForWrite,
   serializeContentIndex,
@@ -13,17 +14,28 @@ import {
   uninstallPack,
   writeInstalledPack,
 } from './content-manager.ts'
-import { ContentManagerPanel, type PublisherCard } from './content-manager-panel.tsx'
+import {
+  ContentManagerPanel,
+  type PublisherCard,
+  type PublisherRotation,
+} from './content-manager-panel.tsx'
 import { type ContentPack, deserializeContentPack } from './content-pack.ts'
 import { assertStoredContentHash } from './content-pack-integrity.ts'
 import {
+  canonicalPublicKeyHex,
   commitTrustedPublisherChange,
   effectiveTrustedPublishers,
   emptyTrustedPublishers,
-  livePublisherTrust,
   publisherKeyFingerprint,
   type TrustedPublishers,
+  trustedPublishersAfterTrust,
+  trustedPublishersAfterUntrust,
 } from './content-pack-signature.ts'
+import {
+  liveTrustFromStored,
+  type StoredSignature,
+  verifyStoredSignature,
+} from './content-pack-stored-trust.ts'
 import {
   commitRegistrySettings,
   installDownloadedRegistryPack,
@@ -38,6 +50,18 @@ import {
   registryUpdates,
   TRUSTED_PUBLISHERS_UNAVAILABLE,
 } from './content-registry.ts'
+import {
+  type RotationState,
+  type RotationVerdict,
+  rotationForPackText,
+  rotationStateAfterConfirm,
+} from './key-rotation.ts'
+import {
+  rollbackReason,
+  type SealedTrust,
+  sealedTrustedPublishers,
+  type TrustSealView,
+} from './trust-seal-view.ts'
 import { clearCommunityPackFootprints, setCommunityPackFootprints } from './user-footprints.ts'
 import { clearCommunityPackParts, setCommunityPackParts } from './user-parts.ts'
 
@@ -55,6 +79,80 @@ type Bridge = NonNullable<Window['chipblocks']>
 // mount their own copy of this hook; their index writes must not interleave.
 let sharedIndexWriteChain: Promise<void> = Promise.resolve()
 
+// Community parts are registered once per window, not per tab. This is the install state they
+// were last registered from, so a change notice re-registers them once, in whichever tab sees
+// it first, and only when something that matters changed.
+let appliedPacksKey: string | null = null
+let sharedLoadIssues: PackLoadIssue[] = []
+function packsKey(index: ContentIndex): string {
+  return JSON.stringify(
+    index.packs.map((p) => [p.id, p.enabled, p.contentHash ?? '', p.packVersion]),
+  )
+}
+
+/**
+ * Hold the cross-window content lock (main process, ~/.chipblocks/content.lock) for one whole
+ * change: from re-reading the index to the last write. Without the desktop bridge, run as is.
+ */
+async function withContentLock(
+  bridge: Bridge | undefined,
+  onRefused: (reason: string) => void,
+  task: () => Promise<void>,
+): Promise<void> {
+  const acquire = bridge?.acquireContentLock
+  const release = bridge?.releaseContentLock
+  if (acquire === undefined || release === undefined) {
+    await task()
+    return
+  }
+  const got = await acquire()
+  if (!got.ok) {
+    onRefused(got.reason)
+    return
+  }
+  try {
+    await task()
+  } finally {
+    await release(got.token).catch(() => false)
+  }
+}
+
+/** Pins and floors from the seal when the bridge has it; pins alone (unsealed) otherwise. */
+async function loadSealedTrust(bridge: Bridge): Promise<SealedTrust | null> {
+  if (bridge.readTrustSeal !== undefined) {
+    try {
+      return sealedTrustedPublishers(await bridge.readTrustSeal())
+    } catch (error) {
+      const view: TrustSealView = {
+        pinsText: null,
+        pinsError: String(error),
+        pins: { status: 'no-pins' },
+        floors: null,
+        rotation: null,
+        protection: 'none',
+      }
+      return sealedTrustedPublishers(view)
+    }
+  }
+  if (bridge.readTrustedPublishers === undefined) return null
+  try {
+    const text = await bridge.readTrustedPublishers()
+    return {
+      ...effectiveTrustedPublishers(text),
+      pinsVouched: true,
+      floors: null,
+      rotation: null,
+    }
+  } catch (error) {
+    return {
+      ...effectiveTrustedPublishers(null, String(error)),
+      pinsVouched: true,
+      floors: null,
+      rotation: null,
+    }
+  }
+}
+
 async function persistIndex(bridge: Bridge, index: ContentIndex): Promise<boolean> {
   if (bridge.writeContentIndex === undefined) return false
   const result = await bridge.writeContentIndex(serializeContentIndex(index))
@@ -65,6 +163,7 @@ export async function applyEnabledPacks(
   bridge: { readContentPack?: (id: string) => Promise<string | null> },
   index: ContentIndex,
   onTrustIssue?: (message: string) => void,
+  floors: Readonly<Record<string, string>> | null = null,
 ): Promise<PackLoadIssue[]> {
   const issues: PackLoadIssue[] = []
   const report = (id: string, reason: string, blocked: boolean) => {
@@ -126,6 +225,13 @@ export async function applyEnabledPacks(
       report(rec.id, `Pack "${rec.id}" did not load: ${parsed.reason}`, true)
       continue
     }
+    const rollback = rollbackReason(rec.id, parsed.pack.packVersion, floors)
+    if (rollback !== null) {
+      clearCommunityPackParts(rec.id)
+      clearCommunityPackFootprints(rec.id)
+      report(rec.id, rollback, true)
+      continue
+    }
     const partsKept = setCommunityPackParts(rec.id, parsed.pack.parts, { name: parsed.pack.name })
     const footprintsKept = setCommunityPackFootprints(rec.id, parsed.pack.footprints)
     const partsSkipped = parsed.pack.parts.length - partsKept
@@ -143,6 +249,30 @@ export async function applyEnabledPacks(
     }
   }
   return issues
+}
+
+/** Pinned keys as canonical hex, for checking where a key rotation starts. */
+function pinnedKeySet(trusted: TrustedPublishers, pinsLoaded: boolean): Set<string> {
+  if (!pinsLoaded) return new Set()
+  return new Set(
+    trusted.keys
+      .map((key) => canonicalPublicKeyHex(key.publicKey))
+      .filter((key): key is string => key !== null),
+  )
+}
+
+async function fingerprintOrShort(hex: string): Promise<string> {
+  const fp = await publisherKeyFingerprint(hex)
+  return typeof fp === 'string' ? fp : `${hex.slice(0, 16)}…`
+}
+
+function rotationReason(verdict: RotationVerdict): string {
+  if (verdict.kind === 'broken' || verdict.kind === 'refused' || verdict.kind === 'unanchored') {
+    return verdict.reason
+  }
+  if (verdict.kind === 'current') return 'The pack’s publisher key is already pinned.'
+  if (verdict.kind === 'none') return 'The pack carries no key rotation.'
+  return ''
 }
 
 function isRefuse(result: ContentIndex | { ok: false; reason: string }): result is {
@@ -168,7 +298,23 @@ export function useContentManager(
   const [trusted, setTrusted] = useState<TrustedPublishers>(emptyTrustedPublishers())
   const [pinsLoaded, setPinsLoaded] = useState(false)
   const [trustedStatus, setTrustedStatus] = useState(TRUSTED_PUBLISHERS_UNAVAILABLE)
-  const [fingerprints, setFingerprints] = useState<Readonly<Record<string, string>>>({})
+  // Rollback floors from the trust seal (null: not known), and whether the seal vouches for the
+  // pin file's keys. A trust click on an unvouched list starts a new list instead of keeping keys
+  // nobody confirmed in this app.
+  const [floors, setFloors] = useState<Readonly<Record<string, string>> | null>(null)
+  const floorsRef = useRef<Readonly<Record<string, string>> | null>(null)
+  const pinsVouchedRef = useRef(true)
+  const pinsLoadedRef = useRef(false)
+  // Key rotations you confirmed (retired keys, accepted sequences), from the seal.
+  const [rotationState, setRotationState] = useState<RotationState | null>(null)
+  const rotationRef = useRef<RotationState | null>(null)
+  // Per pack: what the pack file on disk proves on this load, and the fingerprint of the key
+  // that verified. Trust shown in the panel comes from here, not from index.json.
+  const [storedTrust, setStoredTrust] = useState<
+    Readonly<
+      Record<string, { stored: StoredSignature; fingerprint: string; rotation?: PublisherRotation }>
+    >
+  >({})
   const [registryUrl, setRegistryUrl] = useState('')
   const [registryStatus, setRegistryStatus] = useState(NO_REGISTRY_CONFIGURED)
   const [registryPacks, setRegistryPacks] = useState<readonly RegistryPackEntry[]>([])
@@ -194,9 +340,30 @@ export function useContentManager(
   const commitTrusted = useCallback((next: TrustedPublishers, loaded: boolean, status: string) => {
     trustedRef.current = next
     setTrusted(next)
+    pinsLoadedRef.current = loaded
     setPinsLoaded(loaded)
     setTrustedStatus(status)
   }, [])
+
+  const commitSealed = useCallback(
+    (sealed: SealedTrust) => {
+      commitTrusted(sealed.publishers, sealed.pinsLoaded, sealed.status)
+      floorsRef.current = sealed.floors
+      setFloors(sealed.floors)
+      pinsVouchedRef.current = sealed.pinsVouched
+      rotationRef.current = sealed.rotation
+      setRotationState(sealed.rotation)
+    },
+    [commitTrusted],
+  )
+
+  // Pins and floors as they are on disk now (inside a locked change, before deciding anything).
+  const latestTrust = useCallback(async (): Promise<void> => {
+    const bridge = window.chipblocks
+    if (bridge === undefined) return
+    const sealed = await loadSealedTrust(bridge)
+    if (sealed !== null) commitSealed(sealed)
+  }, [commitSealed])
 
   const enqueueIndexWrite = useCallback((task: () => Promise<void>) => {
     sharedIndexWriteChain = sharedIndexWriteChain.then(task, task)
@@ -231,6 +398,7 @@ export function useContentManager(
   }, [])
 
   const rememberLoads = useCallback((issues: PackLoadIssue[]) => {
+    sharedLoadIssues = issues
     setLoadIssues(new Map(issues.map((issue) => [issue.id, issue])))
     if (issues.length > 0) setStatusMessage(issues.map((issue) => issue.reason).join('\n'))
   }, [])
@@ -258,20 +426,51 @@ export function useContentManager(
           }
         })
       }
-      if (trustedReady.current && bridge?.readTrustedPublishers !== undefined) {
-        void bridge
-          .readTrustedPublishers()
-          .then((text) => {
-            const effective = effectiveTrustedPublishers(text)
-            commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
-          })
-          .catch((error: unknown) => {
-            const effective = effectiveTrustedPublishers(null, String(error))
-            commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
-          })
+      if (trustedReady.current && bridge !== undefined) {
+        void loadSealedTrust(bridge).then((sealed) => {
+          if (sealed !== null) commitSealed(sealed)
+        })
       }
     }
     window.addEventListener('chipblocks:content-manager', open)
+
+    // Something changed on disk (this window, another ChipBlocks window, or a hand edit): every tab
+    // re-reads now, not only when its panel is next opened. Queued behind writes in this window.
+    const refresh = () => {
+      if (bridge === undefined) return
+      sharedIndexWriteChain = sharedIndexWriteChain.then(async () => {
+        const sealed = await loadSealedTrust(bridge)
+        if (sealed !== null) commitSealed(sealed)
+        const read = bridge.readContentIndex
+        if (!indexReady.current || !indexWritable.current || read === undefined) return
+        let next: ContentIndex
+        try {
+          const text = await read()
+          if (text === null) next = emptyContentIndex()
+          else {
+            const parsed = deserializeContentIndex(text)
+            if (!parsed.ok) return // the next write re-reads and reports it
+            next = parsed.index
+          }
+        } catch {
+          return
+        }
+        commitIndex(next)
+        const key = packsKey(next)
+        if (key !== appliedPacksKey) {
+          appliedPacksKey = key
+          rememberLoads(await applyEnabledPacks(bridge, next, undefined, floorsRef.current))
+        } else {
+          setLoadIssues(new Map(sharedLoadIssues.map((issue) => [issue.id, issue])))
+        }
+      })
+    }
+    window.addEventListener('chipblocks:content-changed', refresh)
+    const trustLoad =
+      bridge !== undefined &&
+      (bridge.readTrustSeal !== undefined || bridge.readTrustedPublishers !== undefined)
+        ? loadSealedTrust(bridge)
+        : null
 
     if (bridge?.readContentIndex !== undefined) {
       void bridge
@@ -293,7 +492,11 @@ export function useContentManager(
           indexReady.current = true
           indexWritable.current = true
           commitIndex(result.index)
-          rememberLoads(await applyEnabledPacks(bridge, result.index))
+          const sealed = trustLoad === null ? null : await trustLoad
+          appliedPacksKey = packsKey(result.index)
+          rememberLoads(
+            await applyEnabledPacks(bridge, result.index, undefined, sealed?.floors ?? null),
+          )
         })
         .catch((error: unknown) => {
           indexReady.current = true
@@ -307,16 +510,10 @@ export function useContentManager(
       indexWritable.current = true
     }
 
-    if (bridge?.readTrustedPublishers !== undefined) {
-      void bridge
-        .readTrustedPublishers()
-        .then((text) => {
-          const effective = effectiveTrustedPublishers(text)
-          commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
-        })
-        .catch((error: unknown) => {
-          const effective = effectiveTrustedPublishers(null, String(error))
-          commitTrusted(effective.publishers, effective.pinsLoaded, effective.status)
+    if (trustLoad !== null) {
+      void trustLoad
+        .then((sealed) => {
+          if (sealed !== null) commitSealed(sealed)
         })
         .finally(() => {
           trustedReady.current = true
@@ -356,29 +553,76 @@ export function useContentManager(
         })
     }
 
-    return () => window.removeEventListener('chipblocks:content-manager', open)
-  }, [rememberLoads, commitIndex, commitTrusted])
+    return () => {
+      window.removeEventListener('chipblocks:content-manager', open)
+      window.removeEventListener('chipblocks:content-changed', refresh)
+    }
+  }, [rememberLoads, commitIndex, commitSealed])
 
   useEffect(() => {
     let cancelled = false
-    const packs = index.packs.filter((pack) => pack.publisherKeyHex !== undefined)
-    if (packs.length === 0) {
-      setFingerprints({})
+    if (index.packs.length === 0) {
+      setStoredTrust({})
       return
     }
+    const read = window.chipblocks?.readContentPack
     void (async () => {
-      const next: Record<string, string> = {}
-      for (const pack of packs) {
-        if (pack.publisherKeyHex === undefined) continue
-        const fingerprint = await publisherKeyFingerprint(pack.publisherKeyHex)
-        if (typeof fingerprint === 'string') next[pack.id] = fingerprint
+      const pinned = pinnedKeySet(trusted, pinsLoaded)
+      const next: Record<
+        string,
+        { stored: StoredSignature; fingerprint: string; rotation?: PublisherRotation }
+      > = {}
+      for (const pack of index.packs) {
+        let text: string | null = null
+        if (read !== undefined) {
+          try {
+            text = await read(pack.id)
+          } catch {
+            text = null
+          }
+        }
+        let stored = await verifyStoredSignature(pack, text)
+        if (stored.kind === 'verified' && text !== null) {
+          const version = (JSON.parse(text) as { packVersion?: unknown }).packVersion
+          const rollback =
+            typeof version === 'string' ? rollbackReason(pack.id, version.trim(), floors) : null
+          if (rollback !== null) stored = { kind: 'unverified', reason: rollback }
+        }
+        let fingerprint = ''
+        if (stored.kind === 'verified') {
+          const fp = await publisherKeyFingerprint(stored.publicKeyHex)
+          if (typeof fp === 'string') fingerprint = fp
+        }
+        let rotation: PublisherRotation | undefined
+        if (stored.kind === 'verified' && text !== null) {
+          // Recomputed on every load against the pins the seal vouches for now: the rotation is
+          // kept in the signed original, and nothing about it is believed from index.json.
+          const verdict = await rotationForPackText({
+            packId: pack.id,
+            signerKeyHex: stored.publicKeyHex,
+            packText: text,
+            pinned,
+            state: rotationState,
+          })
+          if (verdict.kind === 'valid') {
+            rotation = {
+              kind: 'valid',
+              fromFingerprint: await fingerprintOrShort(verdict.fromKey),
+              toFingerprint: fingerprint || (await fingerprintOrShort(verdict.toKey)),
+            }
+          } else if (verdict.kind === 'refused') {
+            rotation = { kind: 'refused', reason: verdict.reason }
+          }
+        }
+        next[pack.id] =
+          rotation !== undefined ? { stored, fingerprint, rotation } : { stored, fingerprint }
       }
-      if (!cancelled) setFingerprints(next)
+      if (!cancelled) setStoredTrust(next)
     })()
     return () => {
       cancelled = true
     }
-  }, [index])
+  }, [index, floors, trusted, pinsLoaded, rotationState])
 
   const onInstallLocal = useCallback(() => {
     const bridge = window.chipblocks
@@ -413,109 +657,120 @@ export function useContentManager(
         setStatusMessage('No pack file text returned.')
         return
       }
-      const base = await latestIndex()
-      if (base === null) return
-      const installed = await installLocalPackVerified(
-        base,
-        picked.text,
-        Date.now(),
-        trustedRef.current,
-      )
-      if (!installed.ok) {
-        setStatusMessage(installed.reason)
-        return
-      }
-      const pack: ContentPack = installed.pack
-      // Hash the bytes we actually write — serialize may differ from the picked file (dropped
-      // malformed entries, stable field order). Reload tamper-checks this on-disk text.
-      const files = await installedPackFiles(installed)
-      const record = files.record
-      const onDiskText = files.onDiskText
-      const nextIndex = files.index
-      const writeIndex = bridge.writeContentIndex
-      const removePack = bridge.removeContentPack
-      if (writeIndex === undefined || removePack === undefined) {
-        setStatusMessage(
-          'Install from local pack needs the desktop app bridge (pick file + write under ~/.chipblocks/libraries/).',
+      const pickedText = picked.text
+      await withContentLock(bridge, setStatusMessage, async () => {
+        await latestTrust()
+        const base = await latestIndex()
+        if (base === null) return
+        const installed = await installLocalPackVerified(
+          base,
+          pickedText,
+          Date.now(),
+          trustedRef.current,
+          floorsRef.current,
+          rotationRef.current,
         )
-        return
-      }
-      const readPack = bridge.readContentPack
-      const saved = await writeInstalledPack({
-        id: pack.id,
-        onDiskText,
-        index: nextIndex,
-        hadPrevious: base.packs.some((row) => row.id === pack.id),
-        io: {
-          writePack,
-          writeIndex: async (text) => {
-            const result = await writeIndex(text)
-            return result.ok
-              ? { ok: true }
-              : { ok: false, reason: 'The install index could not be saved.' }
+        if (!installed.ok) {
+          setStatusMessage(installed.reason)
+          return
+        }
+        const pack: ContentPack = installed.pack
+        // Hash the bytes we actually write — serialize may differ from the picked file (dropped
+        // malformed entries, stable field order). Reload tamper-checks this on-disk text.
+        const files = await installedPackFiles(installed, pickedText)
+        const record = files.record
+        const onDiskText = files.onDiskText
+        const nextIndex = files.index
+        const writeIndex = bridge.writeContentIndex
+        const removePack = bridge.removeContentPack
+        if (writeIndex === undefined || removePack === undefined) {
+          setStatusMessage(
+            'Install from local pack needs the desktop app bridge (pick file + write under ~/.chipblocks/libraries/).',
+          )
+          return
+        }
+        const readPack = bridge.readContentPack
+        const saved = await writeInstalledPack({
+          id: pack.id,
+          onDiskText,
+          index: nextIndex,
+          hadPrevious: base.packs.some((row) => row.id === pack.id),
+          io: {
+            writePack,
+            writeIndex: async (text) => {
+              const result = await writeIndex(text)
+              return result.ok
+                ? { ok: true }
+                : { ok: false, reason: 'The install index could not be saved.' }
+            },
+            removePack,
+            ...(readPack !== undefined ? { readPack } : {}),
           },
-          removePack,
-          ...(readPack !== undefined ? { readPack } : {}),
-        },
+        })
+        if (!saved.ok) {
+          setStatusMessage(saved.reason)
+          return
+        }
+        commitIndex(nextIndex)
+        appliedPacksKey = packsKey(nextIndex)
+        sharedLoadIssues = sharedLoadIssues.filter((issue) => issue.id !== pack.id)
+        const partsKept = setCommunityPackParts(pack.id, pack.parts, { name: pack.name })
+        const fpKept = setCommunityPackFootprints(pack.id, pack.footprints)
+        const trustBit =
+          record.integrityStatus === 'match' ? 'declared content hash matched' : 'no declared hash'
+        const registered =
+          partsKept === pack.parts.length
+            ? `${partsKept} part(s), ${fpKept} footprint(s) registered at community origin`
+            : `${partsKept} of ${pack.parts.length} part(s) registered (${pack.parts.length - partsKept} skipped — id already in use), ${fpKept} footprint(s)`
+        setStatusMessage(
+          `Installed "${record.name}" v${record.packVersion} (${record.license}; ${trustBit}). Enabled — ${registered}.${installed.keyRotation !== undefined ? ` ${KEY_ROTATION_INSTALL_NOTE}` : ''}`,
+        )
       })
-      if (!saved.ok) {
-        setStatusMessage(saved.reason)
-        return
-      }
-      commitIndex(nextIndex)
-      const partsKept = setCommunityPackParts(pack.id, pack.parts, { name: pack.name })
-      const fpKept = setCommunityPackFootprints(pack.id, pack.footprints)
-      const trustBit =
-        record.integrityStatus === 'match' ? 'declared content hash matched' : 'no declared hash'
-      const registered =
-        partsKept === pack.parts.length
-          ? `${partsKept} part(s), ${fpKept} footprint(s) registered at community origin`
-          : `${partsKept} of ${pack.parts.length} part(s) registered (${pack.parts.length - partsKept} skipped — id already in use), ${fpKept} footprint(s)`
-      setStatusMessage(
-        `Installed "${record.name}" v${record.packVersion} (${record.license}; ${trustBit}). Enabled — ${registered}.`,
-      )
     })
-  }, [commitIndex, enqueueIndexWrite, indexWritesAllowed, latestIndex])
+  }, [commitIndex, enqueueIndexWrite, indexWritesAllowed, latestIndex, latestTrust])
 
   const onSetEnabled = useCallback(
     (id: string, enabled: boolean) => {
       enqueueIndexWrite(async () => {
         if (window.chipblocks?.writeContentIndex !== undefined && !indexWritesAllowed()) return
-        const base = await latestIndex()
-        if (base === null) return
-        const next = setPackEnabled(base, id, enabled)
-        if (isRefuse(next)) {
-          setStatusMessage(next.reason)
-          return
-        }
-        const bridge = window.chipblocks
-        if (bridge?.writeContentIndex !== undefined) {
-          if (!indexWritesAllowed()) return
-          const saved = await persistIndex(bridge, next)
-          if (!saved) {
-            setStatusMessage('Could not save enable/disable to the install index.')
+        await withContentLock(window.chipblocks, setStatusMessage, async () => {
+          const base = await latestIndex()
+          if (base === null) return
+          const next = setPackEnabled(base, id, enabled)
+          if (isRefuse(next)) {
+            setStatusMessage(next.reason)
             return
           }
-          const issues = await applyEnabledPacks(bridge, next)
-          rememberLoads(issues)
-          commitIndex(next)
-          if (issues.length === 0) {
-            setStatusMessage(
-              enabled ? `Enabled "${id}".` : `Disabled "${id}" (pack stays on disk).`,
-            )
+          const bridge = window.chipblocks
+          if (bridge?.writeContentIndex !== undefined) {
+            if (!indexWritesAllowed()) return
+            const saved = await persistIndex(bridge, next)
+            if (!saved) {
+              setStatusMessage('Could not save enable/disable to the install index.')
+              return
+            }
+            const issues = await applyEnabledPacks(bridge, next, undefined, floorsRef.current)
+            appliedPacksKey = packsKey(next)
+            rememberLoads(issues)
+            commitIndex(next)
+            if (issues.length === 0) {
+              setStatusMessage(
+                enabled ? `Enabled "${id}".` : `Disabled "${id}" (pack stays on disk).`,
+              )
+            }
+            return
           }
-          return
-        }
-        if (!enabled) {
-          clearCommunityPackParts(id)
-          clearCommunityPackFootprints(id)
-        }
-        commitIndex(next)
-        setStatusMessage(
-          enabled
-            ? `Marked "${id}" enabled in this window, but pack files cannot be read here, so its parts were not loaded.`
-            : `Disabled "${id}" in this window (nothing was written to disk).`,
-        )
+          if (!enabled) {
+            clearCommunityPackParts(id)
+            clearCommunityPackFootprints(id)
+          }
+          commitIndex(next)
+          setStatusMessage(
+            enabled
+              ? `Marked "${id}" enabled in this window, but pack files cannot be read here, so its parts were not loaded.`
+              : `Disabled "${id}" in this window (nothing was written to disk).`,
+          )
+        })
       })
     },
     [commitIndex, enqueueIndexWrite, indexWritesAllowed, latestIndex, rememberLoads],
@@ -528,31 +783,35 @@ export function useContentManager(
         if (bridge?.writeContentIndex !== undefined || bridge?.removeContentPack !== undefined) {
           if (!indexWritesAllowed()) return
         }
-        const base = await latestIndex()
-        if (base === null) return
-        const next = uninstallPack(base, id)
-        if (isRefuse(next)) {
-          setStatusMessage(next.reason)
-          return
-        }
-        clearCommunityPackParts(id)
-        clearCommunityPackFootprints(id)
-        if (bridge?.removeContentPack !== undefined) {
-          const removed = await bridge.removeContentPack(id)
-          if (!removed.ok) {
-            setStatusMessage(removed.reason ?? `Could not remove ~/.chipblocks/libraries/${id}/.`)
+        await withContentLock(bridge, setStatusMessage, async () => {
+          const base = await latestIndex()
+          if (base === null) return
+          const next = uninstallPack(base, id)
+          if (isRefuse(next)) {
+            setStatusMessage(next.reason)
             return
           }
-        }
-        if (bridge?.writeContentIndex !== undefined) {
-          const saved = await persistIndex(bridge, next)
-          if (!saved) {
-            setStatusMessage('Pack directory removed, but the install index could not be saved.')
-            return
+          clearCommunityPackParts(id)
+          clearCommunityPackFootprints(id)
+          if (bridge?.removeContentPack !== undefined) {
+            const removed = await bridge.removeContentPack(id)
+            if (!removed.ok) {
+              setStatusMessage(removed.reason ?? `Could not remove ~/.chipblocks/libraries/${id}/.`)
+              return
+            }
           }
-        }
-        commitIndex(next)
-        setStatusMessage(`Uninstalled "${id}".`)
+          if (bridge?.writeContentIndex !== undefined) {
+            const saved = await persistIndex(bridge, next)
+            if (!saved) {
+              setStatusMessage('Pack directory removed, but the install index could not be saved.')
+              return
+            }
+          }
+          commitIndex(next)
+          appliedPacksKey = packsKey(next)
+          sharedLoadIssues = sharedLoadIssues.filter((issue) => issue.id !== id)
+          setStatusMessage(`Uninstalled "${id}".`)
+        })
       })
     },
     [commitIndex, enqueueIndexWrite, indexWritesAllowed, latestIndex],
@@ -569,35 +828,166 @@ export function useContentManager(
         )
         return
       }
-      trustWriteChain.current = trustWriteChain.current.then(async () => {
-        const result = await commitTrustedPublisherChange({
-          read,
-          write,
-          change: trust ? 'trust' : 'untrust',
-          publicKey: publicKeyHex,
-          id: packId,
-          comment: `Pinned in Content Manager from pack ${packId}.`,
-        })
-        if (!result.ok) {
-          setStatusMessage(result.reason)
-          return
-        }
-        const count = result.publishers.keys.length
-        commitTrusted(
-          result.publishers,
-          true,
-          count === 0
-            ? 'No publisher keys are pinned. ~/.chipblocks/trusted-publishers.json lists none. No key is trusted by default.'
-            : `${count} publisher key${count === 1 ? '' : 's'} pinned in ~/.chipblocks/trusted-publishers.json. Trust is only this local pin.`,
-        )
-        setStatusMessage(
-          trust
-            ? `Pinned the publisher key from "${packId}". Packs signed by that key now count as trusted on this computer.`
-            : `Removed the publisher key. Packs signed by it no longer count as pinned.`,
-        )
-      })
+      trustWriteChain.current = trustWriteChain.current.then(() =>
+        withContentLock(bridge, setStatusMessage, async () => {
+          await latestTrust()
+          // A list the seal does not vouch for is not built on: pinning starts a new list with only
+          // the key confirmed here, so a key added outside ChipBlocks is not blessed by this click.
+          const base =
+            trust && !pinsVouchedRef.current ? async (): Promise<string | null> => null : read
+          const result = await commitTrustedPublisherChange({
+            read: base,
+            write,
+            change: trust ? 'trust' : 'untrust',
+            publicKey: publicKeyHex,
+            id: packId,
+            comment: `Pinned in Content Manager from pack ${packId}.`,
+          })
+          if (!result.ok) {
+            setStatusMessage(result.reason)
+            return
+          }
+          const count = result.publishers.keys.length
+          commitTrusted(
+            result.publishers,
+            true,
+            count === 0
+              ? 'No publisher keys are pinned. ~/.chipblocks/trusted-publishers.json lists none. No key is trusted by default.'
+              : `${count} publisher key${count === 1 ? '' : 's'} pinned in ~/.chipblocks/trusted-publishers.json. Trust is only this local pin.`,
+          )
+          setStatusMessage(
+            trust
+              ? `Pinned the publisher key from "${packId}". Packs signed by that key now count as trusted on this computer.`
+              : `Removed the publisher key. Packs signed by it no longer count as pinned.`,
+          )
+        }),
+      )
     },
-    [commitTrusted],
+    [commitTrusted, latestTrust],
+  )
+
+  // Confirm a publisher key rotation: re-check it from the pack file on disk against the pins and
+  // the seal as they are now, then pin the new key, drop the old one (unless another installed
+  // pack is still signed by it), and seal the retired keys and sequences in the same write.
+  const onConfirmRotation = useCallback(
+    (packId: string) => {
+      const bridge = window.chipblocks
+      const read = bridge?.readTrustedPublishers
+      const write = bridge?.writeTrustedPublishersRotation
+      const readPack = bridge?.readContentPack
+      if (read === undefined || write === undefined || readPack === undefined) {
+        setStatusMessage(
+          'Confirming a publisher key change needs the desktop app bridge (read and write ~/.chipblocks/trusted-publishers.json). Nothing was written.',
+        )
+        return
+      }
+      const readText = async (id: string): Promise<string | null> => {
+        try {
+          return await readPack(id)
+        } catch {
+          return null
+        }
+      }
+      trustWriteChain.current = trustWriteChain.current.then(() =>
+        withContentLock(bridge, setStatusMessage, async () => {
+          await latestTrust()
+          const base = await latestIndex()
+          if (base === null) return
+          const refuse = (why: string) =>
+            setStatusMessage(
+              `The publisher key change for "${packId}" was not confirmed: ${why} Nothing was written.`,
+            )
+          if (!pinsVouchedRef.current || !pinsLoadedRef.current) {
+            refuse('your pinned keys could not be read or are not vouched for by the seal.')
+            return
+          }
+          const record = base.packs.find((pack) => pack.id === packId)
+          if (record === undefined) {
+            refuse('the pack is no longer installed.')
+            return
+          }
+          const text = await readText(packId)
+          const stored = await verifyStoredSignature(record, text)
+          if (stored.kind !== 'verified' || text === null) {
+            refuse('its pack file did not verify on this load.')
+            return
+          }
+          const verdict = await rotationForPackText({
+            packId,
+            signerKeyHex: stored.publicKeyHex,
+            packText: text,
+            pinned: pinnedKeySet(trustedRef.current, true),
+            state: rotationRef.current,
+          })
+          if (verdict.kind !== 'valid') {
+            refuse(rotationReason(verdict))
+            return
+          }
+          const fromFp = await fingerprintOrShort(verdict.fromKey)
+          const toFp = await fingerprintOrShort(verdict.toKey)
+          // Another installed pack still signed by the old key keeps it pinned.
+          const stillUsing: string[] = []
+          for (const other of base.packs) {
+            if (other.id === packId) continue
+            const otherStored = await verifyStoredSignature(other, await readText(other.id))
+            if (otherStored.kind === 'verified' && otherStored.publicKeyHex === verdict.fromKey) {
+              stillUsing.push(other.id)
+            }
+          }
+          let pinsText: string | null
+          try {
+            pinsText = await read()
+          } catch (error) {
+            refuse(`the trusted-publishers file could not be read (${String(error)}).`)
+            return
+          }
+          const added = trustedPublishersAfterTrust(pinsText, {
+            publicKey: verdict.toKey,
+            id: packId,
+            comment: `Pinned in Content Manager from pack ${packId} after a key rotation from ${fromFp}.`,
+          })
+          if (!added.ok) {
+            setStatusMessage(added.reason)
+            return
+          }
+          let nextText = added.text
+          let publishers = added.publishers
+          const keepOld = stillUsing.length > 0
+          if (!keepOld) {
+            const removed = trustedPublishersAfterUntrust(nextText, verdict.fromKey)
+            if (removed.ok) {
+              nextText = removed.text
+              publishers = removed.publishers
+            }
+          }
+          // Keys handed over along the chain are retired; the pinned start only when it is dropped.
+          const retire = verdict.links
+            .map((link) => link.oldKey)
+            .filter((key) => key !== verdict.fromKey || !keepOld)
+          const nextState = rotationStateAfterConfirm(rotationRef.current, verdict.links, retire)
+          const written = await write(nextText, nextState)
+          if (!written.ok) {
+            setStatusMessage(
+              'The trusted-publishers file could not be saved. Your pins were left as they were.',
+            )
+            return
+          }
+          const count = publishers.keys.length
+          commitTrusted(
+            publishers,
+            true,
+            `${count} publisher key${count === 1 ? '' : 's'} pinned in ~/.chipblocks/trusted-publishers.json. Trust is only this local pin.`,
+          )
+          await latestTrust()
+          setStatusMessage(
+            keepOld
+              ? `Pinned the new publisher key for "${packId}" (${toFp}). The old key ${fromFp} stays pinned because ${stillUsing.map((id) => `"${id}"`).join(', ')} ${stillUsing.length === 1 ? 'is' : 'are'} still signed by it.`
+              : `Pinned the new publisher key for "${packId}" (${toFp}) and removed the old key ${fromFp}. A key rotation back to the old key will be refused.`,
+          )
+        }),
+      )
+    },
+    [commitTrusted, latestIndex, latestTrust],
   )
 
   const onSaveRegistryUrl = useCallback(() => {
@@ -717,58 +1107,77 @@ export function useContentManager(
         setStatusMessage(downloaded.reason)
         return
       }
-      const base = await latestIndex()
-      if (base === null) return
-      const installed = await installDownloadedRegistryPack({
-        index: base,
-        entry,
-        body: downloaded.bytes,
-        trusted: trustedRef.current,
-        io: {
-          writePack,
-          writeIndex,
-          ...(readPack !== undefined ? { readPack } : {}),
-          removePack,
-        },
+      const body = downloaded.bytes
+      await withContentLock(bridge, setStatusMessage, async () => {
+        await latestTrust()
+        const base = await latestIndex()
+        if (base === null) return
+        const installed = await installDownloadedRegistryPack({
+          index: base,
+          entry,
+          body,
+          trusted: trustedRef.current,
+          floors: floorsRef.current,
+          rotation: rotationRef.current,
+          io: {
+            writePack,
+            writeIndex,
+            ...(readPack !== undefined ? { readPack } : {}),
+            removePack,
+          },
+        })
+        if (!installed.ok) {
+          setStatusMessage(installed.reason)
+          return
+        }
+        commitIndex(installed.index)
+        appliedPacksKey = packsKey(installed.index)
+        sharedLoadIssues = sharedLoadIssues.filter((issue) => issue.id !== installed.pack.id)
+        const partsKept = setCommunityPackParts(installed.pack.id, installed.pack.parts, {
+          name: installed.pack.name,
+        })
+        const fpKept = setCommunityPackFootprints(installed.pack.id, installed.pack.footprints)
+        const trustBit =
+          installed.record.signatureStatus === 'valid-trusted'
+            ? 'publisher key pinned'
+            : installed.record.signatureStatus === 'valid-untrusted'
+              ? 'publisher signature valid, key not pinned'
+              : 'no publisher signature'
+        setStatusMessage(
+          `Installed "${installed.record.name}" v${installed.record.packVersion} from the registry (${trustBit}). ${partsKept} part(s), ${fpKept} footprint(s).${installed.keyRotation !== undefined ? ` ${KEY_ROTATION_INSTALL_NOTE}` : ''}`,
+        )
       })
-      if (!installed.ok) {
-        setStatusMessage(installed.reason)
-        return
-      }
-      commitIndex(installed.index)
-      const partsKept = setCommunityPackParts(installed.pack.id, installed.pack.parts, {
-        name: installed.pack.name,
-      })
-      const fpKept = setCommunityPackFootprints(installed.pack.id, installed.pack.footprints)
-      const trustBit =
-        installed.record.signatureStatus === 'valid-trusted'
-          ? 'publisher key pinned'
-          : installed.record.signatureStatus === 'valid-untrusted'
-            ? 'publisher signature valid, key not pinned'
-            : 'no publisher signature'
-      setStatusMessage(
-        `Installed "${installed.record.name}" v${installed.record.packVersion} from the registry (${trustBit}). ${partsKept} part(s), ${fpKept} footprint(s).`,
-      )
     })
   }, [
     commitIndex,
     enqueueIndexWrite,
     indexWritesAllowed,
     latestIndex,
+    latestTrust,
     registryPacks,
     registrySelection,
   ])
 
   const publisherByPack: Record<string, PublisherCard> = {}
   for (const pack of index.packs) {
-    if (pack.publisherKeyHex === undefined) continue
-    if (pack.signatureStatus !== 'valid-trusted' && pack.signatureStatus !== 'valid-untrusted') {
-      continue
-    }
-    publisherByPack[pack.id] = {
-      publicKeyHex: pack.publisherKeyHex,
-      fingerprint: fingerprints[pack.id] ?? '',
-      trust: livePublisherTrust(pack.signatureStatus, pack.publisherKeyHex, trusted, pinsLoaded),
+    const checked = storedTrust[pack.id]
+    if (checked === undefined || checked.stored.kind === 'unsigned') continue
+    const trust = liveTrustFromStored(checked.stored, trusted, pinsLoaded)
+    if (checked.stored.kind === 'verified') {
+      const card: PublisherCard = {
+        publicKeyHex: checked.stored.publicKeyHex,
+        fingerprint: checked.fingerprint,
+        trust,
+      }
+      if (checked.rotation !== undefined) card.rotation = checked.rotation
+      publisherByPack[pack.id] = card
+    } else {
+      publisherByPack[pack.id] = {
+        publicKeyHex: '',
+        fingerprint: '',
+        trust,
+        reason: checked.stored.reason,
+      }
     }
   }
   const updates = registryUpdates(index.packs, registryPacks)
@@ -796,6 +1205,7 @@ export function useContentManager(
       onRegistrySelection={setRegistrySelection}
       onInstallFromRegistry={onInstallFromRegistry}
       onTrustPublisher={onTrustPublisher}
+      onConfirmRotation={onConfirmRotation}
     />
   ) : null
 

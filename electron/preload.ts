@@ -3,7 +3,9 @@
 // removeAllListeners-before-on keeps exactly one handler per channel, so a React
 // re-subscribe (or StrictMode double-mount) can't stack duplicate listeners.
 import { contextBridge, ipcRenderer } from 'electron'
+import type { RotationState } from '../src/renderer/rotation-state.ts'
 import type { SaveDialogOutcome } from '../src/renderer/save-outcome.ts'
+import type { TrustSealView } from '../src/renderer/trust-seal-view.ts'
 import { subscribeOnly } from './ipc-subscribe.ts'
 
 const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) =>
@@ -148,6 +150,11 @@ contextBridge.exposeInMainWorld('chipblocks', {
     ipcRenderer.invoke('trusted-publishers:read'),
   writeTrustedPublishers: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('trusted-publishers:write', text),
+  writeTrustedPublishersRotation: (
+    text: string,
+    rotation: RotationState,
+  ): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('trusted-publishers:write-rotation', text, rotation),
   readContentRegistrySettings: (): Promise<string | null> =>
     ipcRenderer.invoke('content-registry:settings-read'),
   writeContentRegistrySettings: (text: string): Promise<{ ok: boolean; path?: string }> =>
@@ -159,6 +166,15 @@ contextBridge.exposeInMainWorld('chipblocks', {
   ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: string }> =>
     ipcRenderer.invoke('content-registry:download', url, maxBytes, timeoutMs),
   onContentManagerOpen: (callback: () => void) => subscribe('content-manager:open', callback),
+  // One writer at a time across ChipBlocks windows (processes) for packs + pins.
+  acquireContentLock: (): Promise<{ ok: true; token: string } | { ok: false; reason: string }> =>
+    ipcRenderer.invoke('content:lock-acquire'),
+  releaseContentLock: (token: string): Promise<boolean> =>
+    ipcRenderer.invoke('content:lock-release', token),
+  // The pin list together with what the trust seal says about it, plus the rollback floors.
+  readTrustSeal: (): Promise<TrustSealView> => ipcRenderer.invoke('trust-seal:read'),
+  // Installed packs or pins changed on disk (this window, another window, or by hand).
+  onContentChanged: (callback: () => void) => subscribe('content:changed', callback),
 
   onShortcutsOpen: (callback: () => void) => subscribe('shortcuts:open', callback),
   // Clipboard (S19-v3-69): the Edit menu's Cut/Copy/Paste Parts items — the

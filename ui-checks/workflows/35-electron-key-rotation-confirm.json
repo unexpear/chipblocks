@@ -1,0 +1,466 @@
+{
+  "name": "electron-key-rotation-confirm",
+  "targets": ["electron"],
+  "title": "A publisher moves a pinned pack to a new key with a rotation signed by the old key: the update installs, the new key is NOT pinned, the Content Manager shows the key change (also after a relaunch), and only an explicit confirmation re-pins and re-seals",
+  "covers": ["contentManager"],
+  "notes": "Keys are throwaway in-memory ed25519 keys (src/pack-fixture.mjs); the rotation statement is made with scripts/pack-key-rotation.mjs, the publisher tool. Everything is written in the sandbox home; the seal uses safeStorage for the sandboxed test profile. The real ~/.chipblocks is snapshotted read-only and compared after every step.",
+  "steps": [
+    {
+      "id": "install-and-pin-old",
+      "title": "Install rot_pack 1.0.0 signed by the old key and pin it",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/rot_v1.json",
+            "id": "rot_pack",
+            "name": "Rot Pack",
+            "packVersion": "1.0.0",
+            "keyName": "old",
+            "keyVar": "keyOld"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/rot_v2.json",
+            "id": "rot_pack",
+            "name": "Rot Pack",
+            "packVersion": "1.1.0",
+            "keyName": "new",
+            "keyVar": "keyNew",
+            "rotations": [
+              {
+                "from": "old",
+                "to": "new",
+                "sequence": 1
+              }
+            ]
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "dialog": {
+            "open": "{files}/rot_v1.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "rot_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "old-pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyOld}"
+            }
+          ],
+          "id": "pin-file"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "rotated-update-installs-untrusted",
+      "title": "Install 1.1.0 signed by the new key with a rotation from the pinned key: installed, not pinned, key change shown",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/rot_v2.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Installed \"Rot Pack\" v1\\.1\\.0 \\(MIT; declared content hash matched\\)\\..* The publisher key changed, and a key you pinned signed the change\\. The new key is not pinned",
+          "id": "installed-not-pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].packVersion",
+              "eq": "1.1.0"
+            },
+            {
+              "at": "packs[0].publisherKeyHex",
+              "eq": "{keyNew}"
+            },
+            {
+              "at": "packs[0].signatureStatus",
+              "eq": "valid-untrusted"
+            }
+          ],
+          "id": "index-new-key"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "not-auto-pinned"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.keyRotationTextFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "matches": "^Publisher key changed: {keyOldFp} → {keyNewFp}, signed by your pinned key\\.$",
+          "id": "key-change-shown"
+        },
+        {
+          "type": "absent",
+          "sel": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "id": "no-plain-pin-button"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyOld}"
+            }
+          ],
+          "id": "pins-unchanged"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/rot_pack/pack.json",
+          "json": [
+            {
+              "at": "signature.rotations.length",
+              "eq": 1
+            },
+            {
+              "at": "signature.rotations[0].newKey",
+              "eq": "{keyNew}"
+            }
+          ],
+          "id": "rotation-kept-in-signed-original"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "relaunch-still-asks",
+      "title": "Relaunch: the pack is still untrusted and the key change is still shown; nothing changed silently",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "still-untrusted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.keyRotationTextFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "matches": "^Publisher key changed: {keyOldFp} → {keyNewFp}, signed by your pinned key\\.$",
+          "id": "still-shown"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyOld}"
+            }
+          ],
+          "id": "pins-unchanged"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "cancel-writes-nothing",
+      "title": "Trust the new key… then Cancel: pins stay as they are",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.keyRotationReviewFor",
+          "with": {
+            "pack": "rot_pack"
+          }
+        },
+        {
+          "click": "contentManager.keyRotationCancelFor",
+          "with": {
+            "pack": "rot_pack"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "still-untrusted"
+        },
+        {
+          "type": "visible",
+          "sel": "contentManager.keyRotationFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "id": "card-still-there"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyOld}"
+            }
+          ],
+          "id": "pins-unchanged"
+        }
+      ]
+    },
+    {
+      "id": "confirm-re-pins",
+      "title": "Trust the new key… then confirm: the new key is pinned, the old key removed, the seal updated",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.keyRotationReviewFor",
+          "with": {
+            "pack": "rot_pack"
+          }
+        },
+        {
+          "click": "contentManager.keyRotationConfirmYesFor",
+          "with": {
+            "pack": "rot_pack"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Pinned the new publisher key for \"rot_pack\" \\({keyNewFp}\\) and removed the old key {keyOldFp}\\. A key rotation back to the old key will be refused\\.$",
+          "id": "confirmed"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "new-key-trusted"
+        },
+        {
+          "type": "absent",
+          "sel": "contentManager.keyRotationFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "id": "card-gone"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyNew}"
+            }
+          ],
+          "id": "only-new-key-pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trust-seal.json",
+          "json": [
+            {
+              "at": "format",
+              "eq": "chipblocks-trust-seal"
+            },
+            {
+              "at": "protection",
+              "eq": "os"
+            }
+          ],
+          "notMatches": "rotation|retired|{keyOld}",
+          "id": "seal-encrypted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^1 publisher key pinned in ~/\\.chipblocks/trusted-publishers\\.json\\..*The list is sealed",
+          "id": "pins-sealed"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "relaunch-trusted",
+      "title": "Relaunch: the new key is still pinned and sealed, and no key change is asked again",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "still-trusted"
+        },
+        {
+          "type": "absent",
+          "sel": "contentManager.keyRotationFor",
+          "with": {
+            "pack": "rot_pack"
+          },
+          "id": "no-card"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "The list is sealed with this computer's OS-protected storage",
+          "id": "seal-holds"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched-at-end"
+        }
+      ]
+    }
+  ]
+}
