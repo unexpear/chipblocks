@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { ElectronSession, ensureBuilt, makeSandbox, removeSandbox } from './electron.mjs'
 import { Engine, StepError } from './engine.mjs'
+import { makeSelfSignedCert } from './https-fixture.mjs'
 import { Laya } from './laya.mjs'
 import { writeReports } from './report.mjs'
 
@@ -154,10 +155,26 @@ async function runWorkflow(browser, wf, laya) {
   let session = null
   let sandbox = null
   let pathVars = {}
+  let testTls = null
+  let testCaFile = null
   if (target === 'electron') {
     // one fresh sandbox (home, userData, Documents…) and one app per workflow
     sandbox = makeSandbox()
-    session = new ElectronSession({ repo, sandbox, size: wf.viewport ?? map.electron?.window, log })
+    // A workflow with "httpsTestCa": true gets a fresh self-signed certificate for its local https
+    // server. Only the public certificate is written (inside the sandbox) and only this workflow's
+    // Electron process is told to trust it; the private key stays in this runner's memory.
+    if (wf.httpsTestCa) {
+      testTls = makeSelfSignedCert()
+      testCaFile = path.join(sandbox.root, 'test-ca.pem')
+      fs.writeFileSync(testCaFile, testTls.certPem, 'utf8')
+    }
+    session = new ElectronSession({
+      repo,
+      sandbox,
+      size: wf.viewport ?? map.electron?.window,
+      log,
+      testCaFile,
+    })
     currentSession = session
     page = await session.launch()
     vp = { width: session.window.content[0], height: session.window.content[1] }
@@ -184,6 +201,7 @@ async function runWorkflow(browser, wf, laya) {
     target,
     session,
     pathVars,
+    testTls,
   })
   const result = {
     name: wf.name,
@@ -335,6 +353,8 @@ async function runWorkflow(browser, wf, laya) {
     )
   }
   result.ms = Date.now() - t0
+  const servers = await eng.closeServers()
+  if (servers.length) result.httpsServers = servers
   result.laya = { runs: eng.layaRuns, flags: eng.layaFlags }
   result.console = {
     errorList: eng.console

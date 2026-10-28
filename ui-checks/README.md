@@ -90,13 +90,13 @@ Electron target (`npm run ui-checks:electron`):
 | electron-keybind-persistence | rebind Shortcuts panel → Ctrl+J and Rotate → T; `userData/keybinds.json` and the native menu accelerator follow; relaunch; Ctrl+K is dead and Ctrl+J opens the panel; Reset; defaults survive a relaunch |
 | electron-fab-zip | PCB panel on the LED circuit; cancelled Export ZIP writes nothing; Export ZIP saves through the dialog with the "manufacturing ZIP saved — …" note; the ZIP is parsed (central directory, sizes, CRC-32): copper/mask/silkscreen/Edge_Cuts Gerbers with FileFunction, the PTH Excellon drill (`M48`), job file, BOM, placement, netlist, validation report, README, stackup, none empty |
 | electron-fpga-chip-description | File ▸ Read an FPGA Chip File… on the repo's iCE40-384 fixture: refusal asking for the chip description, choose it (open dialog title), decoded card, remembered in `~/.chipblocks/fpga-chip-descriptions.json`, asked once on reopen, remembered after a relaunch |
+| electron-https-registry-live | a real https registry on `127.0.0.1` (random port) with a self-signed localhost cert made at test time; only the test Electron trusts it, through `NODE_EXTRA_CA_CERTS` pointing at `{sandbox}/test-ca.pem` (nothing goes into the OS cert store, no shipping code changed for trust); Save + Load the https index (3 packs, nothing installed); a download whose socket is destroyed half way is refused ("did not complete (terminated: …)") with no badge and no `libraries/` folder; a bad SHA-256 is refused with the expected and actual hashes; the good pack installs ENABLED / valid-untrusted and `libraries/` holds only `index.json` + `https_good/pack.json`; both refusals again leave it unchanged with no temp files; an https index listing a file:// download is refused; the server log shows each request; real `~/.chipblocks` unchanged |
 
 **Not covered by either target** (listed in `map.electron.notCovered` and in the Electron report):
 the other imports / exports and Compile to iCE40 (listed and reachable, not driven end to end),
 View-menu window roles, accelerators delivered by the OS menu (checked on the menu items instead),
-the look of real native dialogs (stubbed), the registry download over https (the app refuses
-plain http, so the end-to-end registry workflow uses a file:// test index; the https fetch is covered
-by vitest), and the packaged electron-builder build.
+the look of real native dialogs (stubbed), the registry download from a real remote https host (workflow 30 uses a local
+self-signed server; plain http is refused by the app), and the packaged electron-builder build.
 
 ## Electron mode
 
@@ -128,6 +128,13 @@ node ui-checks/src/run.mjs --target electron --workflow electron-fab-zip --keep-
   (disabled items are refused) and then waits two animation frames, since a person can't pick two
   menu items in one frame. `menuItem` asserts read label, enabled, checked, accelerator and submenu.
 - **Restart.** `relaunch` closes the app and starts it again on the same sandbox.
+- **Test TLS.** A workflow with `"httpsTestCa": true` gets a self-signed EC P-256 cert for
+  `localhost` / `127.0.0.1` made at test time (the key stays in memory). Only the cert is written,
+  to `{sandbox}/test-ca.pem`, and only the spawned test Electron gets `NODE_EXTRA_CA_CERTS` pointing
+  at it (the session refuses a CA file outside the sandbox). Any inherited `NODE_EXTRA_CA_CERTS`,
+  `NODE_TLS_REJECT_UNAUTHORIZED`, `SSL_CERT_FILE` and `SSL_CERT_DIR` are removed from the app's env.
+  Nothing is added to the OS cert store and the app's fetch keeps full certificate checks;
+  `tests/https-registry-download.test.ts` proves the production path refuses an untrusted cert.
 - Window: 1440×900 content (`map.electron.window`), background throttling off. Workflows carry
   `"targets": ["electron"]`; browser workflows have no `targets` (= browser) and are not run in
   Electron mode.
@@ -188,11 +195,12 @@ its first 200 characters.
 | path | what |
 |---|---|
 | `map/app-map.json` | screens, controls, ready signals, regions, invariants, Laya questions, macros, crash watch, alarm words + known-benign text, console allow-list, Electron-only features, remaining data-testid wishlist |
-| `workflows/NN-name.json` | `targets` (default `["browser"]`); steps: `pre` → `do` → `expect`; `screen` adds that screen's invariants; `laya: true`; `requires: ["electron:…"]`; `target` + `targetNote` (skip a step on the other target); `independent`, `continueOnFail`, `knownIssue` |
+| `workflows/NN-name.json` | `targets` (default `["browser"]`); steps: `pre` → `do` → `expect`; `screen` adds that screen's invariants; `laya: true`; `requires: ["electron:…"]`; `target` + `targetNote` (skip a step on the other target); `independent`, `continueOnFail`, `knownIssue`; `httpsTestCa: true` (Electron: test cert + `NODE_EXTRA_CA_CERTS`) |
 | `src/run.mjs` | CLI, dev-server / Electron lifecycle, step loop |
 | `src/electron.mjs` | build check, sandbox, `_electron` launch, isolation check, dialog stubs, native menu access |
 | `src/isolate.cjs` | main-process preload that points every app folder at the sandbox |
 | `src/pack-fixture.mjs` | content packs signed with a throwaway in-memory ed25519 key; a local file:// test registry (good / bad SHA-256 / bad signature / wrong publisher key) |
+| `src/https-fixture.mjs` | self-signed test cert (pure `node:crypto` DER, EC P-256, SAN localhost + 127.0.0.1) and a local https registry on 127.0.0.1 (good / dropped mid-download / bad SHA-256 / an index with a file:// download), with a request log |
 | `src/home-guard.mjs` | read-only before/after snapshot of the real `~/.chipblocks` (names, sizes, mtimes) |
 | `src/zip.mjs` | dependency-free ZIP reader (central directory, inflate, CRC-32) |
 | `src/engine.mjs` | selectors, regions, polling asserts, hit-tested clicks, console watch, artifacts, Laya checkpoint |
@@ -208,8 +216,10 @@ Asserts: visible, absent, count, enabled, disabled, checked, pressed, focused, v
 attrNumber, text, numbers, clickable, noAlarms, not, all, any, implies, iff, equalsVar;
 Electron: menuItem, windowTitle, dialogs (this step's), file (exists / size / regex / JSON paths),
 zip (entries by name, size, first bytes, content), dir (a folder's exact entries),
-realHomeUnchanged (the real `~/.chipblocks` matches a `realHomeSnapshot`).
+realHomeUnchanged (the real `~/.chipblocks` matches a `realHomeSnapshot`), httpsRequests (how many
+requests the test https server logged for a path, `min` / `max`).
 Actions: open, macro, waitReady, ifVisible, goto, click, dblclick, fill, select, type, press,
 dispatch, waitFor, capture, setViewport, mouseClickAt, settle; Electron: menu, dialog
 (`open` / `save` / `cancel`), relaunch, writeFile, editFile, makePack (`keyVar` → `{keyVar}`; `keyName` signs several packs with one in-memory key),
-makeRegistry (sets `{registryUrl}`), tamperInstalledPack (edit an installed pack.json, or put another file in its place with `replaceWith`, and/or its index row in the sandbox home, and rewrite the row's contentHash), writeContentLock (`live` / `dead`: a `content.lock` held by another process, sandbox only), realHomeSnapshot (all writes stay inside the sandbox). `goto` reloads the window in Electron.
+makeRegistry (sets `{registryUrl}`), startHttpsRegistry (`httpsTestCa` workflows only; sets
+`{registryUrl}`, `{registryFileIndexUrl}`, `{registryOrigin}`; stopped after the workflow), tamperInstalledPack (edit an installed pack.json, or put another file in its place with `replaceWith`, and/or its index row in the sandbox home, and rewrite the row's contentHash), writeContentLock (`live` / `dead`: a `content.lock` held by another process, sandbox only), realHomeSnapshot (all writes stay inside the sandbox). `goto` reloads the window in Electron.
