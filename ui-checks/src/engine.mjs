@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chipblocksSnapshot, snapshotDiff } from './home-guard.mjs'
+import { startHttpsRegistry } from './https-fixture.mjs'
 import { compactForLaya } from './laya.mjs'
 import { makePack, makeRegistry } from './pack-fixture.mjs'
 import { readZip } from './zip.mjs'
@@ -47,12 +48,15 @@ export class Engine {
     target = 'browser',
     session = null,
     pathVars = {},
+    testTls = null,
   }) {
     this.map = map
     this.context = context
     this.target = target
     this.session = session // ElectronSession in --target electron
     this.pathVars = pathVars // {sandbox}, {home}, {userData}, {files}, {out}, {fixtures}
+    this.testTls = testTls // { certPem, keyPem } when the workflow asked for "httpsTestCa"
+    this.servers = [] // local https registries started by this workflow; closed at its end
     this.dialogMark = 0
     this.outDir = outDir
     this.laya = laya
@@ -594,6 +598,13 @@ export class Engine {
           detail: `${dir}: [${names.join(', ')}]${JSON.stringify(names) === JSON.stringify(want) ? '' : ` expected [${want.join(', ')}]`}`,
         }
       }
+      case 'httpsRequests': {
+        // What the workflow's local https registry actually served: proves the bytes went over TLS.
+        const log = this.servers.flatMap((s) => s.log)
+        const n = log.filter((l) => l === `GET ${a.path}`).length
+        const ok = (a.min === undefined || n >= a.min) && (a.max === undefined || n <= a.max)
+        return { ok, detail: `GET ${a.path} x${n} (min ${a.min ?? '-'}, max ${a.max ?? '-'})` }
+      }
       case 'realHomeUnchanged': {
         // The real ~/.chipblocks (outside the sandbox) is exactly as the snapshot left it.
         const before = this.vars[`realHome:${a.since}`]
@@ -898,6 +909,27 @@ export class Engine {
         fileUrl: (file) => pathToFileURL(path.resolve(file)).href,
       })
       this.pathVars.registryUrl = indexUrl
+    } else if (act.startHttpsRegistry) {
+      // A registry over real https on 127.0.0.1 with the workflow's test certificate.
+      const m = act.startHttpsRegistry
+      this.electronOnly('startHttpsRegistry')
+      if (!this.testTls)
+        throw new StepError(
+          'driver',
+          'startHttpsRegistry needs "httpsTestCa": true on the workflow',
+        )
+      let fileDownloadUrl
+      if (m.fileDownload) {
+        const f = this.sandboxed(m.fileDownload, 'startHttpsRegistry')
+        fs.mkdirSync(path.dirname(f), { recursive: true })
+        fs.writeFileSync(f, makePack({ id: 'https_file_pack', name: 'File Pack' }).text, 'utf8')
+        fileDownloadUrl = pathToFileURL(f).href
+      }
+      const reg = await startHttpsRegistry({ packs: m.packs, ...this.testTls, fileDownloadUrl })
+      this.servers.push(reg)
+      this.pathVars.registryUrl = reg.indexUrl
+      this.pathVars.registryFileIndexUrl = reg.fileIndexUrl
+      this.pathVars.registryOrigin = reg.origin
     } else if (act.makePack) {
       const m = act.makePack
       const file = this.sandboxed(m.path, 'makePack')
@@ -921,6 +953,16 @@ export class Engine {
   }
 
   /** Test-side writes stay inside the Electron sandbox. */
+  /** Close every local https server this workflow started; returns what each one served. */
+  async closeServers() {
+    const out = []
+    for (const s of this.servers.splice(0)) {
+      await s.close()
+      out.push({ origin: s.origin, requests: s.log })
+    }
+    return out
+  }
+
   sandboxed(p, what) {
     this.electronOnly(what)
     const file = path.resolve(p)
