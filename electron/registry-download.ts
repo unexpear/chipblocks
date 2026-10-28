@@ -35,6 +35,34 @@ export async function collectBounded(
   return { ok: true, bytes }
 }
 
+/**
+ * Node's fetch reports every network failure as "fetch failed" or "terminated" and keeps the real
+ * reason (an untrusted certificate, a closed socket) in `cause`. Walk that chain so the refusal
+ * says what happened. `tls` is true when the cause is a certificate or TLS failure.
+ */
+export function describeNetworkError(error: unknown): { detail: string; tls: boolean } {
+  const parts: string[] = []
+  let tls = false
+  let e: unknown = error
+  for (let depth = 0; depth < 4 && e !== undefined && e !== null; depth++) {
+    if (!(e instanceof Error)) {
+      parts.push(String(e))
+      break
+    }
+    const code = (e as { code?: unknown }).code
+    const text =
+      typeof code === 'string' && !e.message.includes(code) ? `${e.message} [${code}]` : e.message
+    if (text && !parts.includes(text)) parts.push(text)
+    if (
+      typeof code === 'string' &&
+      /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|ERR_TLS|ERR_SSL/.test(code)
+    )
+      tls = true
+    e = (e as { cause?: unknown }).cause
+  }
+  return { detail: parts.join(': ') || 'unknown error', tls }
+}
+
 export async function readHttpsBounded(
   url: string,
   signal: AbortSignal,
@@ -48,7 +76,13 @@ export async function readHttpsBounded(
     if (signal.aborted) {
       return { ok: false, reason: 'The download timed out. Nothing was kept.' }
     }
-    const detail = error instanceof Error ? error.message : String(error)
+    const { detail, tls } = describeNetworkError(error)
+    if (tls) {
+      return {
+        ok: false,
+        reason: `The registry server's certificate was not accepted (${detail}). Nothing was downloaded.`,
+      }
+    }
     return { ok: false, reason: `The download did not complete (${detail}). Nothing was kept.` }
   }
   if (response.status >= 300 && response.status < 400) {
@@ -90,7 +124,8 @@ export async function readHttpsBounded(
     if (signal.aborted) {
       return { ok: false, reason: 'The download timed out. Nothing was kept.' }
     }
-    const detail = error instanceof Error ? error.message : String(error)
+    // The connection broke after the headers (server closed or reset it mid-body).
+    const { detail } = describeNetworkError(error)
     return { ok: false, reason: `The download did not complete (${detail}). Nothing was kept.` }
   }
 }

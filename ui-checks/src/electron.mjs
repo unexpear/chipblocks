@@ -86,9 +86,14 @@ const inside = (p, root) => {
 }
 
 export class ElectronSession {
-  constructor({ repo, sandbox, size, log }) {
+  constructor({ repo, sandbox, size, log, testCaFile = null }) {
     this.repo = repo
     this.sandbox = sandbox
+    // A test certificate for a workflow's local https server (see https-fixture.mjs). It must lie
+    // inside this sandbox; it is handed to this one Electron process only, never to the app at large.
+    if (testCaFile && !inside(testCaFile, sandbox.root))
+      throw new Error(`test CA file ${testCaFile} is outside the sandbox ${sandbox.root}`)
+    this.testCaFile = testCaFile
     this.size = size
     this.log = log ?? (() => {})
     this.app = null
@@ -108,6 +113,17 @@ export class ElectronSession {
     // Load the built renderer (file://), never a dev server; and none of the dev-only switches.
     for (const k of ['ELECTRON_RENDERER_URL', 'CHIP_DEBUG_PORT', 'ELECTRON_RUN_AS_NODE'])
       delete env[k]
+    // TLS: never inherit a CA override or a disabled check from the shell that started the runner.
+    // A workflow that serves https on 127.0.0.1 gets its own throwaway certificate added to this
+    // process's trust (NODE_EXTRA_CA_CERTS adds to the default roots; nothing is turned off).
+    for (const k of [
+      'NODE_EXTRA_CA_CERTS',
+      'NODE_TLS_REJECT_UNAUTHORIZED',
+      'SSL_CERT_FILE',
+      'SSL_CERT_DIR',
+    ])
+      delete env[k]
+    if (this.testCaFile) env.NODE_EXTRA_CA_CERTS = this.testCaFile
     const t0 = Date.now()
     this.app = await _electron.launch({
       executablePath: exe,

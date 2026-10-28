@@ -1,0 +1,290 @@
+{
+  "name": "electron-https-registry-live",
+  "targets": ["electron"],
+  "httpsTestCa": true,
+  "title": "Install from a live https registry on 127.0.0.1 (self-signed test certificate trusted by this test's Electron process only): a good pack downloads over TLS and verifies; a connection dropped mid-download and a SHA-256 mismatch are refused with nothing written; an https index that lists a file:// download is refused; real ~/.chipblocks untouched",
+  "covers": ["contentManager"],
+  "notes": "The runner makes a fresh self-signed certificate for this workflow (src/https-fixture.mjs, node:crypto only), writes only its public half to {sandbox}/test-ca.pem, and starts this workflow's Electron process with NODE_EXTRA_CA_CERTS pointing at it. Nothing is added to the Windows certificate store and no check is turned off: the app's own https download path (electron/registry-download.ts, fetch with default TLS verification) is what runs. The server listens on 127.0.0.1 on a free port, serves packs signed with throwaway in-memory keys, and is closed when the workflow ends. 'drop' sends the headers and half the bytes, then destroys the socket.",
+  "steps": [
+    {
+      "id": "setup",
+      "title": "Snapshot the real ~/.chipblocks; start the https registry; open the Content Manager",
+      "screen": "contentManager",
+      "do": [
+        { "realHomeSnapshot": "start" },
+        {
+          "startHttpsRegistry": {
+            "packs": [
+              { "id": "https_good", "name": "HTTPS Good" },
+              { "id": "https_drop", "name": "HTTPS Dropped", "mode": "drop" },
+              { "id": "https_badsha", "name": "HTTPS Bad SHA", "mode": "sha" }
+            ],
+            "fileDownload": "{files}/https/file-pack.json"
+          }
+        },
+        { "menu": "Tools ▸ Plugin & Content Manager" },
+        { "waitReady": "contentManager" }
+      ],
+      "expect": [
+        { "type": "count", "sel": "contentManager.badges", "eq": 0, "id": "none-installed" },
+        {
+          "type": "file",
+          "path": "{sandbox}/test-ca.pem",
+          "matches": "^-----BEGIN CERTIFICATE-----",
+          "id": "test-ca-in-sandbox"
+        },
+        { "type": "realHomeUnchanged", "since": "start", "id": "real-home-untouched" }
+      ]
+    },
+    {
+      "id": "load-index",
+      "title": "Type the https index URL, Save, Load over TLS: three packs listed, nothing installed",
+      "screen": "contentManager",
+      "do": [
+        { "fill": "contentManager.registryUrl", "value": "{registryUrl}" },
+        { "click": "contentManager.registrySave" },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "contentManager.registryStatus",
+            "matches": "^Registry index saved: https://127\\.0\\.0\\.1:"
+          }
+        },
+        { "click": "contentManager.registryLoad" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.registryStatus",
+          "matches": "^Loaded 3 packs from the registry index\\. Nothing was installed\\.$",
+          "id": "loaded-3"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.registryPack",
+          "matches": "^No pack chosen HTTPS Good 1\\.0\\.0 HTTPS Dropped 1\\.0\\.0 HTTPS Bad SHA 1\\.0\\.0$",
+          "id": "three-packs-offered"
+        },
+        { "type": "httpsRequests", "path": "/index.json", "min": 1, "id": "index-over-https" },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-packs-folder-yet"
+        }
+      ]
+    },
+    {
+      "id": "dropped-connection-refused",
+      "title": "The server drops the connection halfway through the pack: honest refusal, nothing written",
+      "screen": "contentManager",
+      "do": [
+        { "select": "contentManager.registryPack", "option": "HTTPS Dropped 1.0.0" },
+        { "click": "contentManager.installFromRegistry" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^The download did not complete \\(terminated: .+\\)\\. Nothing was kept\\.$",
+          "id": "status-dropped"
+        },
+        {
+          "type": "httpsRequests",
+          "path": "/packs/https_drop.json",
+          "min": 1,
+          "id": "drop-requested"
+        },
+        { "type": "count", "sel": "contentManager.badges", "eq": 0, "id": "no-badge" },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-packs-folder"
+        }
+      ]
+    },
+    {
+      "id": "bad-sha-refused",
+      "title": "Served bytes do not match the index SHA-256: refused with expected vs got; nothing written",
+      "screen": "contentManager",
+      "do": [
+        { "select": "contentManager.registryPack", "option": "HTTPS Bad SHA 1.0.0" },
+        { "click": "contentManager.installFromRegistry" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^SHA-256 of the download for \"https_badsha\" does not match the registry index\\. Expected [0-9a-f]{64}, got [0-9a-f]{64}\\. Nothing was written\\.$",
+          "id": "status-sha"
+        },
+        {
+          "type": "httpsRequests",
+          "path": "/packs/https_badsha.json",
+          "min": 1,
+          "id": "sha-requested"
+        },
+        { "type": "count", "sel": "contentManager.badges", "eq": 0, "id": "no-badge" },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-packs-folder"
+        }
+      ]
+    },
+    {
+      "id": "good-installs",
+      "title": "Good pack over https: hash + signature verified, installed ENABLED; only its own folder exists",
+      "screen": "contentManager",
+      "do": [
+        { "select": "contentManager.registryPack", "option": "HTTPS Good 1.0.0" },
+        { "click": "contentManager.installFromRegistry" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Installed \"HTTPS Good\" v1\\.0\\.0 from the registry \\(publisher signature valid, key not pinned\\)\\. 1 part\\(s\\), 0 footprint\\(s\\)\\.$",
+          "id": "status-installed"
+        },
+        {
+          "type": "httpsRequests",
+          "path": "/packs/https_good.json",
+          "min": 1,
+          "id": "good-requested"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": { "pack": "https_good" },
+          "matches": "^ENABLED$",
+          "id": "badge"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": { "pack": "https_good" },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "trust-valid-untrusted"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries",
+          "entries": ["index.json", "https_good"],
+          "id": "packs-folder-only-good"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries/https_good",
+          "entries": ["pack.json"],
+          "id": "good-folder-one-file"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            { "at": "packs.length", "eq": 1 },
+            { "at": "packs[0].id", "eq": "https_good" },
+            { "at": "packs[0].acquiredFrom", "eq": "registry" },
+            { "at": "packs[0].signatureStatus", "eq": "valid-untrusted" },
+            { "at": "packs[0].enabled", "eq": true }
+          ],
+          "id": "index-on-disk"
+        }
+      ]
+    },
+    {
+      "id": "failures-after-install",
+      "title": "Dropped connection and bad SHA-256 again with a pack installed: refused, packs folder unchanged",
+      "screen": "contentManager",
+      "do": [
+        { "select": "contentManager.registryPack", "option": "HTTPS Dropped 1.0.0" },
+        { "click": "contentManager.installFromRegistry" },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "contentManager.status",
+            "matches": "did not complete"
+          }
+        },
+        { "select": "contentManager.registryPack", "option": "HTTPS Bad SHA 1.0.0" },
+        { "click": "contentManager.installFromRegistry" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^SHA-256 of the download for \"https_badsha\" does not match",
+          "id": "status-sha"
+        },
+        {
+          "type": "httpsRequests",
+          "path": "/packs/https_drop.json",
+          "min": 2,
+          "id": "drop-requested-again"
+        },
+        { "type": "count", "sel": "contentManager.badges", "eq": 1, "id": "still-one" },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries",
+          "entries": ["index.json", "https_good"],
+          "id": "packs-folder-unchanged"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries/https_good",
+          "entries": ["pack.json"],
+          "id": "no-temp-files"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [{ "at": "packs.length", "eq": 1 }],
+          "id": "index-unchanged"
+        }
+      ]
+    },
+    {
+      "id": "https-index-file-download-refused",
+      "title": "An https index that lists a file:// download is refused at load; nothing is read or installed",
+      "screen": "contentManager",
+      "do": [
+        { "fill": "contentManager.registryUrl", "value": "{registryFileIndexUrl}" },
+        { "click": "contentManager.registrySave" },
+        {
+          "waitFor": {
+            "type": "text",
+            "region": "contentManager.registryStatus",
+            "matches": "^Registry index saved: https://127\\.0\\.0\\.1:.*/index-file-download\\.json"
+          }
+        },
+        { "click": "contentManager.registryLoad" }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.registryStatus",
+          "matches": "an https registry index may only list https downloads\\. Refused file:///.*Nothing was downloaded\\.",
+          "id": "status-file-refused"
+        },
+        {
+          "type": "httpsRequests",
+          "path": "/index-file-download.json",
+          "min": 1,
+          "id": "file-index-requested"
+        },
+        { "type": "count", "sel": "contentManager.badges", "eq": 1, "id": "still-one" },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries",
+          "entries": ["index.json", "https_good"],
+          "id": "packs-folder-unchanged"
+        },
+        { "type": "realHomeUnchanged", "since": "start", "id": "real-home-untouched-at-end" }
+      ]
+    }
+  ]
+}
