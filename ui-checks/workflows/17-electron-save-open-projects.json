@@ -8,6 +8,7 @@
       "id": "new-project",
       "title": "LED project named UicLed",
       "screen": "workspace",
+      "laya": true,
       "do": {
         "macro": "newNamedProject",
         "with": {

@@ -124,6 +124,7 @@
       "id": "start-from-template",
       "title": "Pick it: a fresh project tab with the template's 4 parts and 4 wires",
       "screen": "workspace",
+      "laya": true,
       "do": [
         {
           "click": "start.templateEntry",

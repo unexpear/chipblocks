@@ -8,6 +8,7 @@
       "id": "led-board",
       "title": "LED project, PCB panel: DRC clean, Export ZIP enabled",
       "screen": "pcbPanel",
+      "laya": true,
       "do": [
         {
           "macro": "newProject",

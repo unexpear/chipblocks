@@ -231,6 +231,7 @@
       "id": "good-installs",
       "title": "Good pack: hash + signature verified, installed ENABLED (key not pinned); only its own folder exists",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         {
           "select": "contentManager.registryPack",
@@ -323,6 +324,7 @@
       "id": "refusals-after-install",
       "title": "The three bad packs again, with a pack installed: still refused, packs folder unchanged",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         {
           "select": "contentManager.registryPack",

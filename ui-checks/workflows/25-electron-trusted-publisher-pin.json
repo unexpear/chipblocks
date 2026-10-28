@@ -96,6 +96,7 @@
       "id": "pin",
       "title": "Trust this publisher… → Confirm trust: pinned, written to the sandbox home only",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         {
           "click": "contentManager.trustToggleFor",

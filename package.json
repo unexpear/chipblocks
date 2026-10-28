@@ -24,7 +24,8 @@
     "package:dir": "electron-vite build && electron-builder --dir",
     "ui-checks": "node ui-checks/src/run.mjs",
     "ui-checks:fast": "node ui-checks/src/run.mjs --no-laya",
-    "ui-checks:electron": "node ui-checks/src/run.mjs --target electron --no-laya"
+    "ui-checks:electron": "node ui-checks/src/run.mjs --target electron",
+    "ui-checks:electron:fast": "node ui-checks/src/run.mjs --target electron --no-laya"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",

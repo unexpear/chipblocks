@@ -66,6 +66,7 @@
       "id": "other-key-refused",
       "title": "Install a keyed_pack signed by a different key: refused, the pinned pack stays",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         { "dialog": { "open": "{files}/keyed_other_key.json" } },
         { "click": "contentManager.install" }

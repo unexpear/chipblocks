@@ -53,6 +53,7 @@
       "id": "install-signed",
       "title": "Install from local pack… → the signed pack installs ENABLED, signature valid but not pinned",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         {
           "dialog": {
@@ -411,6 +412,7 @@
       "id": "tampered-not-loaded",
       "title": "Edit pack.json on disk, relaunch: ENABLED · NOT LOADED with the reason",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         {
           "click": "contentManager.close"
@@ -459,6 +461,7 @@
       "id": "uninstall",
       "title": "Uninstall… → Confirm uninstall: row, folder and index entry gone",
       "screen": "contentManager",
+      "laya": true,
       "do": [
         {
           "click": "contentManager.packButton",
