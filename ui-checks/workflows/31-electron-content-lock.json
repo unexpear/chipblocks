@@ -1,0 +1,184 @@
+{
+  "name": "electron-content-lock",
+  "targets": ["electron"],
+  "title": "A second ChipBlocks window holding the content lock blocks an install with a clear reason and writes nothing; a lock left by a process that has exited is taken over and the install goes through",
+  "covers": ["contentManager"],
+  "notes": "Each ChipBlocks process has one window, and its tabs share one renderer (already queued), so the race is between two app processes on one ~/.chipblocks. writeContentLock writes {home}/.chipblocks/content.lock in the sandbox the way that other process would: owned by the live runner process, or by a process that has exited. The lock wait is 5 s, so the refusal takes about 5 s. The real ~/.chipblocks is snapshotted read-only and compared after every step.",
+  "steps": [
+    {
+      "id": "held-lock-refuses",
+      "title": "Another live process holds the lock: install is refused after the wait, nothing is written, and that lock is left alone",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/lock_pack.json",
+            "id": "lock_pack",
+            "name": "Lock Pack"
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "writeContentLock": {
+            "owner": "live"
+          }
+        },
+        {
+          "dialog": {
+            "open": "{files}/lock_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Another ChipBlocks window \\(process \\d+\\) is changing installed packs or publisher pins right now\\. Nothing was written\\. Try again in a moment\\.$",
+          "id": "refused-with-reason",
+          "timeoutMs": 15000
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "no-badge"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries",
+          "exists": false,
+          "id": "no-libraries"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/content.lock",
+          "json": [
+            {
+              "at": "token",
+              "eq": "uic-live"
+            }
+          ],
+          "id": "other-lock-untouched"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "stale-lock-recovered",
+      "title": "The lock's owner has exited (a crash): the lock is taken over, the install lands, and the lock file is gone afterwards",
+      "screen": "contentManager",
+      "do": [
+        {
+          "writeContentLock": {
+            "owner": "dead"
+          }
+        },
+        {
+          "dialog": {
+            "open": "{files}/lock_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "lock_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "installed",
+          "timeoutMs": 10000
+        },
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Installed \"Lock Pack\" v1\\.0\\.0",
+          "id": "status-installed"
+        },
+        {
+          "type": "dir",
+          "path": "{home}/.chipblocks/libraries",
+          "entries": ["index.json", "lock_pack"],
+          "id": "libraries"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/content.lock",
+          "exists": false,
+          "id": "lock-released"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "own-writes-release",
+      "title": "Disable and enable go through the lock too and leave no lock behind",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.packButton",
+          "with": {
+            "pack": "lock_pack",
+            "button": "Disable"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "lock_pack"
+          },
+          "matches": "^DISABLED$",
+          "id": "disabled"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs[0].enabled",
+              "eq": false
+            }
+          ],
+          "id": "index-disabled"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/content.lock",
+          "exists": false,
+          "id": "lock-released"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    }
+  ]
+}

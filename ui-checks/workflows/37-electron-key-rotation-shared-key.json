@@ -1,0 +1,320 @@
+{
+  "name": "electron-key-rotation-shared-key",
+  "targets": ["electron"],
+  "title": "When another installed pack is still signed by the old key, confirming a rotation keeps the old key pinned and says so; a reused rotation sequence from that key is then refused, and a newer one is offered for confirmation",
+  "covers": ["contentManager"],
+  "notes": "keep_pack and move_pack are both signed by throwaway key A. Rotation statements are made by scripts/pack-key-rotation.mjs. Sandbox home only; the real ~/.chipblocks is compared after every step.",
+  "steps": [
+    {
+      "id": "two-packs-one-key",
+      "title": "Install keep_pack and move_pack (both key A) and pin key A",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/keep_v1.json",
+            "id": "keep_pack",
+            "name": "Keep Pack",
+            "packVersion": "1.0.0",
+            "keyName": "a",
+            "keyVar": "keyA"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/move_v1.json",
+            "id": "move_pack",
+            "name": "Move Pack",
+            "packVersion": "1.0.0",
+            "keyName": "a"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/move_v2.json",
+            "id": "move_pack",
+            "name": "Move Pack",
+            "packVersion": "1.1.0",
+            "keyName": "n",
+            "keyVar": "keyN",
+            "rotations": [
+              {
+                "from": "a",
+                "to": "n",
+                "sequence": 2
+              }
+            ]
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/keep_replay.json",
+            "id": "keep_pack",
+            "name": "Keep Pack",
+            "packVersion": "1.1.0",
+            "keyName": "m",
+            "keyVar": "keyM",
+            "rotations": [
+              {
+                "from": "a",
+                "to": "m",
+                "sequence": 2
+              }
+            ]
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/keep_newer.json",
+            "id": "keep_pack",
+            "name": "Keep Pack",
+            "packVersion": "1.1.0",
+            "keyName": "m",
+            "rotations": [
+              {
+                "from": "a",
+                "to": "m",
+                "sequence": 3
+              }
+            ]
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "dialog": {
+            "open": "{files}/keep_v1.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "dialog": {
+            "open": "{files}/move_v1.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "keep_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "keep_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "keep-pinned"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "move_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "move-pinned"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "confirm-keeps-shared-key",
+      "title": "Move move_pack to key N and confirm: N is pinned, A stays pinned for keep_pack",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/move_v2.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "click": "contentManager.keyRotationReviewFor",
+          "with": {
+            "pack": "move_pack"
+          }
+        },
+        {
+          "click": "contentManager.keyRotationConfirmYesFor",
+          "with": {
+            "pack": "move_pack"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Pinned the new publisher key for \"move_pack\" \\({keyNFp}\\)\\. The old key {keyAFp} stays pinned because \"keep_pack\" is still signed by it\\.$",
+          "id": "kept-and-said-so"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "move_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "move-on-n"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "keep_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "keep-still-pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 2
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyA}"
+            },
+            {
+              "at": "keys[1].publicKey",
+              "eq": "{keyN}"
+            }
+          ],
+          "id": "a-and-n"
+        }
+      ]
+    },
+    {
+      "id": "reused-sequence-refused",
+      "title": "A rotation from A with sequence 2 again (keep_pack → key M): refused as old or reused",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/keep_replay.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^This file carries a publisher key rotation that was refused: The key rotation from [0-9a-f]{16}… has sequence 2, but sequence 2 from that key was already accepted here\\. An old or reused rotation is refused\\. Nothing was written\\.$",
+          "id": "refused-replay"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs[0].id",
+              "eq": "keep_pack"
+            },
+            {
+              "at": "packs[0].packVersion",
+              "eq": "1.0.0"
+            },
+            {
+              "at": "packs[0].publisherKeyHex",
+              "eq": "{keyA}"
+            }
+          ],
+          "id": "keep-unchanged"
+        }
+      ]
+    },
+    {
+      "id": "newer-sequence-asks",
+      "title": "Sequence 3 from A: installs untrusted and asks for confirmation; nothing pinned",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/keep_newer.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Installed \"Keep Pack\" v1\\.1\\.0 \\(MIT; declared content hash matched\\)\\..* The publisher key changed, and a key you pinned signed the change\\. The new key is not pinned",
+          "id": "installed"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "keep_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "not-auto-pinned"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.keyRotationTextFor",
+          "with": {
+            "pack": "keep_pack"
+          },
+          "matches": "^Publisher key changed: {keyAFp} → {keyMFp}, signed by your pinned key\\.$",
+          "id": "asks"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 2
+            }
+          ],
+          "id": "pins-unchanged"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched-at-end"
+        }
+      ]
+    }
+  ]
+}
