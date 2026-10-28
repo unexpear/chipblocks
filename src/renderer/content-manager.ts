@@ -44,6 +44,13 @@ import {
   trustNoteForSignature,
   verifyPackSignature,
 } from './content-pack-signature.ts'
+import {
+  type RotationState,
+  type RotationVerdict,
+  readDeclaredRotations,
+  verifyRotationChain,
+} from './key-rotation.ts'
+import { downgradeRefusal } from './trust-seal-view.ts'
 
 export const CONTENT_INDEX_FORMAT = 'chipblocks-content-index'
 export const CONTENT_INDEX_VERSION = 1
@@ -108,8 +115,19 @@ export type ContentIndex = {
 export type IndexResult = { ok: true; index: ContentIndex } | { ok: false; reason: string }
 
 export type InstallResult =
-  | { ok: true; record: InstalledPackRecord; pack: ContentPack; index: ContentIndex }
+  | {
+      ok: true
+      record: InstalledPackRecord
+      pack: ContentPack
+      index: ContentIndex
+      /** Set when the file carries a valid key rotation from a pinned key. Nothing was pinned. */
+      keyRotation?: { fromKey: string; toKey: string }
+    }
   | { ok: false; reason: string }
+
+/** Added to an install message when the pack moved to a new key from one you pinned. */
+export const KEY_ROTATION_INSTALL_NOTE =
+  'The publisher key changed, and a key you pinned signed the change. The new key is not pinned: confirm it in the pack’s row before the pack counts as trusted.'
 
 /** Why an enabled pack did not fully load on reload. `blocked` means parts were not registered. */
 export type PackLoadIssue = { id: string; reason: string; blocked: boolean }
@@ -336,7 +354,11 @@ export async function installLocalPackVerified(
   packText: string,
   installedAt: number = Date.now(),
   trustedPublishers?: TrustedPublishers,
+  floors?: Readonly<Record<string, string>> | null,
+  rotationState?: RotationState | null,
 ): Promise<InstallResult> {
+  const downgrade = olderThanInstalled(index, packText, floors)
+  if (downgrade !== null) return { ok: false, reason: downgrade }
   const verdict: IntegrityVerdict = await verifyPackIntegrity(packText)
   if (verdict.kind === 'mismatch' || verdict.kind === 'unsupported') {
     return { ok: false, reason: verdict.reason }
@@ -345,8 +367,8 @@ export async function installLocalPackVerified(
   if (sig.kind === 'invalid') {
     return { ok: false, reason: sig.reason }
   }
-  const keyChange = pinnedKeyChange(index, packText, sig, trustedPublishers)
-  if (keyChange !== null) return { ok: false, reason: keyChange }
+  const keyChange = await pinnedKeyChange(index, packText, sig, trustedPublishers, rotationState)
+  if ('reason' in keyChange) return { ok: false, reason: keyChange.reason }
   const signatureStatus: 'none' | 'valid-untrusted' | 'valid-trusted' =
     sig.kind === 'undeclared'
       ? 'none'
@@ -364,43 +386,111 @@ export async function installLocalPackVerified(
   if (sig.kind === 'valid-trusted' || sig.kind === 'valid-untrusted') {
     stamp.publisherKeyHex = sig.publicKeyHex
   }
-  return installLocalPack(index, packText, installedAt, stamp)
+  const installed = installLocalPack(index, packText, installedAt, stamp)
+  if (installed.ok && keyChange.rotation.kind === 'valid') {
+    installed.keyRotation = { fromKey: keyChange.rotation.fromKey, toKey: keyChange.rotation.toKey }
+  }
+  return installed
+}
+
+/**
+ * A file older than the installed version (or than the highest version ChipBlocks installed,
+ * its rollback floor) is refused: going back takes an uninstall first, so a rollback is never
+ * one click, or one swapped file, away.
+ */
+function olderThanInstalled(
+  index: ContentIndex,
+  packText: string,
+  floors: Readonly<Record<string, string>> | null | undefined,
+): string | null {
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(packText) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (typeof raw.id !== 'string' || typeof raw.packVersion !== 'string') return null
+  const id = raw.id
+  const previous = index.packs.find((pack) => pack.id === id)
+  return downgradeRefusal(id, raw.packVersion.trim(), previous?.packVersion, floors)
 }
 
 /**
  * An installed pack whose publisher key you pinned may only be replaced by a file signed with
- * that same key. A different key, or no signature, could be anyone reusing the pack id.
+ * that same key, or with a key the pinned key handed over to in a valid key rotation. A different
+ * key, or no signature, could be anyone reusing the pack id. A rotation never pins anything: the
+ * pack installs as valid but not pinned, and the Content Manager asks you to confirm the new key.
+ * A rotation that is forged, edited, replayed, or returns to a retired key is refused outright,
+ * even on a fresh install, so a bad statement is never stored.
  */
-function pinnedKeyChange(
+async function pinnedKeyChange(
   index: ContentIndex,
   packText: string,
   sig: SignatureVerdict,
   trusted: TrustedPublishers | undefined,
-): string | null {
-  if (trusted === undefined) return null
-  let id: unknown
+  rotationState: RotationState | null | undefined,
+): Promise<{ reason: string } | { rotation: RotationVerdict }> {
+  const none: RotationVerdict = { kind: 'none' }
+  let raw: Record<string, unknown>
   try {
-    id = (JSON.parse(packText) as Record<string, unknown>).id
+    raw = JSON.parse(packText) as Record<string, unknown>
   } catch {
-    return null
+    return { rotation: none }
   }
-  const previous = index.packs.find((pack) => pack.id === id)
-  if (previous?.publisherKeyHex === undefined) return null
+  const id = raw.id
   const pinnedKeys = new Set(
-    trusted.keys
+    (trusted?.keys ?? [])
       .map((key) => canonicalPublicKeyHex(key.publicKey))
       .filter((key): key is string => key !== null),
   )
-  const oldKey = previous.publisherKeyHex.toLowerCase()
-  if (!pinnedKeys.has(oldKey)) return null
   const newKey =
     sig.kind === 'valid-trusted' || sig.kind === 'valid-untrusted' ? sig.publicKeyHex : null
-  if (newKey === oldKey) return null
+  let rotation: RotationVerdict = { kind: 'none' }
+  if (newKey !== null && typeof id === 'string') {
+    const declared = readDeclaredRotations(raw)
+    if (declared !== null) {
+      rotation = Array.isArray(declared)
+        ? await verifyRotationChain({
+            packId: id,
+            signerKeyHex: newKey,
+            rotations: declared,
+            pinned: pinnedKeys,
+            state: rotationState ?? null,
+          })
+        : { kind: 'broken', reason: declared.reason }
+    }
+  }
+  if (rotation.kind === 'broken' || rotation.kind === 'refused') {
+    return {
+      reason: `This file carries a publisher key rotation that was refused: ${rotation.reason} Nothing was written.`,
+    }
+  }
+  const allowed = { rotation }
+  if (trusted === undefined) return allowed
+  const previous = index.packs.find((pack) => pack.id === id)
+  if (previous?.publisherKeyHex === undefined) return allowed
+  const oldKey = previous.publisherKeyHex.toLowerCase()
+  if (!pinnedKeys.has(oldKey)) return allowed
+  if (newKey === oldKey) return allowed
+  if (rotation.kind === 'valid' && rotation.fromKey === oldKey) return allowed
   const what =
     newKey === null
       ? 'This file has no publisher signature'
       : 'This file is signed by a different publisher key'
-  return `"${previous.id}" is installed from a publisher key you pinned. ${what}, so it was not installed over it. Nothing was written. If the publisher really changed keys, uninstall the old pack first, then install this one and decide whether to pin its key.`
+  const base = `"${previous.id}" is installed from a publisher key you pinned. ${what}, so it was not installed over it.`
+  if (rotation.kind === 'unanchored') {
+    return {
+      reason: `${base} Its key rotation does not lead back to the key you pinned for this pack: ${rotation.reason} Nothing was written.`,
+    }
+  }
+  if (rotation.kind === 'valid' || rotation.kind === 'current') {
+    return {
+      reason: `${base} Its key rotation does not start at the key this pack was installed from. Nothing was written.`,
+    }
+  }
+  return {
+    reason: `${base} Nothing was written. If the publisher really changed keys, uninstall the old pack first, then install this one and decide whether to pin its key.`,
+  }
 }
 
 /**
@@ -507,15 +597,26 @@ async function putPreviousBack(
 }
 
 /**
- * The bytes local install and registry install both write: normalized pack.json, plus the index
- * row whose content hash is those bytes (the picked file's hash is only the install-time check).
+ * The bytes local install and registry install both write: the signed original for a signed
+ * pack (pass the verified text as `signedOriginal`), normalized pack.json otherwise, plus the
+ * index row whose content hash is those bytes.
  */
-export async function installedPackFiles(installed: {
-  record: InstalledPackRecord
-  pack: ContentPack
-  index: ContentIndex
-}): Promise<{ onDiskText: string; record: InstalledPackRecord; index: ContentIndex }> {
-  const onDiskText = serializeContentPack(installed.pack)
+export async function installedPackFiles(
+  installed: {
+    record: InstalledPackRecord
+    pack: ContentPack
+    index: ContentIndex
+  },
+  signedOriginal?: string,
+): Promise<{ onDiskText: string; record: InstalledPackRecord; index: ContentIndex }> {
+  // A signed pack is kept as the exact signed original, signature and signer key included, so
+  // its trust is re-verified from the file on every load instead of read from index.json.
+  // An unsigned pack is written normalized, as before.
+  const signed =
+    installed.record.signatureStatus === 'valid-trusted' ||
+    installed.record.signatureStatus === 'valid-untrusted'
+  const onDiskText =
+    signed && signedOriginal !== undefined ? signedOriginal : serializeContentPack(installed.pack)
   const diskHash = await sha256Hex(onDiskText)
   const record: InstalledPackRecord = { ...installed.record, contentHash: diskHash }
   const index: ContentIndex = {

@@ -1,0 +1,503 @@
+{
+  "name": "electron-key-rotation-refusals",
+  "targets": ["electron"],
+  "title": "Key rotations that do not lead back to a pinned key, that were edited, or that go back to a retired key are refused with the reason and nothing written; with no rotation the pinned-key-change refusal is unchanged",
+  "covers": ["contentManager"],
+  "notes": "Every file is ref_pack signed by a throwaway in-memory key (src/pack-fixture.mjs), with rotation statements made by scripts/pack-key-rotation.mjs. tamper 'scope' adds a pack id after the old key signed; 'countersign' swaps in a countersignature from an unrelated key. Sandbox home only; the real ~/.chipblocks is compared after every step.",
+  "steps": [
+    {
+      "id": "install-and-pin",
+      "title": "Install ref_pack 1.0.0 (key A) and pin key A",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/ref_v1.json",
+            "id": "ref_pack",
+            "name": "Ref Pack",
+            "packVersion": "1.0.0",
+            "keyName": "a",
+            "keyVar": "keyA"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/ref_unanchored.json",
+            "id": "ref_pack",
+            "name": "Ref Pack",
+            "packVersion": "1.1.0",
+            "keyName": "c",
+            "keyVar": "keyC",
+            "rotations": [
+              {
+                "from": "b",
+                "to": "c",
+                "sequence": 1
+              }
+            ]
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/ref_scope.json",
+            "id": "ref_pack",
+            "name": "Ref Pack",
+            "packVersion": "1.1.0",
+            "keyName": "n",
+            "keyVar": "keyN",
+            "rotations": [
+              {
+                "from": "a",
+                "to": "n",
+                "sequence": 1,
+                "tamper": "scope"
+              }
+            ]
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/ref_countersign.json",
+            "id": "ref_pack",
+            "name": "Ref Pack",
+            "packVersion": "1.1.0",
+            "keyName": "n",
+            "rotations": [
+              {
+                "from": "a",
+                "to": "n",
+                "sequence": 1,
+                "tamper": "countersign"
+              }
+            ]
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/ref_norotation.json",
+            "id": "ref_pack",
+            "name": "Ref Pack",
+            "packVersion": "1.1.0",
+            "keyName": "n"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/ref_rotated.json",
+            "id": "ref_pack",
+            "name": "Ref Pack",
+            "packVersion": "1.1.0",
+            "keyName": "n",
+            "rotations": [
+              {
+                "from": "a",
+                "to": "n",
+                "sequence": 1
+              }
+            ]
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/ref_back.json",
+            "id": "ref_pack",
+            "name": "Ref Pack",
+            "packVersion": "1.2.0",
+            "keyName": "a",
+            "rotations": [
+              {
+                "from": "n",
+                "to": "a",
+                "sequence": 1
+              }
+            ]
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "dialog": {
+            "open": "{files}/ref_v1.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "ref_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "ref_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "pinned"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyA}"
+            }
+          ],
+          "id": "pin-file"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "unanchored-refused",
+      "title": "A rotation from a key that is not pinned (B → C) does not lead back to key A: refused",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/ref_unanchored.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^\"ref_pack\" is installed from a publisher key you pinned\\. This file is signed by a different publisher key, so it was not installed over it\\. Its key rotation does not lead back to the key you pinned for this pack: No key in this pack’s key rotation chain is pinned on this computer.*Nothing was written\\.$",
+          "id": "refused-unanchored"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].packVersion",
+              "eq": "1.0.0"
+            },
+            {
+              "at": "packs[0].publisherKeyHex",
+              "eq": "{keyA}"
+            }
+          ],
+          "id": "index-unchanged"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "ref_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "still-pinned"
+        }
+      ]
+    },
+    {
+      "id": "tampered-scope-refused",
+      "title": "A rotation whose pack list was edited after key A signed it: refused as forged or edited",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/ref_scope.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^This file carries a publisher key rotation that was refused: Key rotation 1 is not signed by the key it retires \\([0-9a-f]{16}…\\): it was forged or edited after signing\\. Nothing was written\\.$",
+          "id": "refused-tampered"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].packVersion",
+              "eq": "1.0.0"
+            },
+            {
+              "at": "packs[0].publisherKeyHex",
+              "eq": "{keyA}"
+            }
+          ],
+          "id": "index-unchanged"
+        }
+      ]
+    },
+    {
+      "id": "countersign-refused",
+      "title": "A rotation the new key did not countersign: refused",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/ref_countersign.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^This file carries a publisher key rotation that was refused: Key rotation 1 is not countersigned by the new key \\([0-9a-f]{16}…\\), so it does not prove the publisher holds that key\\. Nothing was written\\.$",
+          "id": "refused-countersign"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].packVersion",
+              "eq": "1.0.0"
+            },
+            {
+              "at": "packs[0].publisherKeyHex",
+              "eq": "{keyA}"
+            }
+          ],
+          "id": "index-unchanged"
+        }
+      ]
+    },
+    {
+      "id": "no-rotation-refused-as-before",
+      "title": "A file signed by another key with no rotation: the existing pinned-key-change refusal",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/ref_norotation.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^\"ref_pack\" is installed from a publisher key you pinned\\. This file is signed by a different publisher key, so it was not installed over it\\. Nothing was written\\. If the publisher really changed keys, uninstall the old pack first",
+          "id": "refused-as-before"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].packVersion",
+              "eq": "1.0.0"
+            },
+            {
+              "at": "packs[0].publisherKeyHex",
+              "eq": "{keyA}"
+            }
+          ],
+          "id": "index-unchanged"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyA}"
+            }
+          ],
+          "id": "pins-unchanged"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "valid-rotation-confirmed",
+      "title": "The valid A → N rotation installs untrusted; confirming pins N and retires A",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/ref_rotated.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "click": "contentManager.keyRotationReviewFor",
+          "with": {
+            "pack": "ref_pack"
+          }
+        },
+        {
+          "click": "contentManager.keyRotationConfirmYesFor",
+          "with": {
+            "pack": "ref_pack"
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^Pinned the new publisher key for \"ref_pack\" \\({keyNFp}\\) and removed the old key {keyAFp}\\.",
+          "id": "confirmed"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "ref_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "n-trusted"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyN}"
+            }
+          ],
+          "id": "only-n"
+        }
+      ]
+    },
+    {
+      "id": "back-to-retired-refused",
+      "title": "A rotation from N back to the retired key A: refused, nothing written",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/ref_back.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^This file carries a publisher key rotation that was refused: The key rotation moves to [0-9a-f]{16}…, a key you already rotated away from on this computer\\. Going back to a retired key is refused\\. Nothing was written\\.$",
+          "id": "refused-back"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/index.json",
+          "json": [
+            {
+              "at": "packs.length",
+              "eq": 1
+            },
+            {
+              "at": "packs[0].packVersion",
+              "eq": "1.1.0"
+            },
+            {
+              "at": "packs[0].publisherKeyHex",
+              "eq": "{keyN}"
+            }
+          ],
+          "id": "index-unchanged"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys.length",
+              "eq": 1
+            },
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{keyN}"
+            }
+          ],
+          "id": "pins-unchanged"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "ref_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "still-n"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched-at-end"
+        }
+      ]
+    }
+  ]
+}

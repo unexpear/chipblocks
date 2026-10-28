@@ -1,0 +1,147 @@
+{
+  "name": "electron-content-refresh",
+  "targets": ["electron"],
+  "title": "The open Content Manager follows changes another ChipBlocks window makes on disk (disable, enable, uninstall) without being reopened",
+  "covers": ["contentManager"],
+  "notes": "Another window is another process writing ~/.chipblocks; editFile makes the same change to {home}/.chipblocks/libraries/index.json in the sandbox. Main watches ~/.chipblocks and sends content:changed; every tab re-reads. The panel stays open throughout. The real ~/.chipblocks is snapshotted read-only and compared after every step.",
+  "steps": [
+    {
+      "id": "install",
+      "title": "Install a pack; the panel stays open",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/live_pack.json",
+            "id": "live_pack",
+            "name": "Live Pack"
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "dialog": {
+            "open": "{files}/live_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "live_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "enabled"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "disabled-elsewhere",
+      "title": "Another window disables it: the badge turns DISABLED with the panel still open",
+      "screen": "contentManager",
+      "do": [
+        {
+          "editFile": {
+            "path": "{home}/.chipblocks/libraries/index.json",
+            "replace": ["\"enabled\": true", "\"enabled\": false"]
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "live_pack"
+          },
+          "matches": "^DISABLED$",
+          "id": "disabled-live",
+          "timeoutMs": 8000
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "enabled-elsewhere",
+      "title": "And enables it again: ENABLED, still without reopening",
+      "screen": "contentManager",
+      "do": [
+        {
+          "editFile": {
+            "path": "{home}/.chipblocks/libraries/index.json",
+            "replace": ["\"enabled\": false", "\"enabled\": true"]
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "live_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "enabled-live",
+          "timeoutMs": 8000
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "uninstalled-elsewhere",
+      "title": "Another window uninstalls it (index lists no packs): the row goes away",
+      "screen": "contentManager",
+      "do": [
+        {
+          "writeFile": {
+            "path": "{home}/.chipblocks/libraries/index.json",
+            "json": {
+              "format": "chipblocks-content-index",
+              "version": 1,
+              "packs": []
+            }
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "count",
+          "sel": "contentManager.badges",
+          "eq": 0,
+          "id": "row-gone",
+          "timeoutMs": 8000
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    }
+  ]
+}

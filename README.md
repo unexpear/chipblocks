@@ -69,6 +69,8 @@ chipblocks/
 
 Build and run it with `npm install`, then `npm run dev` (Electron dev app) or `npm run build`.
 
+Content pack publishers: `scripts/pack-key-rotation.mjs` makes ed25519 keys, signs a pack, and moves a pack to a new signing key with a key rotation statement signed by the old key. ChipBlocks shows users the key change and pins the new key only after they confirm. See [PACK-KEY-ROTATION.md](PACK-KEY-ROTATION.md).
+
 ## Contributing
 
 ChipBlocks is in active development. Issues, corrections to cited values (with a source), and discussion on the canonical object model ([OBJECT-MODEL.md](OBJECT-MODEL.md)) are welcome. The legacy audio-synth branch (`legacy/audio-synth-direction`) is preserved but is not the current direction.

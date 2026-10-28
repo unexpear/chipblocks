@@ -1603,11 +1603,53 @@
           },
           "does": "Trust this publisher… / Stop trusting this publisher…. Disabled until the fingerprint is ready. Confirm writes ~/.chipblocks/trusted-publishers.json."
         },
+        "trustReasonFor": {
+          "sel": {
+            "css": "[data-testid=\"content-manager-trust-reason\"][data-pack=\"{pack}\"]"
+          },
+          "does": "Why a pack's publisher signature did not verify on this load (trust state unverified). The pack is treated as untrusted and has no pin button."
+        },
         "trustConfirmYes": {
           "sel": {
             "testid": "content-manager-trust-confirm-yes"
           },
           "does": "Confirm trust / Confirm untrust in the pin confirmation. Writes ~/.chipblocks/trusted-publishers.json."
+        },
+        "keyRotationFor": {
+          "sel": {
+            "css": "[data-testid=\"content-manager-key-rotation\"][data-pack=\"{pack}\"]"
+          },
+          "does": "Publisher key changed card: a pinned key signed a key rotation to the key this pack is signed with. Shown only while the new key is not pinned; nothing is pinned until you confirm."
+        },
+        "keyRotationTextFor": {
+          "sel": {
+            "css": "[data-testid=\"content-manager-key-rotation-text\"][data-pack=\"{pack}\"]"
+          },
+          "does": "'Publisher key changed: <old fingerprint> → <new fingerprint>, signed by your pinned key.'"
+        },
+        "keyRotationReviewFor": {
+          "sel": {
+            "css": "[data-testid=\"content-manager-key-rotation-review\"][data-pack=\"{pack}\"]"
+          },
+          "does": "Trust the new key…: opens the confirmation. Writes nothing."
+        },
+        "keyRotationConfirmYesFor": {
+          "sel": {
+            "css": "[data-testid=\"content-manager-key-rotation-confirm-yes\"][data-pack=\"{pack}\"]"
+          },
+          "does": "Trust the new key: pins it, drops the old key unless another installed pack still uses it, and seals the retired key and sequence in ~/.chipblocks/trust-seal.json."
+        },
+        "keyRotationCancelFor": {
+          "sel": {
+            "css": "[data-testid=\"content-manager-key-rotation-cancel\"][data-pack=\"{pack}\"]"
+          },
+          "does": "Cancel the key change confirmation. Pins stay as they are."
+        },
+        "keyRotationRefusedFor": {
+          "sel": {
+            "css": "[data-testid=\"content-manager-key-rotation-refused\"][data-pack=\"{pack}\"]"
+          },
+          "does": "Why a key rotation from a pinned key was refused on this load (replayed, or back to a retired key)."
         }
       },
       "invariants": [

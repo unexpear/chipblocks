@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -8,6 +8,7 @@ import {
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
+  safeStorage,
   session,
 } from 'electron'
 import { packIdProblem } from '../src/renderer/content-pack.ts'
@@ -16,14 +17,19 @@ import {
   REGISTRY_MAX_PACK_BYTES,
 } from '../src/renderer/content-registry.ts'
 import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
+import { isRotationState } from '../src/renderer/rotation-state.ts'
 import type { SaveDialogOutcome } from '../src/renderer/save-outcome.ts'
 import { writeFileAtomic } from './atomic-write.ts'
 import { type CanvasLoadingItemId, canvasLoadingItems } from './canvas-menu.ts'
 import { planChipDescriptionRequest } from './chip-description.ts'
 import { type CircuitOpenDecision, decideCircuitOpen } from './circuit-open.ts'
+import { type ContentStore, createContentStore } from './content-store.ts'
+import { createChangeNotifier, watchContentHome } from './content-watch.ts'
+import { ContentLock } from './home-lock.ts'
 import { isMissingFile } from './missing-file.ts'
 import { isInternalNavigation } from './navigation.ts'
 import { downloadBounded } from './registry-download.ts'
+import type { SealCrypto } from './trust-seal.ts'
 
 // Reconstruct __dirname under ESM output (package.json is type: module).
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -652,6 +658,51 @@ const trustedPublishersPath = () =>
   join(app.getPath('home'), '.chipblocks', 'trusted-publishers.json')
 const contentRegistrySettingsPath = () =>
   join(app.getPath('home'), '.chipblocks', 'content-registry.json')
+const chipblocksHome = () => join(app.getPath('home'), '.chipblocks')
+
+// safeStorage keeps its key in the OS key store for this app profile (DPAPI on Windows, the
+// Keychain on macOS, the Secret Service on Linux). Linux's 'basic_text' fallback is a fixed key,
+// which protects nothing, so it counts as unavailable.
+const sealCrypto: SealCrypto = {
+  available: () => {
+    if (!safeStorage.isEncryptionAvailable()) return false
+    if (process.platform === 'linux') {
+      const backend = safeStorage.getSelectedStorageBackend?.()
+      if (backend === 'basic_text' || backend === 'unknown') return false
+    }
+    return true
+  },
+  encrypt: (plain) => safeStorage.encryptString(plain),
+  decrypt: (blob) => safeStorage.decryptString(Buffer.from(blob)),
+}
+
+// One writer at a time across ChipBlocks processes (see home-lock.ts).
+const contentLock = new ContentLock(() => join(chipblocksHome(), 'content.lock'), {
+  timeoutMs: 5000,
+  staleMs: 30_000,
+  leaseMs: 60_000,
+  heartbeatMs: 5000,
+})
+let contentWindow: BrowserWindow | null = null
+const contentChanged = createChangeNotifier(() => {
+  if (contentWindow !== null && !contentWindow.isDestroyed()) {
+    contentWindow.webContents.send('content:changed')
+  }
+})
+let contentWatcher: { close: () => void } | null = null
+function ensureContentWatcher(): void {
+  if (contentWatcher !== null) return
+  contentWatcher = watchContentHome(chipblocksHome(), () => contentChanged.notify())
+}
+const contentStore: ContentStore = createContentStore({
+  root: chipblocksHome,
+  crypto: sealCrypto,
+  lock: contentLock,
+  onChanged: () => {
+    ensureContentWatcher()
+    contentChanged.notify()
+  },
+})
 
 // Every pack path is built from an id that is also a safe folder name (no ../, no absolute
 // path, no Windows device name), checked here as well as in the renderer.
@@ -666,9 +717,28 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
   ipcMain.removeHandler('content:pick-local')
   ipcMain.removeHandler('trusted-publishers:read')
   ipcMain.removeHandler('trusted-publishers:write')
+  ipcMain.removeHandler('trusted-publishers:write-rotation')
   ipcMain.removeHandler('content-registry:settings-read')
   ipcMain.removeHandler('content-registry:settings-write')
   ipcMain.removeHandler('content-registry:download')
+  ipcMain.removeHandler('content:lock-acquire')
+  ipcMain.removeHandler('content:lock-release')
+  ipcMain.removeHandler('trust-seal:read')
+
+  contentWindow = window
+  ensureContentWatcher()
+  window.on('closed', () => {
+    if (contentWindow === window) contentWindow = null
+    void contentLock.releaseAll()
+  })
+
+  // A whole install / enable / uninstall / pin change holds the lock from its re-read of the
+  // index to its last write, so a second ChipBlocks window cannot interleave its own change.
+  ipcMain.handle('content:lock-acquire', () => contentLock.acquire())
+  ipcMain.handle('content:lock-release', (_event, token: unknown) =>
+    typeof token === 'string' ? contentLock.release(token) : false,
+  )
+  ipcMain.handle('trust-seal:read', () => contentStore.readTrustSeal())
 
   ipcMain.handle('content:index-read', async (): Promise<string | null> => {
     try {
@@ -684,18 +754,11 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
   ipcMain.handle(
     'content:index-write',
     async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
-      const path = contentIndexPath()
-      try {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFileAtomic(path, text)
-        return { ok: true, path }
-      } catch (error) {
-        dialog.showErrorBox(
-          'Could not save content-manager index',
-          `Writing failed: ${String(error)}`,
-        )
-        return { ok: false }
-      }
+      if (typeof text !== 'string') return { ok: false }
+      const written = await contentStore.writeIndex(text)
+      if (written.ok) return { ok: true, path: written.path }
+      dialog.showErrorBox('Could not save content-manager index', written.reason)
+      return { ok: false }
     },
   )
 
@@ -719,14 +782,8 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
         return { ok: false, reason: 'Invalid pack id.' }
       }
       if (typeof text !== 'string') return { ok: false, reason: 'Pack text must be a string.' }
-      const path = contentPackPath(id)
-      try {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFileAtomic(path, text)
-        return { ok: true, path }
-      } catch (error) {
-        return { ok: false, reason: `Writing pack failed: ${String(error)}` }
-      }
+      const written = await contentStore.writePack(id, text)
+      return written.ok ? { ok: true, path: written.path } : { ok: false, reason: written.reason }
     },
   )
 
@@ -736,14 +793,9 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
       if (!isPackId(id)) {
         return { ok: false, reason: 'Invalid pack id.' }
       }
-      const dir = join(contentLibrariesDir(), id)
       // Only delete under ~/.chipblocks/libraries/<id> - never a path the renderer invents.
-      try {
-        await rm(dir, { recursive: true, force: true })
-        return { ok: true }
-      } catch (error) {
-        return { ok: false, reason: `Removing pack failed: ${String(error)}` }
-      }
+      const removed = await contentStore.removePack(id)
+      return removed.ok ? { ok: true } : { ok: false, reason: removed.reason }
     },
   )
 
@@ -785,15 +837,23 @@ function registerContentManagerHandlers(window: BrowserWindow): void {
     'trusted-publishers:write',
     async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
       if (typeof text !== 'string') return { ok: false }
-      const path = trustedPublishersPath()
-      try {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFileAtomic(path, text)
-        return { ok: true, path }
-      } catch (error) {
-        dialog.showErrorBox('Could not save trusted publishers', `Writing failed: ${String(error)}`)
-        return { ok: false }
-      }
+      const written = await contentStore.writePins(text)
+      if (written.ok) return { ok: true, path: written.path }
+      dialog.showErrorBox('Could not save trusted publishers', written.reason)
+      return { ok: false }
+    },
+  )
+
+  // A confirmed publisher key rotation: the new pin list and the rotation state (retired keys,
+  // accepted sequences) are sealed in one write. The renderer asks only after you confirm.
+  ipcMain.handle(
+    'trusted-publishers:write-rotation',
+    async (_event, text: unknown, rotation: unknown): Promise<{ ok: boolean; path?: string }> => {
+      if (typeof text !== 'string' || !isRotationState(rotation)) return { ok: false }
+      const written = await contentStore.writePins(text, rotation)
+      if (written.ok) return { ok: true, path: written.path }
+      dialog.showErrorBox('Could not save trusted publishers', written.reason)
+      return { ok: false }
     },
   )
 
@@ -1238,6 +1298,12 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('will-quit', () => {
+  contentWatcher?.close()
+  contentChanged.cancel()
+  void contentLock.releaseAll()
 })
 
 app.on('window-all-closed', () => {

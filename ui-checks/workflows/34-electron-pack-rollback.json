@@ -1,0 +1,295 @@
+{
+  "name": "electron-pack-rollback",
+  "targets": ["electron"],
+  "title": "An older, genuinely signed version of an installed pack cannot be swapped in, even with index.json rewritten to match: it is refused on load (NOT LOADED, unverified, with the reason), an older file is refused at install, and going back takes an uninstall",
+  "covers": ["contentManager"],
+  "notes": "Both versions are signed at test time with one throwaway ed25519 key (keyName, memory only). tamperInstalledPack puts the 1.0.0 file in place of 1.1.0 and rewrites the index row's packVersion and contentHash, the way someone who can write ~/.chipblocks could; the signature still verifies. The highest installed version (the floor) is kept in the sealed trust-seal.json. The real ~/.chipblocks is snapshotted read-only and compared after every step.",
+  "steps": [
+    {
+      "id": "install-newer",
+      "title": "Install 1.1.0",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/roll_110.json",
+            "id": "roll_pack",
+            "name": "Roll Pack",
+            "packVersion": "1.1.0",
+            "keyName": "rollKey"
+          }
+        },
+        {
+          "makePack": {
+            "path": "{files}/roll_100.json",
+            "id": "roll_pack",
+            "name": "Roll Pack",
+            "packVersion": "1.0.0",
+            "keyName": "rollKey"
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "dialog": {
+            "open": "{files}/roll_110.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "enabled"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "verified"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "older-install-refused",
+      "title": "Installing the older 1.0.0 file over it is refused, and nothing changes",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/roll_100.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "region": "contentManager.status",
+          "matches": "^\"roll_pack\" 1\\.1\\.0 is installed, and this file is the older 1\\.0\\.0\\. ChipBlocks does not install an older version over a newer one\\. Nothing was written\\. Uninstall first if you mean to go back\\.$",
+          "id": "refused"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/roll_pack/pack.json",
+          "json": [
+            {
+              "at": "packVersion",
+              "eq": "1.1.0"
+            }
+          ],
+          "id": "still-110"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "swapped-refused-on-load",
+      "title": "Swap the signed 1.0.0 file in and rewrite the index to match, relaunch: NOT LOADED and unverified, with the rollback reason",
+      "screen": "contentManager",
+      "do": [
+        {
+          "tamperInstalledPack": {
+            "pack": "roll_pack",
+            "replaceWith": "{files}/roll_100.json",
+            "index": {
+              "packVersion": "1.0.0"
+            }
+          }
+        },
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "matches": "^ENABLED · NOT LOADED$",
+          "id": "not-loaded"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "name": "data-trust",
+          "matches": "^unverified$",
+          "id": "unverified"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustReasonFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "matches": "^Pack \"roll_pack\" on disk is version 1\\.0\\.0, but ChipBlocks already installed version 1\\.1\\.0 of it on this computer\\. An older pack file was put in its place outside ChipBlocks \\(a rollback\\), so it is treated as untrusted and its parts were not loaded\\.",
+          "id": "reason"
+        },
+        {
+          "type": "count",
+          "sel": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "eq": 0,
+          "id": "no-pin-button"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "reinstall-current",
+      "title": "Reinstall 1.1.0: loads and verifies again",
+      "screen": "contentManager",
+      "do": [
+        {
+          "dialog": {
+            "open": "{files}/roll_110.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "enabled"
+        },
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "verified"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "uninstall-then-older",
+      "title": "Going back on purpose: uninstall, then 1.0.0 installs",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.packButton",
+          "with": {
+            "pack": "roll_pack",
+            "button": "Uninstall…"
+          }
+        },
+        {
+          "click": "contentManager.packButton",
+          "with": {
+            "pack": "roll_pack",
+            "button": "Confirm uninstall"
+          }
+        },
+        {
+          "waitFor": {
+            "type": "count",
+            "sel": "contentManager.badges",
+            "eq": 0
+          }
+        },
+        {
+          "dialog": {
+            "open": "{files}/roll_100.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        }
+      ],
+      "expect": [
+        {
+          "type": "text",
+          "sel": "contentManager.badgeFor",
+          "with": {
+            "pack": "roll_pack"
+          },
+          "matches": "^ENABLED$",
+          "id": "enabled-100"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/libraries/roll_pack/pack.json",
+          "json": [
+            {
+              "at": "packVersion",
+              "eq": "1.0.0"
+            }
+          ],
+          "id": "is-100"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    }
+  ]
+}

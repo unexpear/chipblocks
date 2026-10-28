@@ -447,6 +447,10 @@ declare global {
       pickLocalContentPack?: () => Promise<{ ok: boolean; text?: string; reason?: string }>
       readTrustedPublishers?: () => Promise<string | null>
       writeTrustedPublishers?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      writeTrustedPublishersRotation?: (
+        text: string,
+        rotation: import('./rotation-state.ts').RotationState,
+      ) => Promise<{ ok: boolean; path?: string }>
       readContentRegistrySettings?: () => Promise<string | null>
       writeContentRegistrySettings?: (text: string) => Promise<{ ok: boolean; path?: string }>
       downloadRegistryResource?: (
@@ -455,6 +459,12 @@ declare global {
         timeoutMs: number,
       ) => Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: string }>
       onContentManagerOpen?: (callback: () => void) => void
+      acquireContentLock?: () => Promise<
+        { ok: true; token: string } | { ok: false; reason: string }
+      >
+      releaseContentLock?: (token: string) => Promise<boolean>
+      readTrustSeal?: () => Promise<import('./trust-seal-view.ts').TrustSealView>
+      onContentChanged?: (callback: () => void) => void
       onSaveTemplateRequest?: (callback: () => void) => void
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
