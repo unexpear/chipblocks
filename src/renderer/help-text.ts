@@ -659,6 +659,35 @@ export const HELP: Record<string, HelpEntry> = {
     name: 'Cancel',
     summary: 'Leave the trusted-publishers file as it is.',
   },
+  'content.rotation.card': {
+    name: 'Publisher key changed',
+    summary:
+      'This pack is signed by a new publisher key, and a key you pinned signed the hand-over to it.',
+    detail:
+      'The publisher signed a key rotation statement with the old key you pinned, naming the new key and this pack. The new key also countersigned it. Nothing was pinned: the pack stays untrusted until you confirm. Compare both fingerprints with the publisher if you can.',
+  },
+  'content.rotation.review': {
+    name: 'Trust the new key',
+    summary: 'Ask to pin the new publisher key in place of the old one. You confirm first.',
+  },
+  'content.rotation.confirm': {
+    name: 'Confirm the new key',
+    summary:
+      'Pin the new key, drop the old one, and remember the rotation in the sealed trust-seal.json.',
+    detail:
+      'The old key stays pinned if another installed pack is still signed by it. A rotation back to a key you replaced, or an older or reused rotation from the same key, is refused from now on.',
+  },
+  'content.rotation.cancel': {
+    name: 'Cancel',
+    summary: 'Leave your pins as they are. The pack stays installed and untrusted.',
+  },
+  'content.rotation.refused': {
+    name: 'Key rotation refused',
+    summary:
+      'This pack carries a key rotation from a key you pinned, but it was refused, so the new key cannot be confirmed here.',
+    detail:
+      'A rotation that was already superseded (an older or reused sequence), or one that goes back to a key you rotated away from, is refused. The pack stays untrusted.',
+  },
   'content.enable': {
     name: 'Enable',
     summary: 'Turn this pack on so its parts can be placed.',
@@ -709,6 +738,13 @@ export const HELP: Record<string, HelpEntry> = {
     name: 'Valid, pinned',
     summary: 'The signature matches a public key you pinned in your trusted-publishers list.',
     detail: 'Trust is only as strong as that pin. There is no certificate authority behind it.',
+  },
+  'content.trust.unverified': {
+    name: 'Signature not verified',
+    summary:
+      'This pack has, or its install record claims, a publisher signature that did not verify when the pack was loaded.',
+    detail:
+      'The signed original is checked again on every load, and the trust fields in the install index are not believed by themselves. An edited pack file, an edited index, or a pack installed before the signed original was kept all land here. The pack is treated as untrusted and its key cannot be pinned. Reinstall it from a file you trust to verify it again.',
   },
   'content.trust.none': {
     name: 'No publisher signature',

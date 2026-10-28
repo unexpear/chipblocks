@@ -374,7 +374,11 @@ export async function commitTrustedPublisherChange(opts: {
   return { ok: true, publishers: next.publishers }
 }
 
-export type LivePublisherTrust = 'none' | 'valid-untrusted' | 'valid-trusted'
+/**
+ * `unverified`: the pack claims (or its install record claims) a publisher signature, but the
+ * file on disk did not verify on this load. It is treated as untrusted and cannot be pinned.
+ */
+export type LivePublisherTrust = 'none' | 'valid-untrusted' | 'valid-trusted' | 'unverified'
 
 /** Current pin list, not the status stored at install. Unloaded pins never count as trusted. */
 export function livePublisherTrust(
@@ -394,6 +398,9 @@ export function livePublisherTrust(
 
 export function publisherTrustLabel(trust: LivePublisherTrust): string {
   if (trust === 'none') return 'No publisher signature on this pack. Undeclared is not verified.'
+  if (trust === 'unverified') {
+    return 'Publisher signature did not verify when this pack was loaded, so the pack is treated as untrusted.'
+  }
   if (trust === 'valid-trusted') {
     return 'Publisher signature is valid, and this key is pinned in trusted-publishers on this computer. The pin is the whole of the trust. There is no certificate authority.'
   }

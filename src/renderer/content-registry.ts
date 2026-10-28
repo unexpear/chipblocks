@@ -5,6 +5,7 @@
  * (electron/registry-download.ts); this module decides whether those bytes may be installed.
  * A failed check returns a reason and does not ask the caller to write a pack file.
  */
+
 import {
   type ContentIndex,
   type InstallResult,
@@ -23,6 +24,8 @@ import {
   type TrustedPublishers,
   verifyPackSignature,
 } from './content-pack-signature.ts'
+import type { RotationState } from './key-rotation.ts'
+import { comparePackVersions, isPreRelease } from './pack-version.ts'
 
 export const REGISTRY_INDEX_FORMAT = 'chipblocks-content-registry-index'
 export const REGISTRY_INDEX_VERSION = 1
@@ -273,25 +276,11 @@ export function parseRegistryIndex(text: string, indexUrl?: string): RegistryInd
 }
 
 /**
- * Newer dotted numeric version only (`1.2.3`). Anything else is not called newer —
- * a pre-release suffix is left for you to read, not auto-ranked.
+ * Is `offered` a later version than `installed`, by SemVer precedence (see pack-version.ts)?
+ * A version with no SemVer order is never called newer.
  */
 export function isNewerRegistryVersion(installed: string, offered: string): boolean {
-  const parse = (value: string): [number, number, number] | null => {
-    const match = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(value.trim())
-    if (match === null) return null
-    return [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)]
-  }
-  const have = parse(installed)
-  const next = parse(offered)
-  if (have === null || next === null) return false
-  for (let i = 0; i < 3; i++) {
-    const left = have[i] ?? 0
-    const right = next[i] ?? 0
-    if (right > left) return true
-    if (right < left) return false
-  }
-  return false
+  return comparePackVersions(offered, installed) === 1
 }
 
 export type RegistryUpdate = {
@@ -310,6 +299,8 @@ export function registryUpdates(
     const have = installed.find((row) => row.id === pack.id)
     if (have === undefined) continue
     if (!isNewerRegistryVersion(have.packVersion, pack.version)) continue
+    // A pre-release is only offered as an update to someone already on a pre-release.
+    if (isPreRelease(pack.version) && !isPreRelease(have.packVersion)) continue
     updates.push({
       id: pack.id,
       name: pack.name ?? have.name,
@@ -413,13 +404,17 @@ export async function installDownloadedRegistryPack(args: {
   entry: RegistryPackEntry
   body: Uint8Array
   trusted?: TrustedPublishers
+  /** Rollback floors from the trust seal: an entry older than its floor is refused. */
+  floors?: Readonly<Record<string, string>> | null
+  /** Retired keys and accepted sequences from the trust seal, for key rotations. */
+  rotation?: RotationState | null
   installedAt?: number
   io: RegistryInstallIO
 }): Promise<InstallResult> {
   const url = classifyRegistryUrl(args.entry.downloadUrl)
   if (!url.ok) return url
   const have = args.index.packs.find((pack) => pack.id === args.entry.id)
-  if (have !== undefined && isNewerRegistryVersion(args.entry.version, have.packVersion)) {
+  if (have !== undefined && comparePackVersions(args.entry.version, have.packVersion) === -1) {
     return {
       ok: false,
       reason: `"${args.entry.id}" ${have.packVersion} is installed, and the registry offers the older ${args.entry.version}. A registry install does not go back a version. Nothing was written. Uninstall first if you mean to go back.`,
@@ -432,6 +427,8 @@ export async function installDownloadedRegistryPack(args: {
     checked.text,
     args.installedAt ?? Date.now(),
     args.trusted,
+    args.floors,
+    args.rotation,
   )
   if (!installed.ok) return installed
   if (installed.pack.id !== args.entry.id) {
@@ -446,7 +443,7 @@ export async function installDownloadedRegistryPack(args: {
       reason: `The pack file version is "${installed.pack.packVersion}" but the registry entry says "${args.entry.version}". Nothing was written.`,
     }
   }
-  const files = await installedPackFiles(installed)
+  const files = await installedPackFiles(installed, checked.text)
   const note = `Installed from a content registry entry "${args.entry.id}" ${args.entry.version} after the downloaded bytes matched the registry SHA-256 and ed25519 signature. ${files.record.trustNote}`
   const record = { ...files.record, trustNote: note, acquiredFrom: 'registry' as const }
   const index: ContentIndex = {
@@ -461,7 +458,13 @@ export async function installDownloadedRegistryPack(args: {
     io: args.io,
   })
   if (!saved.ok) return saved
-  return { ok: true, record, pack: installed.pack, index }
+  return {
+    ok: true,
+    record,
+    pack: installed.pack,
+    index,
+    ...(installed.keyRotation !== undefined ? { keyRotation: installed.keyRotation } : {}),
+  }
 }
 
 export type RegistrySettings = { ok: true; indexUrl: string } | { ok: false; reason: string }

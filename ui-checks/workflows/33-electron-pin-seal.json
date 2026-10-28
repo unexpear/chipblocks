@@ -1,0 +1,279 @@
+{
+  "name": "electron-pin-seal",
+  "targets": ["electron"],
+  "title": "Publisher pins are sealed with OS-protected storage (safeStorage, in the sandboxed test profile): a key added to trusted-publishers.json outside ChipBlocks makes the pins untrusted with the reason, and pinning again saves only the key you confirm",
+  "covers": ["contentManager"],
+  "notes": "The seal is ~/.chipblocks/trust-seal.json in the sandbox home; its key is held by safeStorage for the sandboxed userData (on Windows, DPAPI for that test profile), not the real profile. editFile adds a key the way someone who can write the home folder could. The real ~/.chipblocks is snapshotted read-only and compared after every step.",
+  "steps": [
+    {
+      "id": "pin-sealed",
+      "title": "Install a signed pack and pin its key: trusted, and the pin list is sealed",
+      "screen": "contentManager",
+      "do": [
+        {
+          "realHomeSnapshot": "start"
+        },
+        {
+          "makePack": {
+            "path": "{files}/seal_pack.json",
+            "id": "seal_pack",
+            "name": "Seal Pack",
+            "keyVar": "pinKey"
+          }
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        },
+        {
+          "dialog": {
+            "open": "{files}/seal_pack.json"
+          }
+        },
+        {
+          "click": "contentManager.install"
+        },
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "seal_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "seal_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "trusted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^1 publisher key pinned in ~/\\.chipblocks/trusted-publishers\\.json\\..*The list is sealed with this computer's OS-protected storage, so an edit made outside ChipBlocks is detected\\.$",
+          "id": "sealed-note"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trust-seal.json",
+          "json": [
+            {
+              "at": "format",
+              "eq": "chipblocks-trust-seal"
+            },
+            {
+              "at": "protection",
+              "eq": "os"
+            }
+          ],
+          "id": "seal-encrypted",
+          "notMatches": "pinsSha256|floors|{pinKey}"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "key-added-outside",
+      "title": "A key is added to trusted-publishers.json outside ChipBlocks: no key counts as pinned, with the reason, live and after a relaunch",
+      "screen": "contentManager",
+      "do": [
+        {
+          "editFile": {
+            "path": "{home}/.chipblocks/trusted-publishers.json",
+            "replace": [
+              "\"keys\": [",
+              "\"keys\": [\n    { \"publicKey\": \"c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3\" },"
+            ]
+          }
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "seal_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "untrusted-live"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^trusted-publishers\\.json was changed outside ChipBlocks since ChipBlocks last saved it.*No publisher key from that file is treated as pinned\\. Pin a key again in Content Manager to trust it",
+          "id": "reason-live",
+          "timeoutMs": 8000
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "still-untrusted-after-relaunch",
+      "title": "Relaunch: still untrusted (the seal is checked on every load)",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "seal_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "untrusted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^trusted-publishers\\.json was changed outside ChipBlocks",
+          "id": "reason"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "repin-fresh-list",
+      "title": "Pin again: trusted, and the new list holds only the confirmed key (the added one is dropped)",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.trustToggleFor",
+          "with": {
+            "pack": "seal_pack"
+          }
+        },
+        {
+          "click": "contentManager.trustConfirmYes"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "seal_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-trusted$",
+          "id": "trusted-again"
+        },
+        {
+          "type": "file",
+          "path": "{home}/.chipblocks/trusted-publishers.json",
+          "json": [
+            {
+              "at": "keys[0].publicKey",
+              "eq": "{pinKey}"
+            },
+            {
+              "at": "keys[1]",
+              "exists": false
+            }
+          ],
+          "id": "only-confirmed-key"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^1 publisher key pinned.*sealed",
+          "id": "sealed-again"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    },
+    {
+      "id": "seal-replaced",
+      "title": "The seal file is replaced outside ChipBlocks: relaunch, pins untrusted with the reason",
+      "screen": "contentManager",
+      "do": [
+        {
+          "click": "contentManager.close"
+        },
+        {
+          "writeFile": {
+            "path": "{home}/.chipblocks/trust-seal.json",
+            "text": "{}"
+          }
+        },
+        {
+          "relaunch": true
+        },
+        {
+          "waitReady": "start"
+        },
+        {
+          "menu": "Tools ▸ Plugin & Content Manager"
+        },
+        {
+          "waitReady": "contentManager"
+        }
+      ],
+      "expect": [
+        {
+          "type": "attr",
+          "sel": "contentManager.trustStateFor",
+          "with": {
+            "pack": "seal_pack"
+          },
+          "name": "data-trust",
+          "matches": "^valid-untrusted$",
+          "id": "untrusted"
+        },
+        {
+          "type": "text",
+          "sel": "contentManager.trustedStatus",
+          "matches": "^trust-seal\\.json is not a ChipBlocks trust seal\\. No publisher key from that file is treated as pinned",
+          "id": "reason"
+        },
+        {
+          "type": "realHomeUnchanged",
+          "since": "start",
+          "id": "real-home-untouched"
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 // sha256 integrity hash cover the same canonical body the app checks: the pack JSON with the
 // top-level `integrity` and `signature` fields removed, JSON.stringify(…, null, 2).
 import crypto from 'node:crypto'
+import { createRotation } from '../../scripts/pack-key-rotation.mjs'
 
 const canonical = (pack) => {
   const copy = { ...pack }
@@ -21,6 +22,8 @@ export function makePack({
   sign = true,
   integrity = true,
   editAfterSigning = false,
+  keyPair = null,
+  rotations = null,
 }) {
   const pack = {
     format: 'chipblocks-content-pack',
@@ -45,10 +48,13 @@ export function makePack({
   }
   let publicKeyHex = null
   if (sign) {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519')
+    // keyPair: sign several versions with one throwaway key (held in memory by the engine).
+    const { publicKey, privateKey } = keyPair ?? crypto.generateKeyPairSync('ed25519')
     publicKeyHex = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url').toString('hex')
     const sig = crypto.sign(null, Buffer.from(canonical(pack), 'utf8'), privateKey)
     pack.signature = { alg: 'ed25519', publicKey: publicKeyHex, sig: sig.toString('hex') }
+    // Key rotation statements ride inside the signature object, outside the signed body.
+    if (rotations) pack.signature.rotations = rotations
   }
   // Change the body after signing: the signature no longer verifies, while a freshly computed
   // integrity hash still matches — so the signature check is the one that has to refuse it.
@@ -115,4 +121,28 @@ export function makeRegistry({ dir, packs, writeFile, fileUrl }) {
     ),
   )
   return { indexUrl: fileUrl(indexFile), entries }
+}
+
+/**
+ * Key rotation statements for a test pack, made with scripts/pack-key-rotation.mjs (the publisher
+ * tool) from named in-memory keys. Each spec: { from, to, sequence?, packIds?, issuedAt?, tamper? }.
+ * tamper 'scope' adds a pack id after signing (the old key's signature no longer verifies);
+ * 'countersign' replaces the new key's countersignature with one by an unrelated key.
+ */
+export function rotationsFor(specs, packId, keyFor) {
+  return specs.map((r) => {
+    const statement = createRotation({
+      oldPrivateKey: keyFor(r.from).privateKey,
+      newPrivateKey: keyFor(r.to).privateKey,
+      packIds: r.packIds ?? [packId],
+      sequence: r.sequence ?? 1,
+      issuedAt: r.issuedAt ?? '2026-10-01T12:00:00Z',
+    })
+    if (r.tamper === 'scope') statement.packIds = [...statement.packIds, 'another_pack'].sort()
+    if (r.tamper === 'countersign') {
+      const stranger = crypto.generateKeyPairSync('ed25519').privateKey
+      statement.newKeySig = crypto.sign(null, Buffer.from('x'), stranger).toString('hex')
+    }
+    return statement
+  })
 }

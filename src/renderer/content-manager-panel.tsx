@@ -19,12 +19,29 @@ import { HelpTip } from './tooltip.tsx'
  * No publisher key and no registry URL ship with the app.
  */
 export const CONTENT_MANAGER_INTRO =
-  'Browse planned community libraries (cited from FINAL-STATE-VISION.md) and manage packs you install from a local file or from a content registry whose index URL you set. Not a marketplace — ChipBlocks does not download arbitrary remote code, and it does not ship a registry URL because no public registry exists. Install validates format + permissive license, checks an optional declared SHA-256 content hash (a malformed or non-sha256 declaration is refused, not treated as "no hash"), and records a file hash for reload tamper-evidence. A declared ed25519 signature is checked: invalid signatures are refused; a valid signature is self-declared integrity under the key in the pack, not a certificate authority. The desktop app reads ~/.chipblocks/trusted-publishers.json. No publisher keys ship as trusted. A valid signature is treated as trusted only when that key is pinned in the file. A missing file means no key is pinned. Undeclared is not verified.'
+  'Browse planned community libraries (cited from FINAL-STATE-VISION.md) and manage packs you install from a local file or from a content registry whose index URL you set. Not a marketplace — ChipBlocks does not download arbitrary remote code, and it does not ship a registry URL because no public registry exists. Install validates format + permissive license, checks an optional declared SHA-256 content hash (a malformed or non-sha256 declaration is refused, not treated as "no hash"), and records a file hash for reload tamper-evidence. A declared ed25519 signature is checked: invalid signatures are refused; a valid signature is self-declared integrity under the key in the pack, not a certificate authority. A signed pack is kept on disk with its signature and checked again every time it loads; one that no longer verifies is treated as untrusted. The desktop app reads ~/.chipblocks/trusted-publishers.json. No publisher keys ship as trusted. A valid signature is treated as trusted only when that key is pinned in the file. A missing file means no key is pinned. Undeclared is not verified.'
 
 export type PublisherCard = {
   publicKeyHex: string
   fingerprint: string
   trust: LivePublisherTrust
+  /** Why the signature did not verify on this load (trust `unverified`). */
+  reason?: string
+  /** A publisher key rotation the pack carries, checked against your pins on this load. */
+  rotation?: PublisherRotation
+}
+
+/**
+ * `valid`: the pack's key is not pinned, and a key you pinned signed the hand-over to it. Nothing
+ * is pinned until you confirm. `refused`: the rotation starts at a pinned key but was replayed or
+ * goes back to a key you retired.
+ */
+export type PublisherRotation =
+  | { kind: 'valid'; fromFingerprint: string; toFingerprint: string }
+  | { kind: 'refused'; reason: string }
+
+export function keyRotationPrompt(fromFingerprint: string, toFingerprint: string): string {
+  return `Publisher key changed: ${fromFingerprint} → ${toFingerprint}, signed by your pinned key.`
 }
 
 /**
@@ -55,6 +72,7 @@ export function ContentManagerPanel({
   onRegistrySelection,
   onInstallFromRegistry,
   onTrustPublisher,
+  onConfirmRotation,
 }: {
   index: ContentIndex
   statusMessage: string | null
@@ -77,6 +95,7 @@ export function ContentManagerPanel({
   onRegistrySelection: (id: string) => void
   onInstallFromRegistry: () => void
   onTrustPublisher: (publicKeyHex: string, trust: boolean, packId: string) => void
+  onConfirmRotation?: (packId: string) => void
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -320,6 +339,7 @@ export function ContentManagerPanel({
                     onSetEnabled={onSetEnabled}
                     onUninstall={onUninstall}
                     onTrustPublisher={onTrustPublisher}
+                    {...(onConfirmRotation !== undefined ? { onConfirmRotation } : {})}
                   />
                 </li>
               )
@@ -344,6 +364,7 @@ function InstalledCard({
   onSetEnabled,
   onUninstall,
   onTrustPublisher,
+  onConfirmRotation,
 }: {
   record: InstalledPackRecord
   catalog?: ContentCatalogEntry
@@ -353,9 +374,11 @@ function InstalledCard({
   onSetEnabled: (id: string, enabled: boolean) => void
   onUninstall: (id: string) => void
   onTrustPublisher: (publicKeyHex: string, trust: boolean, packId: string) => void
+  onConfirmRotation?: (packId: string) => void
 }) {
   const [confirmUninstall, setConfirmUninstall] = useState(false)
   const [confirmTrust, setConfirmTrust] = useState(false)
+  const [confirmRotation, setConfirmRotation] = useState(false)
   const dim = light ? THEME.textFaint : THEME.textMuted
   const blocked = loadIssue?.blocked === true
   return (
@@ -402,12 +425,12 @@ function InstalledCard({
           {loadIssue.reason}
         </div>
       ) : null}
-      {blocked ? null : (
+      {blocked || publisher?.trust === 'unverified' ? null : (
         <HelpTip
           helpId={
-            record.signatureStatus === 'valid-trusted'
+            publisher?.trust === 'valid-trusted'
               ? 'content.trust.trusted'
-              : record.signatureStatus === 'valid-untrusted'
+              : publisher?.trust === 'valid-untrusted'
                 ? 'content.trust.untrusted'
                 : 'content.trust.none'
           }
@@ -434,13 +457,14 @@ function InstalledCard({
             setConfirmTrust(false)
             onTrustPublisher(publisher.publicKeyHex, publisher.trust !== 'valid-trusted', record.id)
           }}
+          confirmRotation={confirmRotation}
+          onAskRotation={() => setConfirmRotation(true)}
+          onCancelRotation={() => setConfirmRotation(false)}
+          onConfirmRotation={() => {
+            setConfirmRotation(false)
+            onConfirmRotation?.(record.id)
+          }}
         />
-      ) : record.signatureStatus === 'valid-trusted' ||
-        record.signatureStatus === 'valid-untrusted' ? (
-        <div style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}>
-          This pack was installed before its publisher key was recorded. Install it again to see the
-          fingerprint and to pin the key.
-        </div>
       ) : null}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
         <HelpTip helpId={record.enabled ? 'content.disable' : 'content.enable'}>
@@ -500,6 +524,10 @@ function PublisherTrust({
   onAsk,
   onCancel,
   onConfirm,
+  confirmRotation,
+  onAskRotation,
+  onCancelRotation,
+  onConfirmRotation,
 }: {
   packId: string
   publisher: PublisherCard
@@ -508,9 +536,37 @@ function PublisherTrust({
   onAsk: () => void
   onCancel: () => void
   onConfirm: () => void
+  confirmRotation: boolean
+  onAskRotation: () => void
+  onCancelRotation: () => void
+  onConfirmRotation: () => void
 }) {
   const dim = light ? THEME.textFaint : THEME.textMuted
   const trusting = publisher.trust !== 'valid-trusted'
+  if (publisher.trust === 'unverified') {
+    // Nothing verified on this load, so there is no key to show or pin.
+    return (
+      <div style={{ marginTop: 6 }}>
+        <HelpTip helpId="content.trust.unverified">
+          <div
+            data-testid="content-manager-trust-state"
+            data-pack={packId}
+            data-trust={publisher.trust}
+            style={{ color: dim, fontSize: 10, lineHeight: 1.4 }}
+          >
+            {publisherTrustLabel(publisher.trust)}
+          </div>
+        </HelpTip>
+        <div
+          data-testid="content-manager-trust-reason"
+          data-pack={packId}
+          style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}
+        >
+          {publisher.reason ?? ''}
+        </div>
+      </div>
+    )
+  }
   return (
     <div style={{ marginTop: 6 }}>
       <HelpTip helpId="content.fingerprint">
@@ -537,7 +593,29 @@ function PublisherTrust({
       >
         {publisherTrustLabel(publisher.trust)}
       </div>
-      {confirmTrust ? (
+      {publisher.rotation?.kind === 'refused' ? (
+        <HelpTip helpId="content.rotation.refused">
+          <div
+            data-testid="content-manager-key-rotation-refused"
+            data-pack={packId}
+            style={{ color: dim, marginTop: 4, fontSize: 10, lineHeight: 1.4 }}
+          >
+            {publisher.rotation.reason}
+          </div>
+        </HelpTip>
+      ) : null}
+      {publisher.rotation?.kind === 'valid' && publisher.trust === 'valid-untrusted' ? (
+        <KeyRotationCard
+          packId={packId}
+          fromFingerprint={publisher.rotation.fromFingerprint}
+          toFingerprint={publisher.rotation.toFingerprint}
+          confirming={confirmRotation}
+          light={light}
+          onAsk={onAskRotation}
+          onCancel={onCancelRotation}
+          onConfirm={onConfirmRotation}
+        />
+      ) : confirmTrust ? (
         <div
           data-testid="content-manager-trust-confirm"
           data-pack={packId}
@@ -578,6 +656,104 @@ function PublisherTrust({
             disabled={publisher.fingerprint === ''}
           >
             {trusting ? 'Trust this publisher…' : 'Stop trusting this publisher…'}
+          </button>
+        </HelpTip>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A pinned key signed a hand-over to the key this pack is signed with. The new key is not pinned
+ * and the pack stays untrusted until you confirm here.
+ */
+function KeyRotationCard({
+  packId,
+  fromFingerprint,
+  toFingerprint,
+  confirming,
+  light,
+  onAsk,
+  onCancel,
+  onConfirm,
+}: {
+  packId: string
+  fromFingerprint: string
+  toFingerprint: string
+  confirming: boolean
+  light: boolean
+  onAsk: () => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const dim = light ? THEME.textFaint : THEME.textMuted
+  return (
+    <div
+      data-testid="content-manager-key-rotation"
+      data-pack={packId}
+      style={{
+        marginTop: 6,
+        padding: 6,
+        border: `1px dashed ${dim}`,
+        borderRadius: 4,
+      }}
+    >
+      <HelpTip helpId="content.rotation.card">
+        <div
+          data-testid="content-manager-key-rotation-text"
+          data-pack={packId}
+          style={{ fontSize: 11, lineHeight: 1.4, overflowWrap: 'anywhere' }}
+        >
+          {keyRotationPrompt(fromFingerprint, toFingerprint)}
+        </div>
+      </HelpTip>
+      <div style={{ color: dim, fontSize: 10, lineHeight: 1.4, marginTop: 4 }}>
+        The new key is not pinned yet, so this pack is treated as untrusted until you confirm.
+      </div>
+      {confirming ? (
+        <div
+          data-testid="content-manager-key-rotation-confirm"
+          data-pack={packId}
+          style={{ marginTop: 6 }}
+        >
+          <div style={{ color: dim, fontSize: 11, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
+            {`Pin the new publisher key ${toFingerprint} in ~/.chipblocks/trusted-publishers.json in place of ${fromFingerprint}? The old key is removed from your pins unless another installed pack is still signed by it, and a key rotation back to it will be refused. Packs signed by the new key will count as pinned.`}
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <HelpTip helpId="content.rotation.confirm">
+              <button
+                type="button"
+                data-testid="content-manager-key-rotation-confirm-yes"
+                data-pack={packId}
+                onClick={onConfirm}
+                style={primaryButton(light)}
+              >
+                Trust the new key
+              </button>
+            </HelpTip>
+            <HelpTip helpId="content.rotation.cancel">
+              <button
+                type="button"
+                data-testid="content-manager-key-rotation-cancel"
+                data-pack={packId}
+                onClick={onCancel}
+                style={chipButton(light)}
+              >
+                Cancel
+              </button>
+            </HelpTip>
+          </div>
+        </div>
+      ) : (
+        <HelpTip helpId="content.rotation.review">
+          <button
+            type="button"
+            data-testid="content-manager-key-rotation-review"
+            data-pack={packId}
+            onClick={onAsk}
+            style={{ ...chipButton(light), marginTop: 6 }}
+          >
+            Trust the new key…
           </button>
         </HelpTip>
       )}
